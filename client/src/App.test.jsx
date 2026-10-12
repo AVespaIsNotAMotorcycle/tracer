@@ -91,6 +91,27 @@ describe('App', () => {
     }
   });
 
+  it('closes the search results, keeping the graph', async () => {
+    await buildFromSearch();
+    fireEvent.click(screen.getByRole('button', { name: 'Close search results' }));
+
+    expect(screen.queryByRole('list', { name: 'Search results' })).not.toBeInTheDocument();
+    expect(within(graph()).getByRole('button', { name: 'Title anchor' })).toBeInTheDocument();
+  });
+
+  it('closes the no-results message', async () => {
+    vi.mocked(api.searchWorks).mockResolvedValue([]);
+    render(<App />);
+    fireEvent.change(screen.getByLabelText('Title, DOI, or OpenAlex ID'), {
+      target: { value: 'nothing' },
+    });
+    fireEvent.click(screen.getByRole('button', { name: 'Go' }));
+    await screen.findByText('No works found.');
+    fireEvent.click(screen.getByRole('button', { name: 'Close search results' }));
+
+    expect(screen.queryByText('No works found.')).not.toBeInTheDocument();
+  });
+
   it('builds directly from a DOI without searching', async () => {
     render(<App />);
     fireEvent.change(screen.getByLabelText('Title, DOI, or OpenAlex ID'), {

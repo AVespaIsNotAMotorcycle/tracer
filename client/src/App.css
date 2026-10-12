@@ -304,6 +304,13 @@ button.primary,
   font-size: 0.85em;
 }
 
+.results-header {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  font-size: 0.85em;
+}
+
 .results {
   list-style: none;
   margin: 0;

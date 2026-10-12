@@ -112,7 +112,23 @@ export default function SearchPanel({
           {error}
         </p>
       )}
-      {results && results.length === 0 && <p className="muted">No works found.</p>}
+      {results && (
+        <div className="results-header">
+          <span className="muted">
+            {results.length === 0
+              ? 'No works found.'
+              : `${results.length} result${results.length === 1 ? '' : 's'}`}
+          </span>
+          <button
+            type="button"
+            className="icon-button"
+            onClick={() => setResults(null)}
+            aria-label="Close search results"
+          >
+            ×
+          </button>
+        </div>
+      )}
       {results && results.length > 0 && (
         <ul className="results" aria-label="Search results">
           {results.map((work) => (

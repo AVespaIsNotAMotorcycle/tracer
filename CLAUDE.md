@@ -125,7 +125,7 @@ Tooling layout: Vitest, ESLint and Prettier are installed at the root. The root 
 
     Components and canvas code use only role tokens; never put a literal color anywhere else. `accent-color` themes native controls. Light-mode node fills (orange and sage on cream) are below 3:1, so nodes get a `--node-outline` that meets 3:1 on its own. Re-check contrast when changing the palette.
 
-  - **Client tests** mock `GraphView` (jsdom has no canvas) and `api.js`. To check the real canvas, run the app and drive it in a browser.
+  - **Client tests** mock `GraphView` (jsdom has no canvas) and `api.js`. To check the real canvas, use the `/run-tracer` skill (`.claude/skills/run-tracer/`). It runs an isolated server on :5099 and a headless-browser driver that can select nodes by color and take screenshots.
 - **Heroku build:** `npm install`, then `heroku-postbuild` (client build), then the `Procfile` `web: npm start`. The server reads `PORT` from the environment.
 - **Database:** the server calls `listen` first, then connects to MongoDB in the background through `connectWithRetry` (`server/src/db.js`), retrying every 5 seconds. Mongoose never retries a failed _initial_ connection by itself. Until it connects, or if `MONGODB_URI` is unset, `/api/works` returns 503. In dev, a closed API port shows up as a bare **502 from Vite's proxy**, not from Express. `bufferCommands` is off, so queries fail fast instead of hanging. `/api/health` reports `db: connected|disconnected`. The dev script loads `server/.env` with `--env-file-if-exists`; there is no dotenv dependency.
 - **Express 5:** path syntax differs from Express 4, e.g. the SPA fallback uses a regex rather than `*`. Async route handlers that reject are forwarded to error middleware automatically.

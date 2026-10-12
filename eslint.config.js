@@ -31,5 +31,10 @@ export default [
     files: ['server/**/*.js', '*.config.js', '**/vitest.config.js', '**/vite.config.js'],
     languageOptions: { globals: globals.node },
   },
+  {
+    // Agent tooling (run skill): Node scripts whose page.evaluate callbacks run in the browser.
+    files: ['.claude/**/*.mjs'],
+    languageOptions: { globals: { ...globals.node, ...globals.browser } },
+  },
   prettier,
 ];

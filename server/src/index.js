@@ -1,28 +1,5 @@
-import path from 'node:path';
-import { fileURLToPath } from 'node:url';
-import express from 'express';
 import mongoose from 'mongoose';
-
-const __dirname = path.dirname(fileURLToPath(import.meta.url));
-const clientDist = path.resolve(__dirname, '../../client/dist');
-
-const app = express();
-app.use(express.json());
-
-app.get('/api/health', (req, res) => {
-  res.json({
-    status: 'ok',
-    db: mongoose.connection.readyState === 1 ? 'connected' : 'disconnected',
-  });
-});
-
-if (process.env.NODE_ENV === 'production') {
-  app.use(express.static(clientDist));
-  // Let the React app handle any non-API route.
-  app.get(/^(?!\/api).*/, (req, res) => {
-    res.sendFile(path.join(clientDist, 'index.html'));
-  });
-}
+import app from './app.js';
 
 const port = process.env.PORT || 5000;
 

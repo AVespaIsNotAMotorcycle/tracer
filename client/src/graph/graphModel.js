@@ -646,21 +646,37 @@ export function layoutYears(graph) {
   return result;
 }
 
+// Years near the anchor's get more room along the axis, where the graph is usually densest
+// and readers look first: steps between consecutive years there are up to 1 + FOCUS_BOOST
+// times as long, and the boost halves every FOCUS_HALF_LIFE years away from the anchor.
+const FOCUS_BOOST = 2;
+const FOCUS_HALF_LIFE = 4;
+
 /**
  * Positions along the time axis for a set of years, centered on 0. Distinct years are spaced
  * in order; larger gaps get logarithmically more room, so a long gap is visible without
- * squeezing densely published decades together.
+ * squeezing densely published decades together. With a `focus` year (the anchor's), steps
+ * near it are stretched (see FOCUS_BOOST), so nearby years sit further apart than distant ones.
  *
  * @param {Iterable<number>} years
  * @param {number} [spacing]  Distance between consecutive years.
+ * @param {number | null} [focus]
  * @returns {Map<number, number>}
  */
-export function yearPositions(years, spacing = 15) {
+export function yearPositions(years, spacing = 15, focus = null) {
   const sorted = [...new Set(years)].sort((a, b) => a - b);
+  // How far a step between two years is from the focus: 0 if it spans it.
+  const distance = (a, b) =>
+    focus >= a && focus <= b ? 0 : Math.min(Math.abs(a - focus), Math.abs(b - focus));
+  const weight = (a, b) =>
+    focus == null ? 1 : 1 + FOCUS_BOOST * 2 ** (-distance(a, b) / FOCUS_HALF_LIFE);
   const positions = new Map();
   let position = 0;
   sorted.forEach((year, i) => {
-    if (i > 0) position += spacing * (1 + Math.log2(Math.max(1, year - sorted[i - 1])));
+    if (i > 0) {
+      const previous = sorted[i - 1];
+      position += spacing * (1 + Math.log2(Math.max(1, year - previous))) * weight(previous, year);
+    }
     positions.set(year, position);
   });
   const offset = position / 2;

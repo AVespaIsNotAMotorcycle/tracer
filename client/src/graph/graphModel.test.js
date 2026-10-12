@@ -450,6 +450,19 @@ describe('yearPositions', () => {
   it('handles no years', () => {
     expect(yearPositions([]).size).toBe(0);
   });
+
+  it('spaces years near the focus further apart than distant ones', () => {
+    const years = [1950, 1951, 1970, 1971, 1972, 1990, 1991];
+    const positions = yearPositions(years, 10, 1971);
+    const step = (a, b) => positions.get(b) - positions.get(a);
+
+    expect(step(1970, 1971)).toBeCloseTo(30); // 1 + 2: the full boost, spanning the focus.
+    expect(step(1950, 1951)).toBeCloseTo(10 * (1 + 2 * 2 ** -5)); // 20 years off: almost none.
+    expect(step(1970, 1971)).toBeGreaterThan(step(1990, 1991) * 2.5);
+    // Order is kept, and without a focus nothing changes.
+    expect([...positions.keys()]).toEqual(years);
+    expect(yearPositions(years, 10, null)).toEqual(yearPositions(years, 10));
+  });
 });
 
 describe('collapseWorks', () => {

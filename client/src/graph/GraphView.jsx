@@ -263,13 +263,16 @@ export default function GraphView({
   const [nodeCache] = useState(() => new Map());
   // More works need more room, or they pack edge to edge with no space for links between them.
   const spread = layoutSpread(graph.works.size);
+  // Years near the anchor's are spaced further apart than distant ones.
+  const anchorYear = years.get(graph.anchorId)?.year ?? null;
   const positions = useMemo(
     () =>
       yearPositions(
         [...years.values()].map((y) => y.year).filter((y) => y != null),
         YEAR_SPACING,
+        anchorYear,
       ),
-    [years],
+    [years, anchorYear],
   );
   const data = useMemo(() => {
     for (const id of nodeCache.keys()) if (!graph.works.has(id)) nodeCache.delete(id);

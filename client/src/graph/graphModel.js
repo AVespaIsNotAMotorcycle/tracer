@@ -263,6 +263,17 @@ async function forEachLimited(items, concurrency, task) {
 
 const fetchers = { citing: 'getCiting', cited: 'getCited' };
 
+const shortTitle = (work) => {
+  const title = work?.title ?? 'Untitled';
+  return title.length > 50 ? `${title.slice(0, 49)}…` : title;
+};
+
+/** Identifies a neighbor-list request in the progress tracker's request list. */
+const requestInfo = (direction, id, work) => ({
+  key: `${direction}:${id}`,
+  label: `${direction === 'citing' ? 'Works citing' : 'Works cited by'} “${shortTitle(work)}”`,
+});
+
 /**
  * Builds a graph breadth-first from an anchor work. Each direction follows only its own
  * direction (citing works of citing works, cited works of cited works), to its own depth.
@@ -326,7 +337,7 @@ export async function buildGraph(
   let anchor = knownAnchor;
   if (!anchor) {
     progress.plan(1);
-    const finish = progress.begin();
+    const finish = progress.begin({ key: 'anchor', label: `Looking up ${anchorId}` });
     anchor = await api.getWork(anchorId);
     finish();
   }
@@ -345,6 +356,7 @@ export async function buildGraph(
       remaining[d] = frontiers[d].length;
       pending += remaining[d];
       progress.plan(remaining[d]);
+      progress.queue(frontiers[d].map((id) => requestInfo(d, id, graph.works.get(id))));
     }
     const estimateNext = () =>
       Object.fromEntries(directions.map((d) => [d, next[d].length + remaining[d] * rate(d)]));
@@ -358,16 +370,14 @@ export async function buildGraph(
 
     for (const direction of active) {
       await forEachLimited(frontiers[direction], concurrency, async (id) => {
-        if (graph.works.size >= maxNodes) {
-          truncated = true;
+        const request = requestInfo(direction, id, graph.works.get(id));
+        if (graph.works.size >= maxNodes || !canExpand(graph.works.get(id))) {
+          if (graph.works.size >= maxNodes) truncated = true;
+          progress.dequeue(request.key);
           finishRequest(direction);
           return;
         }
-        if (!canExpand(graph.works.get(id))) {
-          finishRequest(direction);
-          return;
-        }
-        const finish = progress.begin();
+        const finish = progress.begin(request);
         const found = await api[fetchers[direction]](id, { limit });
         const fresh = found.filter((work) => !graph.works.has(work.id));
         const room = maxNodes - graph.works.size;
@@ -399,19 +409,22 @@ export async function buildGraph(
  * @returns {Promise<(graph: Graph) => Graph>}  An updater to apply to the latest graph.
  */
 export async function expandWork(graph, id, { limit }, api, progress = noProgress) {
-  if (!canExpand(graph.works.get(id))) {
+  const work = graph.works.get(id);
+  const all = /** @type {Direction[]} */ (['citing', 'cited']);
+  if (!canExpand(work)) {
+    for (const d of all) progress.dequeue(requestInfo(d, id, work).key);
     progress.complete(2);
     return (latest) => latest;
   }
   const done = graph.expanded.get(id) ?? new Set();
-  const all = /** @type {Direction[]} */ (['citing', 'cited']);
   const directions = all.filter((d) => !done.has(d));
   // The caller plans one request per direction; directions already fetched are skipped.
+  for (const d of all) if (done.has(d)) progress.dequeue(requestInfo(d, id, work).key);
   progress.complete(all.length - directions.length);
   let loaded = 0;
   const results = await Promise.all(
     directions.map(async (direction) => {
-      const finish = progress.begin();
+      const finish = progress.begin(requestInfo(direction, id, work));
       const works = await api[fetchers[direction]](id, { limit });
       loaded += works.length;
       progress.setWorks(loaded);
@@ -445,6 +458,9 @@ const EXPAND_CONCURRENCY = 2;
  * @returns {Promise<(graph: Graph) => Graph>}  An updater to apply to the latest graph.
  */
 export async function expandWorks(graph, ids, options, api, progress = noProgress) {
+  progress.queue(
+    ids.flatMap((id) => ['citing', 'cited'].map((d) => requestInfo(d, id, graph.works.get(id)))),
+  );
   const updaters = [];
   await forEachLimited(ids, EXPAND_CONCURRENCY, async (id) => {
     updaters.push(await expandWork(graph, id, options, api, progress));
@@ -495,6 +511,11 @@ export async function reanchorGraph(
   const sticky = new Set([...graph.sticky, graph.anchorId].filter((id) => id && id !== anchorId));
   // Two requests per sticky work (citing and cited) are known up front.
   progress.plan(sticky.size * 2);
+  progress.queue(
+    [...sticky].flatMap((id) =>
+      ['citing', 'cited'].map((d) => requestInfo(d, id, graph.works.get(id))),
+    ),
+  );
 
   // The anchor's data is already here, so the build doesn't fetch it.
   const built = await buildGraph(anchorId, options, api, onProgress, progress, anchor);

@@ -389,6 +389,15 @@ describe('App', () => {
     const progress = await screen.findByRole('list', { name: 'Loading progress' });
     expect(within(progress).getByText('Expanding “Title ref”')).toBeInTheDocument();
     await waitFor(() => expect(within(progress).getByText(/1 of 2 requests/)).toBeInTheDocument());
+    // The cited request finished; the citing one is still running.
+    const running = within(progress).getByRole('list', {
+      name: 'Expanding “Title ref”: in progress',
+    });
+    expect(
+      within(running)
+        .getAllByRole('listitem')
+        .map((li) => li.textContent),
+    ).toEqual(['Works citing “Title ref”']);
 
     releaseCiting();
     await waitFor(() =>

@@ -1,8 +1,12 @@
 import { formatEta } from '../graph/progress.js';
 
+// Queued requests listed per task before collapsing the rest into "and N more".
+const QUEUED_SHOWN = 5;
+
 /**
  * One entry per running task (build, re-anchor, each expansion): requests done out of the
- * known-or-estimated total, works found, and time remaining. "~" marks estimates.
+ * known-or-estimated total, works found, and time remaining. "~" marks estimates. Below that,
+ * the requests in progress and the first few queued.
  */
 export default function LoadingProgress({ tasks }) {
   if (tasks.length === 0) return null;
@@ -26,8 +30,42 @@ export default function LoadingProgress({ tasks }) {
               ? ` (~${task.expectedWorks} expected)`
               : ''}
           </div>
+          <RequestList task={task} />
         </li>
       ))}
     </ul>
+  );
+}
+
+/** Which requests a task is running and which are waiting. */
+function RequestList({ task }) {
+  const running = task.running ?? [];
+  const queued = task.queued ?? [];
+  if (running.length === 0 && queued.length === 0) return null;
+  const more = queued.length - QUEUED_SHOWN;
+  return (
+    <div className="loading-requests small">
+      {running.length > 0 && (
+        <>
+          <h3>In progress</h3>
+          <ul aria-label={`${task.label}: in progress`}>
+            {running.map((label, i) => (
+              <li key={i}>{label}</li>
+            ))}
+          </ul>
+        </>
+      )}
+      {queued.length > 0 && (
+        <>
+          <h3>Queued</h3>
+          <ul aria-label={`${task.label}: queued`}>
+            {queued.slice(0, QUEUED_SHOWN).map((label, i) => (
+              <li key={i}>{label}</li>
+            ))}
+            {more > 0 && <li className="muted">and {more} more</li>}
+          </ul>
+        </>
+      )}
+    </div>
   );
 }

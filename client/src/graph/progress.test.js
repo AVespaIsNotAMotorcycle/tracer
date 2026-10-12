@@ -17,6 +17,24 @@ describe('createProgressTracker', () => {
     expect(tracker.snapshot()).toMatchObject({ label: 'Building graph', done: 1, total: 4 });
   });
 
+  it('lists queued and running requests without changing the counts', () => {
+    const { tracker } = setup();
+    const a = { key: 'cited:A', label: 'Works cited by “A”' };
+    const b = { key: 'cited:B', label: 'Works cited by “B”' };
+    const c = { key: 'cited:C', label: 'Works cited by “C”' };
+    tracker.plan(3);
+    tracker.queue([a, b, c]);
+    expect(tracker.snapshot()).toMatchObject({ running: [], queued: [a.label, b.label, c.label] });
+
+    const finishA = tracker.begin(a);
+    tracker.dequeue(c.key);
+    expect(tracker.snapshot()).toMatchObject({ running: [a.label], queued: [b.label] });
+
+    finishA();
+    tracker.begin(); // Unlabeled requests still count, but aren't listed.
+    expect(tracker.snapshot()).toMatchObject({ done: 1, total: 3, running: [], queued: [b.label] });
+  });
+
   it('has no time estimate until a request completes', () => {
     const { tracker } = setup();
     tracker.plan(3);

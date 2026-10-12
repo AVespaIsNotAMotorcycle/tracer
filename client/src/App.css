@@ -482,7 +482,7 @@ button.primary,
   gap: 8px;
 }
 
-.loading-progress li {
+.loading-progress > li {
   background: var(--surface);
   border: 1px solid var(--border);
   border-radius: 8px;
@@ -506,6 +506,32 @@ button.primary,
 
 .loading-label {
   font-weight: 600;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.loading-requests {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  border-top: 1px solid var(--border);
+  padding-top: 4px;
+  margin-top: 2px;
+}
+
+.loading-requests h3 {
+  font-size: 1em;
+  font-weight: 600;
+  color: var(--muted);
+}
+
+.loading-requests ul {
+  margin: 0 0 2px;
+  padding-left: 16px;
+}
+
+.loading-requests li {
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;

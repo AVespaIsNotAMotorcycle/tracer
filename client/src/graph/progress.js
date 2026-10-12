@@ -7,6 +7,10 @@
 // Time remaining = remaining requests x average request latency / parallelism. Latency is
 // measured per request (not wall clock), so it adapts to cached versus uncached responses and
 // isn't skewed by skipped requests or by requests running concurrently.
+//
+// Separately from those counts, the tracker can list which requests are running and queued:
+// callers `queue` requests they know are coming (each `{ key, label }`), pass the same item to
+// `begin` when one starts, and `dequeue` ones they skip.
 
 /**
  * @typedef {object} ProgressSnapshot
@@ -17,7 +21,11 @@
  * @property {number} works           Works on the graph so far.
  * @property {number | null} expectedWorks  Estimated final count, when one can be made.
  * @property {number | null} etaMs    Estimated time remaining; null until a request completes.
+ * @property {string[]} running       Labels of requests in progress, oldest first.
+ * @property {string[]} queued        Labels of requests waiting to start, in order.
  */
+
+/** @typedef {{ key: string, label: string }} RequestInfo */
 
 /**
  * @param {object} options
@@ -39,6 +47,11 @@ export function createProgressTracker({
   let done = 0;
   let works = 0;
   let expectedWorks = null;
+  /** @type {Map<string, string>} */
+  const running = new Map();
+  /** @type {Map<string, string>} */
+  const queued = new Map();
+  let anonymous = 0;
 
   const snapshot = () => {
     const total = Math.max(done, planned + projected);
@@ -50,6 +63,8 @@ export function createProgressTracker({
       works,
       expectedWorks,
       etaMs: timed > 0 ? ((total - done) * (latencyTotal / timed)) / parallelism : null,
+      running: [...running.values()],
+      queued: [...queued.values()],
     };
   };
   const emit = () => onChange(snapshot());
@@ -60,13 +75,37 @@ export function createProgressTracker({
       planned += requests;
       emit();
     },
-    /** Starts timing a real request; call the returned function when it finishes. */
-    begin() {
+    /**
+     * Lists requests that will be made, by key, so they show as queued until they `begin`.
+     * Doesn't change the counts; `plan` does that.
+     *
+     * @param {RequestInfo[]} requests
+     */
+    queue(requests) {
+      for (const { key, label } of requests) if (!running.has(key)) queued.set(key, label);
+      emit();
+    },
+    /** Removes a queued request that won't be made after all. */
+    dequeue(key) {
+      if (queued.delete(key)) emit();
+    },
+    /**
+     * Starts timing a real request; call the returned function when it finishes. With
+     * `request`, it's listed as running until then (and no longer as queued).
+     *
+     * @param {RequestInfo} [request]
+     */
+    begin(request) {
       const startedAt = now();
+      const key = request?.key ?? `#${anonymous++}`;
+      queued.delete(key);
+      if (request) running.set(key, request.label);
+      emit();
       return () => {
         latencyTotal += now() - startedAt;
         timed++;
         done++;
+        running.delete(key);
         emit();
       };
     },
@@ -92,6 +131,8 @@ export function createProgressTracker({
 /** A tracker that records nothing, for callers that don't need progress. */
 export const noProgress = {
   plan() {},
+  queue() {},
+  dequeue() {},
   begin: () => () => {},
   complete() {},
   project() {},

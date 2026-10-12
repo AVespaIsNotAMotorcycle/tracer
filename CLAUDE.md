@@ -125,6 +125,7 @@ Tooling layout: Vitest, ESLint and Prettier are installed at the root. The root 
     - `plan` adds requests known to be coming. Each real request is timed with `begin()` and its returned finish function. `complete()` marks planned requests that were skipped (for example, when the graph is full), so `done` always reaches `total`.
     - `project` estimates requests on deeper levels from the new works per request seen so far, scaled down to fit `maxNodes`.
     - Time remaining = remaining requests × average request latency ÷ parallelism (4 for builds, 2 for expansions, roughly 3 for re-anchors). Latency is measured per request rather than by wall clock; a wall-clock rate overestimated about 4× while early requests ran one at a time.
+    - Separately from the counts, the tracker lists requests by `{ key, label }`: `queue` adds known upcoming ones (a build level's frontier, an expansion's works, a re-anchor's sticky works), `begin(request)` moves one to running, `dequeue` drops a skipped one. Each card lists them under "In progress" and "Queued" (first 5, then "and N more").
     - The hook keeps one entry per task in `tasks`. The visible cards update on every request, but the `role=status` line changes only on start and finish, so screen readers aren't flooded.
   - **`graph/GraphView.jsx`** renders with `react-force-graph-2d` (canvas).
     - Node objects are reused across updates, because force-graph stores positions on them.

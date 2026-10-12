@@ -116,7 +116,11 @@ export function iconPathData(elements) {
     .map(([tag, a]) => {
       switch (tag) {
         case 'path':
-          return a.d;
+          // In SVG, each path's first moveto is measured from the origin even when relative
+          // (`m8 13`). Joined into one path, it would be measured from where the previous
+          // element ended, so anchor it at the origin. (Rewriting it as `M` would also make
+          // the implicit linetos after it absolute.)
+          return /^\s*m/.test(a.d) ? `M0 0${a.d}` : a.d;
         case 'line':
           return `M${num(a.x1)} ${num(a.y1)}L${num(a.x2)} ${num(a.y2)}`;
         case 'polyline':

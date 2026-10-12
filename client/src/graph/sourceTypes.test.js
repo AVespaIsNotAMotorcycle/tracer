@@ -52,6 +52,15 @@ describe('iconPathData', () => {
     ).toBe('M1 1L2 2M3 3');
   });
 
+  it('measures a path starting with a relative move from the origin, not the last point', () => {
+    expect(
+      iconPathData([
+        ['path', { d: 'M4 4H20' }],
+        ['path', { d: 'm8 13 4-7 4 7' }],
+      ]),
+    ).toBe('M4 4H20M0 0m8 13 4-7 4 7');
+  });
+
   it('converts lines and polylines', () => {
     expect(iconPathData([['line', { x1: '1', y1: '2', x2: '3', y2: '4' }]])).toBe('M1 2L3 4');
     expect(iconPathData([['polyline', { points: '1 2 3 4 5 6' }]])).toBe('M1 2L3 4L5 6');

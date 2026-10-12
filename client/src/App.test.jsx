@@ -165,6 +165,31 @@ describe('App', () => {
     }
   });
 
+  it('applies changed depth and size options to the current graph', async () => {
+    await buildFromSearch();
+    const apply = screen.getByRole('button', { name: 'Apply to current graph' });
+    expect(apply).toBeDisabled(); // Nothing changed yet.
+
+    // Expand ref by hand, so it should survive the rebuild.
+    fireEvent.click(within(graph()).getByRole('button', { name: 'Title ref' }));
+    fireEvent.click(screen.getByRole('button', { name: 'Expand citing and cited works' }));
+    await within(graph()).findByRole('button', { name: 'Title more' });
+    vi.mocked(api.getWork).mockClear();
+
+    fireEvent.change(screen.getByLabelText('Citing depth'), { target: { value: '0' } });
+    expect(apply).toBeEnabled();
+    fireEvent.click(apply);
+
+    // citer is dropped (citing depth 0); more stays, found through the expanded ref.
+    await waitFor(() =>
+      expect(within(graph()).queryByRole('button', { name: 'Title citer' })).toBeNull(),
+    );
+    expect(within(graph()).getByRole('button', { name: 'Title more' })).toBeInTheDocument();
+    expect(api.getWork).not.toHaveBeenCalled(); // Same anchor; its data is reused.
+    await waitFor(() => expect(window.location.search).toContain('citing=0'));
+    expect(apply).toBeDisabled();
+  });
+
   it('builds directly from a DOI without searching', async () => {
     render(<App />);
     fireEvent.change(screen.getByLabelText('Title, DOI, or OpenAlex ID'), {

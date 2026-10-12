@@ -283,6 +283,10 @@ button.primary,
   gap: 8px;
 }
 
+.apply-options {
+  grid-column: 1 / -1;
+}
+
 .options legend {
   font-size: 0.85em;
   color: var(--muted);

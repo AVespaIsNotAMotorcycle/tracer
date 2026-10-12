@@ -5,11 +5,15 @@ const DEPTHS = [0, 1, 2, 3];
 
 /**
  * Finds an anchor work (by search, or directly by DOI / OpenAlex ID) and sets build options.
+ * With `onApply`, the options can also be applied to the current graph; `canApply` says
+ * whether they differ from the ones it was built with.
  */
 export default function SearchPanel({
   options,
   onOptionsChange,
   onBuild,
+  onApply,
+  canApply = false,
   busy,
   search = searchWorks,
 }) {
@@ -105,6 +109,16 @@ export default function SearchPanel({
             onChange={setOption('maxNodes')}
           />
         </label>
+        {onApply && (
+          <button
+            type="button"
+            className="apply-options"
+            onClick={onApply}
+            disabled={busy || !canApply}
+          >
+            Apply to current graph
+          </button>
+        )}
       </fieldset>
 
       {error && (

@@ -226,6 +226,7 @@ export default function GraphView({
   onSelect,
   building = false,
   axisAngle = DEFAULT_AXIS_ANGLE,
+  fitKey = graph.anchorId,
 }) {
   const containerRef = useRef(null);
   const graphRef = useRef(null);
@@ -358,23 +359,24 @@ export default function GraphView({
     };
   }, [data, visible]);
 
-  // Fit the view once the first layout settles after a new anchor.
-  const fittedAnchor = useRef(null);
+  // Fit the view once the first layout settles after each run (a build, re-anchor, or options
+  // change), identified by `fitKey`. Expansions don't change it, so they don't move the view.
+  const fitted = useRef(null);
   const handleEngineStop = () => {
     // Wait for the whole build: the graph arrives in stages, and fitting to an early stage
     // (say, just the anchor) leaves the view zoomed in on a small part of the time axis.
-    if (building || !graph.anchorId || fittedAnchor.current === graph.anchorId) return;
-    fittedAnchor.current = graph.anchorId;
+    if (building || !graph.anchorId || fitted.current === fitKey) return;
+    fitted.current = fitKey;
     graphRef.current?.zoomToFit(400, 40);
   };
 
   // When a build finishes, restart the simulation so it settles once more and fits the view
   // above; the last progress update may already have settled.
   useEffect(() => {
-    if (!building && graph.anchorId && fittedAnchor.current !== graph.anchorId) {
+    if (!building && graph.anchorId && fitted.current !== fitKey) {
       graphRef.current?.d3ReheatSimulation();
     }
-  }, [building, graph.anchorId]);
+  }, [building, graph.anchorId, fitKey]);
 
   const endId = (end) => (typeof end === 'object' ? end.id : end);
   const isAnchorLink = (link) =>

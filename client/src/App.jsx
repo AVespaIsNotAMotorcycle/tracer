@@ -27,6 +27,8 @@ function expandedDirections(graph, ids) {
   return new Set(['citing', 'cited'].filter((d) => sets.every((set) => set.has(d))));
 }
 
+const sameOptions = (a, b) => Object.keys(a).every((key) => a[key] === b[key]);
+
 /** How many works on the graph each work cites. */
 function outgoingCounts(works) {
   const result = new Map();
@@ -43,6 +45,10 @@ export default function App() {
   const [filters, setFilters] = useState(NO_FILTERS);
   const [selectedId, setSelectedId] = useState(null);
   const [axisAngle, setAxisAngle] = useState(DEFAULT_AXIS_ANGLE);
+  // Counts runs (builds, re-anchors, options changes), so the view re-fits after each one.
+  const [runCount, setRunCount] = useState(0);
+  // The options the current graph was built with, once a run finishes.
+  const [graphOptions, setGraphOptions] = useState(null);
 
   // What the graph shows: each book's chapters folded into the book (see foldBookParts).
   // Everything drawn or filtered works from this view; `graph` keeps every work.
@@ -77,11 +83,17 @@ export default function App() {
     setSelectedId(null);
     setFilters(NO_FILTERS);
     pendingUrl.current = { mode: 'push', options };
+    setRunCount((n) => n + 1);
     build(anchorId, options);
   };
 
+  // Rebuild the current graph with the form's options: a re-anchor on the same anchor, so works
+  // the user expanded (and earlier anchors) stay.
+  const handleApplyOptions = () => handleReanchor(graph.anchorId);
+
   const handleReanchor = (anchorId) => {
     pendingUrl.current = { mode: 'push', options };
+    setRunCount((n) => n + 1);
     reanchor(anchorId, options);
   };
 
@@ -89,6 +101,7 @@ export default function App() {
   useEffect(() => {
     const { anchor, options: urlOptions } = readUrlState(window.location.search);
     if (!anchor) return;
+    // The first run needs no new fit key: nothing has been fitted yet.
     pendingUrl.current = { mode: 'replace', options: urlOptions };
     build(anchor, urlOptions);
   }, [build]);
@@ -102,6 +115,7 @@ export default function App() {
       setFilters(NO_FILTERS);
       if (anchor) {
         pendingUrl.current = { mode: 'replace', options: urlOptions };
+        setRunCount((n) => n + 1);
         build(anchor, urlOptions);
       } else {
         pendingUrl.current = null;
@@ -122,6 +136,7 @@ export default function App() {
     pendingUrl.current = null;
     const anchorWork = graph.works.get(graph.anchorId);
     if (status !== 'done' || !anchorWork) return;
+    setGraphOptions(pending.options);
     const { pathname, search, hash } = window.location;
     const next = writeUrlState(search, anchorWork, pending.options);
     if (next === search) return;
@@ -152,6 +167,8 @@ export default function App() {
           options={options}
           onOptionsChange={setOptions}
           onBuild={handleBuild}
+          onApply={hasGraph ? handleApplyOptions : undefined}
+          canApply={graphOptions != null && !sameOptions(options, graphOptions)}
           busy={busy}
         />
         {hasGraph && (
@@ -212,6 +229,7 @@ export default function App() {
             onSelect={setSelectedId}
             building={busy}
             axisAngle={axisAngle}
+            fitKey={runCount}
           />
         ) : (
           status !== 'loading' && (

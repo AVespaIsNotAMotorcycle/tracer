@@ -114,6 +114,23 @@ describe('visibleIds', () => {
     expect(visibleIds(graph, NO_FILTERS, connections)).toEqual(new Set(['R', 'A', 'B', 'C']));
   });
 
+  it('filters by a corrected year where the listed one was set aside', () => {
+    const graph2 = {
+      ...addWorks(
+        emptyGraph(),
+        [work('R', [], 2003), work('A', ['R'], 1953), work('B', ['R'], 1988)],
+        'citing',
+      ),
+      anchorId: 'A',
+    };
+    const years = layoutYears(graph2);
+    const filters = { ...NO_FILTERS, minYear: 2000, minConnections: 0 };
+    const counts = inGraphConnectionCounts(graph2.works);
+    // R's listed 2003 passes "from 2000"; its corrected year (before 1953) doesn't.
+    expect(visibleIds(graph2, filters, counts).has('R')).toBe(true);
+    expect(visibleIds(graph2, filters, counts, [], years).has('R')).toBe(false);
+  });
+
   it('filters by year range, hiding works with no year', () => {
     const filters = { ...NO_FILTERS, minYear: 1960, maxYear: 2000 };
     expect(visibleIds(graph, filters, connections)).toEqual(new Set(['R', 'B']));
@@ -356,6 +373,47 @@ describe('layoutYears', () => {
   };
   const yearsOf = (graph) =>
     Object.fromEntries([...layoutYears(graph)].map(([id, { year }]) => [id, year]));
+
+  it('sets aside a listed year that most of its citers predate', () => {
+    // Listed as 2003 (a reprint), but cited in 1953, 1988 and 2010.
+    const graph = graphOf(
+      ['N', [], 2003, 'anchor'],
+      ['A', ['N'], 1953, 'citing'],
+      ['B', ['N'], 1988, 'citing'],
+      ['C', ['N'], 2010, 'citing'],
+    );
+    expect(layoutYears(graph).get('N')).toEqual({
+      year: 1952,
+      inferred: true,
+      listedYear: 2003,
+      citedFrom: 1953,
+    });
+  });
+
+  it('keeps a listed year that only one citer, or a minority of them, predates', () => {
+    const one = graphOf(['N', [], 2003, 'anchor'], ['A', ['N'], 1953, 'citing']);
+    expect(yearsOf(one).N).toBe(2003);
+    const minority = graphOf(
+      ['N', [], 2003, 'anchor'],
+      ['A', ['N'], 1953, 'citing'],
+      ['B', ['N'], 1988, 'citing'],
+      ['C', ['N'], 2005, 'citing'],
+      ['D', ['N'], 2008, 'citing'],
+      ['E', ['N'], 2010, 'citing'],
+    );
+    expect(yearsOf(minority).N).toBe(2003);
+  });
+
+  it('infers undated works from the corrected year', () => {
+    // N cites undated U; N's listed 2003 is set aside, so U goes before 1952, not 2002.
+    const graph = graphOf(
+      ['N', ['U'], 2003, 'anchor'],
+      ['A', ['N'], 1953, 'citing'],
+      ['B', ['N'], 1988, 'citing'],
+      ['U', [], null, 'cited'],
+    );
+    expect(yearsOf(graph).U).toBe(1951);
+  });
 
   it('uses publication years when known', () => {
     const graph = graphOf(['N', ['A'], 1971, 'anchor'], ['A', [], 1930, 'cited']);

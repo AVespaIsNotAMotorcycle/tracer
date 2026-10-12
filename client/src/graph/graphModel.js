@@ -238,16 +238,20 @@ export const NO_FILTERS = { minYear: null, maxYear: null, minConnections: 1, exc
  * @param {Filters} filters
  * @param {Map<string, number>} connections  From inGraphConnectionCounts.
  * @param {Iterable<string>} [alwaysShow]
+ * @param {Map<string, LayoutYear>} [years]  From layoutYears: year filters then use a corrected
+ *   year where the listed one was implausible.
  * @returns {Set<string>}
  */
-export function visibleIds(graph, filters, connections, alwaysShow = []) {
+export function visibleIds(graph, filters, connections, alwaysShow = [], years = null) {
   const keep = new Set([graph.anchorId, ...alwaysShow].filter(Boolean));
   const excluded = new Set(filters.excludedTypes ?? []);
   const visible = new Set();
   for (const work of graph.works.values()) {
+    const layout = years?.get(work.id);
+    const year = layout?.listedYear != null ? layout.year : work.year;
     const passes =
-      (filters.minYear == null || (work.year != null && work.year >= filters.minYear)) &&
-      (filters.maxYear == null || (work.year != null && work.year <= filters.maxYear)) &&
+      (filters.minYear == null || (year != null && year >= filters.minYear)) &&
+      (filters.maxYear == null || (year != null && year <= filters.maxYear)) &&
       (connections.get(work.id) ?? 0) >= filters.minConnections &&
       !excluded.has(sourceTypeKey(work.type));
     if (passes || keep.has(work.id)) visible.add(work.id);
@@ -569,13 +573,22 @@ export async function reanchorGraph(
 /**
  * @typedef {object} LayoutYear
  * @property {number | null} year  Year used for layout; null if nothing can be inferred.
- * @property {boolean} inferred   True when the work has no publication year of its own.
+ * @property {boolean} inferred   True when the work has no usable publication year of its own.
+ * @property {number} [listedYear]  The provider's year, when it was set aside as implausible.
+ * @property {number} [citedFrom]   Then, the year of the earliest work citing it.
  */
+
+// A work's listed year is set aside when at least this many of its dated citers, and more
+// than half of them, were published before it: a work can't be cited before it exists. Usually
+// it's the year of a reprint or digitized copy (OpenAlex dates Nachod's 1897 study 2003). Two,
+// not one, so a single citer with a wrong year doesn't move the work.
+const MIN_EARLIER_CITERS = 2;
 
 /**
  * The year each work is placed at in the layout.
  *
- * Works with a publication year use it. For undated works:
+ * Works with a publication year use it, unless most of the works citing it predate it (see
+ * MIN_EARLIER_CITERS): then it's placed just before its earliest citer. For undated works:
  * 1. Infer from dated neighbors on the graph: a work is older than any work that cites it and
  *    newer than any work it cites. With both bounds, use the midpoint; with one, place it a
  *    year beyond.
@@ -596,7 +609,18 @@ export function layoutYears(graph) {
     citedBy.get(target).push(source);
     cites.get(source).push(target);
   }
-  const yearOf = (id) => graph.works.get(id)?.year ?? null;
+  const listed = (id) => graph.works.get(id)?.year ?? null;
+  // Listed years that can't be right: most citers came first.
+  const corrected = new Map();
+  for (const work of graph.works.values()) {
+    if (work.year == null) continue;
+    const citerYears = (citedBy.get(work.id) ?? []).map(listed).filter((y) => y != null);
+    const earlier = citerYears.filter((y) => y < work.year);
+    if (earlier.length >= MIN_EARLIER_CITERS && earlier.length > citerYears.length / 2) {
+      corrected.set(work.id, Math.min(...earlier));
+    }
+  }
+  const yearOf = (id) => (corrected.has(id) ? corrected.get(id) - 1 : listed(id));
 
   const fromNeighbors = (id) => {
     const citerYears = (citedBy.get(id) ?? []).map(yearOf).filter((y) => y != null);
@@ -610,11 +634,21 @@ export function layoutYears(graph) {
   };
 
   const anchor = graph.works.get(graph.anchorId);
-  const anchorYear = anchor ? (anchor.year ?? fromNeighbors(anchor.id)) : null;
+  const anchorYear = anchor ? (yearOf(anchor.id) ?? fromNeighbors(anchor.id)) : null;
   const anchorCites = new Set(anchor?.references ?? []);
 
   const result = new Map();
   for (const work of graph.works.values()) {
+    if (corrected.has(work.id)) {
+      const citedFrom = corrected.get(work.id);
+      result.set(work.id, {
+        year: citedFrom - 1,
+        inferred: true,
+        listedYear: work.year,
+        citedFrom,
+      });
+      continue;
+    }
     if (work.year != null) {
       result.set(work.id, { year: work.year, inferred: false });
       continue;

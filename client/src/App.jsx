@@ -74,8 +74,8 @@ export default function App() {
   const years = useMemo(() => layoutYears(view), [view]);
   const outgoing = useMemo(() => outgoingCounts(view.works), [view.works]);
   const visible = useMemo(
-    () => visibleIds(view, filters, connections, shownId ? [shownId] : []),
-    [view, filters, connections, shownId],
+    () => visibleIds(view, filters, connections, shownId ? [shownId] : [], years),
+    [view, filters, connections, shownId, years],
   );
   // Per-chapter counts for a book's details, from the unfolded graph.
   const partCounts = useMemo(
@@ -276,6 +276,7 @@ export default function App() {
           work={selected}
           relation={graph.relations.get(selected.id)}
           citedByOnGraph={counts.get(selected.id) ?? 0}
+          yearInfo={years.get(selected.id)}
           citesOnGraph={outgoing.get(selected.id) ?? 0}
           parts={parts}
           expanded={expandedDirections(graph, [selected.id, ...parts.map((p) => p.work.id)])}

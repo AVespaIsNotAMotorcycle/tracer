@@ -229,6 +229,12 @@ function useElementSize(ref) {
   return size;
 }
 
+/** " (1971)" for a tooltip; " (before 1953)" for a listed year set aside as implausible. */
+const yearLabel = (work, layout) => {
+  if (layout?.listedYear != null) return ` (before ${layout.citedFrom})`;
+  return work.year ? ` (${work.year})` : '';
+};
+
 const truncate = (text, max) => (text.length > max ? `${text.slice(0, max - 1)}…` : text);
 
 const escapeHtml = (text) =>
@@ -752,7 +758,7 @@ export default function GraphView({
           nodeVal="val"
           nodeLabel={(node) =>
             escapeHtml(
-              `${node.work.title ?? 'Untitled'}${node.work.year ? ` (${node.work.year})` : ''}`,
+              `${node.work.title ?? 'Untitled'}${yearLabel(node.work, years.get(node.id))}`,
             )
           }
           nodeVisibility={(node) => visible.has(node.id)}

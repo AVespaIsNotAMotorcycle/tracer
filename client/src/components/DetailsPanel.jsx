@@ -24,7 +24,8 @@ const doiLink = (work) => work.links.find((link) => link.kind === 'doi');
  * `parts` (chapters folded into it on the graph; see foldBookParts), each as
  * `{ work, citedByOnGraph, citesOnGraph }`. A chapter's authors are shown only when they
  * differ from the book's. A work not on OpenAlex (known only from a reference list) can't be
- * expanded or made the anchor, so it shows its citation as printed instead. `onCollapse` is
+ * expanded or made the anchor, so it shows its citation as printed instead. `yearInfo` (from
+ * layoutYears) explains a listed year that was set aside as implausible. `onCollapse` is
  * given only for works the user expanded, and undoes that.
  */
 export default function DetailsPanel({
@@ -32,6 +33,7 @@ export default function DetailsPanel({
   relation,
   citedByOnGraph,
   citesOnGraph,
+  yearInfo,
   parts = [],
   expanded,
   expanding,
@@ -42,7 +44,10 @@ export default function DetailsPanel({
   onClose,
 }) {
   const fullyExpanded = expanded.has('citing') && expanded.has('cited');
-  const byline = [work.year ?? 'Year unknown', work.venue].filter(Boolean).join(' · ');
+  // A listed year set aside as implausible (see layoutYears) shows as a bound instead.
+  const implausible = yearInfo?.listedYear != null;
+  const year = implausible ? `Before ${yearInfo.citedFrom}` : (work.year ?? 'Year unknown');
+  const byline = [year, work.venue].filter(Boolean).join(' · ');
   const { label: typeLabel, Icon: TypeIcon } = sourceType(work.type);
   const expandable = canExpand(work);
 
@@ -62,6 +67,12 @@ export default function DetailsPanel({
           {typeLabel} · {byline}
         </span>
       </p>
+      {implausible && (
+        <p className="muted small">
+          OpenAlex gives {yearInfo.listedYear}, but works on this graph cite it from{' '}
+          {yearInfo.citedFrom} on, so that&rsquo;s probably the year of a reprint or digitized copy.
+        </p>
+      )}
       {!expandable && (
         <>
           <p className="muted small">

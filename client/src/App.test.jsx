@@ -237,6 +237,27 @@ describe('App', () => {
     expect(screen.getByRole('checkbox', { name: /Not on OpenAlex/ })).toBeChecked();
   });
 
+  it('explains a listed year that its citers predate', async () => {
+    const reprint = work('anchor', { year: 2003, references: [] });
+    vi.mocked(api.searchWorks).mockResolvedValue([reprint]);
+    vi.mocked(api.getWork).mockResolvedValue(reprint);
+    vi.mocked(api.getCiting).mockImplementation(async (id) =>
+      id === 'anchor'
+        ? [
+            work('early', { year: 1953, references: ['anchor'] }),
+            work('later', { year: 1988, references: ['anchor'] }),
+          ]
+        : [],
+    );
+    vi.mocked(api.getCited).mockResolvedValue([]);
+    await buildFromSearch(3);
+
+    fireEvent.click(within(graph()).getByRole('button', { name: 'Title anchor' }));
+    const details = screen.getByRole('complementary', { name: 'Title anchor' });
+    expect(within(details).getByText(/Before 1953/)).toBeInTheDocument();
+    expect(within(details).getByText(/OpenAlex gives 2003/)).toBeInTheDocument();
+  });
+
   it('builds directly from a DOI without searching', async () => {
     render(<App />);
     fireEvent.change(screen.getByLabelText('Title, DOI, or OpenAlex ID'), {

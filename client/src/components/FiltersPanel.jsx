@@ -21,7 +21,7 @@ export default function FiltersPanel({
   filters,
   onChange,
   works,
-  maxCount,
+  maxConnections,
   visibleCount,
   totalCount,
 }) {
@@ -55,13 +55,13 @@ export default function FiltersPanel({
         </label>
       </div>
       <label className="filter-range">
-        Cited by at least {filters.minCitations} on graph
+        Cited by or cites at least {filters.minConnections} on graph
         <input
           type="range"
-          min={0}
-          max={Math.max(maxCount, 1)}
-          value={filters.minCitations}
-          onChange={(event) => onChange({ ...filters, minCitations: Number(event.target.value) })}
+          min={1}
+          max={maxConnections}
+          value={filters.minConnections}
+          onChange={(event) => onChange({ ...filters, minConnections: Number(event.target.value) })}
         />
       </label>
       <fieldset className="type-filter">

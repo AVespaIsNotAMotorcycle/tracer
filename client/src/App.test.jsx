@@ -396,6 +396,28 @@ describe('App', () => {
     );
   });
 
+  it('filters by links in either direction, from a minimum of 1', async () => {
+    // more cites ref; once ref is expanded it's linked to anchor, citer and more.
+    await buildFromSearch();
+    const slider = screen.getByRole('slider', { name: /Cited by or cites at least 1 on graph/ });
+    expect(slider).toHaveAttribute('min', '1');
+    expect(slider).toHaveAttribute('max', '2');
+
+    fireEvent.click(within(graph()).getByRole('button', { name: 'Title ref' }));
+    fireEvent.click(screen.getByRole('button', { name: 'Expand citing and cited works' }));
+    await within(graph()).findByRole('button', { name: 'Title more' });
+    fireEvent.click(screen.getByRole('button', { name: 'Close details' }));
+    fireEvent.change(slider, { target: { value: '3' } });
+
+    expect(screen.getByRole('slider', { name: /at least 3 on graph/ })).toBeInTheDocument();
+    // Only ref has three links; the anchor always stays.
+    expect(
+      within(graph())
+        .getAllByRole('button')
+        .map((b) => b.textContent),
+    ).toEqual(['Title anchor', 'Title ref']);
+  });
+
   describe('source type filter', () => {
     const withBooks = () =>
       vi

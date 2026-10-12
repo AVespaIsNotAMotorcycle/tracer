@@ -11,6 +11,7 @@ import {
   deriveEdges,
   foldBookParts,
   inGraphCitationCounts,
+  inGraphConnectionCounts,
   layoutYears,
   NO_FILTERS,
   visibleIds,
@@ -56,11 +57,12 @@ export default function App() {
   // A selected chapter whose book has since arrived is shown as the book.
   const shownId = selectedId ? (bookOf.get(selectedId) ?? selectedId) : null;
   const counts = useMemo(() => inGraphCitationCounts(view.works), [view.works]);
+  const connections = useMemo(() => inGraphConnectionCounts(view.works), [view.works]);
   const years = useMemo(() => layoutYears(view), [view]);
   const outgoing = useMemo(() => outgoingCounts(view.works), [view.works]);
   const visible = useMemo(
-    () => visibleIds(view, filters, counts, shownId ? [shownId] : []),
-    [view, filters, counts, shownId],
+    () => visibleIds(view, filters, connections, shownId ? [shownId] : []),
+    [view, filters, connections, shownId],
   );
   // Per-chapter counts for a book's details, from the unfolded graph.
   const partCounts = useMemo(
@@ -71,7 +73,7 @@ export default function App() {
     () => (partsOf.size ? outgoingCounts(graph.works) : null),
     [graph.works, partsOf],
   );
-  const maxCount = useMemo(() => Math.max(0, ...counts.values()), [counts]);
+  const maxConnections = useMemo(() => Math.max(1, ...connections.values()), [connections]);
 
   // How the next completed build or re-anchor updates the URL: 'push' a history entry when the
   // user started it (so Back returns to the previous anchor), 'replace' when it came from the
@@ -176,7 +178,7 @@ export default function App() {
             filters={filters}
             onChange={setFilters}
             works={view.works}
-            maxCount={maxCount}
+            maxConnections={maxConnections}
             visibleCount={visible.size}
             totalCount={view.works.size}
           />

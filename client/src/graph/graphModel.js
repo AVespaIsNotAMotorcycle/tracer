@@ -182,16 +182,34 @@ export function foldBookParts(graph) {
 }
 
 /**
+ * How many works on the graph each work is linked to, citing it or cited by it. A work that
+ * both cites and is cited by another counts it once. Drives the connections filter.
+ *
+ * @param {Map<string, object>} works
+ * @returns {Map<string, number>}
+ */
+export function inGraphConnectionCounts(works) {
+  const neighbors = new Map([...works.keys()].map((id) => [id, new Set()]));
+  for (const { source, target } of deriveEdges(works)) {
+    neighbors.get(source).add(target);
+    neighbors.get(target).add(source);
+  }
+  return new Map([...neighbors].map(([id, set]) => [id, set.size]));
+}
+
+/**
  * @typedef {object} Filters
  * @property {number | null} minYear
  * @property {number | null} maxYear
- * @property {number} minCitations  Minimum in-graph citation count.
+ * @property {number} minConnections
+ *   Minimum number of works on the graph that cite it or that it cites (see
+ *   inGraphConnectionCounts). 1, the lowest setting, shows every work linked to another.
  * @property {string[]} excludedTypes  Source type keys to hide (see sourceTypeKeys.js). An
  *   exclusion list, so types that first appear after expanding a node are shown.
  */
 
 /** @type {Filters} */
-export const NO_FILTERS = { minYear: null, maxYear: null, minCitations: 0, excludedTypes: [] };
+export const NO_FILTERS = { minYear: null, maxYear: null, minConnections: 1, excludedTypes: [] };
 
 /**
  * IDs of works that pass the filters. The anchor and any `alwaysShow` IDs (e.g. the selection)
@@ -199,11 +217,11 @@ export const NO_FILTERS = { minYear: null, maxYear: null, minCitations: 0, exclu
  *
  * @param {Graph} graph
  * @param {Filters} filters
- * @param {Map<string, number>} counts
+ * @param {Map<string, number>} connections  From inGraphConnectionCounts.
  * @param {Iterable<string>} [alwaysShow]
  * @returns {Set<string>}
  */
-export function visibleIds(graph, filters, counts, alwaysShow = []) {
+export function visibleIds(graph, filters, connections, alwaysShow = []) {
   const keep = new Set([graph.anchorId, ...alwaysShow].filter(Boolean));
   const excluded = new Set(filters.excludedTypes ?? []);
   const visible = new Set();
@@ -211,7 +229,7 @@ export function visibleIds(graph, filters, counts, alwaysShow = []) {
     const passes =
       (filters.minYear == null || (work.year != null && work.year >= filters.minYear)) &&
       (filters.maxYear == null || (work.year != null && work.year <= filters.maxYear)) &&
-      (counts.get(work.id) ?? 0) >= filters.minCitations &&
+      (connections.get(work.id) ?? 0) >= filters.minConnections &&
       !excluded.has(sourceTypeKey(work.type));
     if (passes || keep.has(work.id)) visible.add(work.id);
   }

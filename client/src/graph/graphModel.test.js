@@ -10,6 +10,7 @@ import {
   expandWorks,
   foldBookParts,
   inGraphCitationCounts,
+  inGraphConnectionCounts,
   layoutYears,
   reanchorGraph,
   NO_FILTERS,
@@ -67,6 +68,14 @@ describe('inGraphCitationCounts', () => {
   });
 });
 
+describe('inGraphConnectionCounts', () => {
+  it('counts works linked in either direction, once each', () => {
+    // A and B cite each other; C cites A; D is linked to nothing.
+    const works = worksMap(work('A', ['B']), work('B', ['A']), work('C', ['A']), work('D'));
+    expect(Object.fromEntries(inGraphConnectionCounts(works))).toEqual({ A: 2, B: 1, C: 1, D: 0 });
+  });
+});
+
 describe('visibleIds', () => {
   const graph = {
     ...addWorks(
@@ -81,15 +90,15 @@ describe('visibleIds', () => {
     ),
     anchorId: 'R',
   };
-  const counts = inGraphCitationCounts(graph.works);
+  const connections = inGraphConnectionCounts(graph.works);
 
   it('shows everything with no filters', () => {
-    expect(visibleIds(graph, NO_FILTERS, counts)).toEqual(new Set(['R', 'A', 'B', 'C']));
+    expect(visibleIds(graph, NO_FILTERS, connections)).toEqual(new Set(['R', 'A', 'B', 'C']));
   });
 
   it('filters by year range, hiding works with no year', () => {
     const filters = { ...NO_FILTERS, minYear: 1960, maxYear: 2000 };
-    expect(visibleIds(graph, filters, counts)).toEqual(new Set(['R', 'B']));
+    expect(visibleIds(graph, filters, connections)).toEqual(new Set(['R', 'B']));
   });
 
   it('filters by source type, grouping unknown types as other', () => {
@@ -106,7 +115,7 @@ describe('visibleIds', () => {
       ),
       anchorId: 'N',
     };
-    const typedCounts = inGraphCitationCounts(typed.works);
+    const typedCounts = inGraphConnectionCounts(typed.works);
 
     expect(visibleIds(typed, { ...NO_FILTERS, excludedTypes: ['article'] }, typedCounts)).toEqual(
       new Set(['N', 'A', 'C']), // N is the anchor, so it stays.
@@ -116,9 +125,10 @@ describe('visibleIds', () => {
     );
   });
 
-  it('filters by in-graph citations but always keeps the anchor and pinned IDs', () => {
-    const filters = { ...NO_FILTERS, minCitations: 2 };
-    expect(visibleIds(graph, filters, counts, ['C'])).toEqual(new Set(['R', 'A', 'C']));
+  it('filters by in-graph connections but always keeps the anchor and pinned IDs', () => {
+    // R and A are each linked to two works; B and C to one.
+    const filters = { ...NO_FILTERS, minConnections: 2 };
+    expect(visibleIds(graph, filters, connections, ['C'])).toEqual(new Set(['R', 'A', 'C']));
   });
 });
 

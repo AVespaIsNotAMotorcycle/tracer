@@ -19,6 +19,9 @@ const SLICES = 9;
  * clear of `obstacles`, each `{ x, y, r }` with r already including any margin. Returns 0 when
  * a straight line is clear. When no curve within MAX_CURVATURE clears every circle, returns
  * the one crossing the fewest.
+ *
+ * Runs every frame for every link, so it counts with a sweep: O(n log n) in the circles near
+ * the link, where checking each candidate bend against each circle was O(n²).
  */
 export function routeLink(start, end, obstacles) {
   const dx = end.x - start.x;
@@ -31,12 +34,15 @@ export function routeLink(start, end, obstacles) {
   // Forbidden ranges of control distance, per circle the curve could hit. A circle is the
   // union of its slices across the chord, so the curve misses it when it misses every slice;
   // checking a few slices (not just the one through the centre) keeps sloped curves clear.
-  const forbidden = [];
+  // Each circle's ranges are merged, so a bend inside them counts as one hit on that circle.
+  const lows = [];
+  const highs = [];
+  const ranges = [];
   for (const { x, y, r } of obstacles) {
     const along = (x - start.x) * ux + (y - start.y) * uy;
     // force-graph's perpendicular is (uy, -ux): the direction of angle - 90°.
     const across = (x - start.x) * uy - (y - start.y) * ux;
-    const ranges = [];
+    ranges.length = 0;
     for (let i = 0; i < SLICES; i++) {
       const offset = r * ((2 * i) / (SLICES - 1) - 1);
       const t = (along + offset) / length;
@@ -47,18 +53,41 @@ export function routeLink(start, end, obstacles) {
       if (Math.abs(across) - half > k * MAX_CURVATURE * length) continue;
       ranges.push([(across - half) / k, (across + half) / k]);
     }
-    if (ranges.length > 0) forbidden.push(ranges);
+    if (ranges.length === 0) continue;
+    // Ranges are open: a bend exactly at an end just touches the circle. So only ranges that
+    // strictly overlap merge.
+    ranges.sort((a, b) => a[0] - b[0]);
+    let [low, high] = ranges[0];
+    for (let i = 1; i < ranges.length; i++) {
+      if (ranges[i][0] < high) high = Math.max(high, ranges[i][1]);
+      else {
+        lows.push(low);
+        highs.push(high);
+        [low, high] = ranges[i];
+      }
+    }
+    lows.push(low);
+    highs.push(high);
   }
-  if (forbidden.length === 0) return 0;
+  if (lows.length === 0) return 0;
 
+  // A bend d hits the circles whose range has low < d < high: (lows below d) - (highs at or
+  // below d). That count only changes at range ends, so the fewest hits is at an end, at 0,
+  // or at the limit; sweep through them in order.
   const limit = MAX_CURVATURE * length;
-  const candidates = [0, ...forbidden.flat(2)];
-  const inside = (d, [low, high]) => d > low && d < high;
+  lows.sort((a, b) => a - b);
+  highs.sort((a, b) => a - b);
+  const candidates = [0, -limit, limit, ...lows, ...highs]
+    .filter((d) => Math.abs(d) <= limit)
+    .sort((a, b) => a - b);
   let best = 0;
   let bestHits = Infinity;
+  let below = 0;
+  let ended = 0;
   for (const d of candidates) {
-    if (Math.abs(d) > limit) continue;
-    const hits = forbidden.filter((ranges) => ranges.some((range) => inside(d, range))).length;
+    while (below < lows.length && lows[below] < d) below++;
+    while (ended < highs.length && highs[ended] <= d) ended++;
+    const hits = below - ended;
     if (hits < bestHits || (hits === bestHits && Math.abs(d) < Math.abs(best))) {
       best = d;
       bestHits = hits;
@@ -92,6 +121,43 @@ const MIN_TRUNK = 8;
 const BRANCH_TANGENT = 0.35;
 // Samples along a curve when checking that it clears every circle.
 const CURVE_SAMPLES = 24;
+// Side of a spatial-grid cell (graph units), about two typical circles across.
+const GRID_CELL = 80;
+
+/**
+ * Buckets nodes by position, so finding the circles near a link or trunk looks only at the
+ * cells it covers instead of every node. `near(box)` returns every node whose circle (radius
+ * plus clearance) could overlap the box, and maybe a few more; callers still check distance.
+ */
+function createGrid(nodes, radius, clearance) {
+  const cells = new Map();
+  let maxR = 0;
+  const cellOf = (value) => Math.floor(value / GRID_CELL);
+  for (const node of nodes) {
+    const key = `${cellOf(node.x)},${cellOf(node.y)}`;
+    if (!cells.has(key)) cells.set(key, []);
+    cells.get(key).push(node);
+    maxR = Math.max(maxR, radius(node) + clearance);
+  }
+  return {
+    near(minX, minY, maxX, maxY) {
+      // A circle can overlap the box from a cell just outside it.
+      const x0 = cellOf(minX - maxR);
+      const x1 = cellOf(maxX + maxR);
+      const y0 = cellOf(minY - maxR);
+      const y1 = cellOf(maxY + maxR);
+      // A huge box (a long link) covers more cells than there are nodes: just scan them.
+      if ((x1 - x0 + 1) * (y1 - y0 + 1) > nodes.length) return nodes;
+      const found = [];
+      for (let cx = x0; cx <= x1; cx++)
+        for (let cy = y0; cy <= y1; cy++) {
+          const cell = cells.get(`${cx},${cy}`);
+          if (cell) for (const node of cell) found.push(node);
+        }
+      return found;
+    },
+  };
+}
 
 /** Angle-sorted runs of entries whose directions span at most BUNDLE_ANGLE. */
 function clusterByAngle(entries) {
@@ -128,7 +194,7 @@ function clusterByAngle(entries) {
  * Builds a bundle from a cluster of links at `node`, or returns null when their trunk would be
  * too short. The trunk stops short of any circle in its way.
  */
-function makeBundle(node, cluster, outgoing, obstacles, radius, clearance) {
+function makeBundle(node, cluster, outgoing, grid, radius, clearance) {
   let ux = 0;
   let uy = 0;
   for (const { angle } of cluster) {
@@ -141,7 +207,15 @@ function makeBundle(node, cluster, outgoing, obstacles, radius, clearance) {
   const spread = (cluster.at(-1).angle - cluster[0].angle + 2 * Math.PI) % (2 * Math.PI);
   const shortest = Math.min(...cluster.map((entry) => entry.length));
   let reach = Math.min(BUNDLE_GAP / Math.max(spread, 1e-3), BUNDLE_REACH * shortest);
-  for (const other of obstacles) {
+  const tipX = node.x + ux * reach;
+  const tipY = node.y + uy * reach;
+  const nearby = grid.near(
+    Math.min(node.x, tipX),
+    Math.min(node.y, tipY),
+    Math.max(node.x, tipX),
+    Math.max(node.y, tipY),
+  );
+  for (const other of nearby) {
     if (other === node) continue;
     const r = radius(other) + clearance;
     const along = (other.x - node.x) * ux + (other.y - node.y) * uy;
@@ -166,11 +240,13 @@ function makeBundle(node, cluster, outgoing, obstacles, radius, clearance) {
  * link: the free part is a Bézier curve from `start` to `end` (a bundle's junction, or the
  * node itself) through `controls` (none for a straight line, one for quadratic, two for
  * cubic), and the bundles' trunks join it to the nodes. A branch leaves its junction along
- * the trunk when that curve is clear; otherwise it bends around circles like any other link. Returns the bundles. `radius(node)` gives a
- * node's radius; `clearance` is the gap kept around each circle.
+ * the trunk when that curve is clear; otherwise it bends around circles like any other link.
+ * Returns the bundles. `radius(node)` gives a node's radius; `clearance` is the gap kept around
+ * each circle.
  */
 export function layoutLinks(links, nodes, radius, clearance, isVisible = () => true) {
   const placed = nodes.filter((node) => node.x != null);
+  const grid = createGrid(placed, radius, clearance);
   const visible = [];
   for (const link of links) {
     const { source, target } = link;
@@ -202,7 +278,7 @@ export function layoutLinks(links, nodes, radius, clearance, isVisible = () => t
     if (entries.length < 2) continue;
     for (const cluster of clusterByAngle(entries)) {
       if (cluster.length < 2) continue;
-      const bundle = makeBundle(node, cluster, outgoing, placed, radius, clearance);
+      const bundle = makeBundle(node, cluster, outgoing, grid, radius, clearance);
       if (!bundle) continue;
       bundles.push(bundle);
       for (const link of bundle.links)
@@ -218,7 +294,7 @@ export function layoutLinks(links, nodes, radius, clearance, isVisible = () => t
     const obstacles = obstaclesNear(
       route.start,
       route.end,
-      placed,
+      grid,
       [source, target],
       radius,
       clearance,
@@ -267,14 +343,14 @@ function curveClear(start, controls, end, obstacles) {
 }
 
 /** Circles near enough to the segment start-end that an allowed curve could hit them. */
-function obstaclesNear(start, end, nodes, skip, radius, clearance) {
+function obstaclesNear(start, end, grid, skip, radius, clearance) {
   const minX = Math.min(start.x, end.x);
   const maxX = Math.max(start.x, end.x);
   const minY = Math.min(start.y, end.y);
   const maxY = Math.max(start.y, end.y);
   const reach = MAX_CURVATURE * Math.hypot(end.x - start.x, end.y - start.y) * 0.5;
   const obstacles = [];
-  for (const node of nodes) {
+  for (const node of grid.near(minX - reach, minY - reach, maxX + reach, maxY + reach)) {
     if (skip.includes(node)) continue;
     const r = radius(node) + clearance;
     if (

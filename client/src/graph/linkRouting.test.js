@@ -63,6 +63,49 @@ describe('routeLink', () => {
     }
   });
 
+  it('always finds a bend crossing the fewest circles (randomized, against brute force)', () => {
+    // The router's model, checked the slow way: each circle forbids bends in a few open
+    // ranges (one per slice across it), and a bend crosses it if any range contains it.
+    const SLICES = 9;
+    const length = 100;
+    const forbidden = (o) => {
+      const ranges = [];
+      for (let i = 0; i < SLICES; i++) {
+        const offset = o.r * ((2 * i) / (SLICES - 1) - 1);
+        const t = (o.x + offset) / length;
+        if (t <= 0 || t >= 1) continue;
+        const k = 2 * t * (1 - t);
+        const half = Math.sqrt(o.r ** 2 - offset ** 2);
+        // routeLink measures across as (y - start.y)·(-1) here, since the chord runs along +x.
+        ranges.push([(-o.y - half) / k, (-o.y + half) / k]);
+      }
+      return ranges;
+    };
+    // Within 1e-9 of a range end counts as touching: curvature × length rounds.
+    const crossed = (d, all) =>
+      all.filter((ranges) => ranges.some(([low, high]) => low + 1e-9 < d && d < high - 1e-9))
+        .length;
+
+    let seed = 1;
+    const random = () => ((seed = (seed * 16807) % 2147483647) - 1) / 2147483646;
+    for (let trial = 0; trial < 200; trial++) {
+      const obstacles = Array.from({ length: 1 + Math.floor(random() * 8) }, () => ({
+        x: 5 + random() * 90,
+        y: -40 + random() * 80,
+        r: 3 + random() * 15,
+      }));
+      const all = obstacles.map(forbidden);
+      const limit = MAX_CURVATURE * length;
+      const candidates = [0, -limit, limit, ...all.flat(2)].filter((d) => Math.abs(d) <= limit);
+      for (let d = -limit; d <= limit; d += 0.1) candidates.push(d);
+      const fewest = Math.min(...candidates.map((d) => crossed(d, all)));
+
+      const chosen = routeLink(start, end, obstacles) * length;
+      expect(Math.abs(chosen)).toBeLessThanOrEqual(limit + 1e-9);
+      expect(crossed(chosen, all)).toBe(fewest);
+    }
+  });
+
   it('never bends past MAX_CURVATURE', () => {
     const wall = [-60, -40, -20, 0, 20, 40, 60].map((y) => ({ x: 50, y, r: 12 }));
     expect(Math.abs(routeLink(start, end, wall))).toBeLessThanOrEqual(MAX_CURVATURE);
@@ -95,6 +138,20 @@ describe('layoutLinks', () => {
     layoutLinks([link], [a, b, c], radius, 2, () => false);
     expect(link.route).toBeNull();
     layoutLinks([link], [a, b, c], radius, 2);
+    expect(link.route.controls).toHaveLength(1);
+  });
+
+  it('finds circles whose centers lie in grid cells beyond the link but reach into it', () => {
+    const a = node('a', 0, 0);
+    const b = node('b', 400, 0);
+    // Centered well off the line (and in another grid cell), but big enough to cover it.
+    // Its cell is beyond the link's box; only padding the box by the largest radius finds it.
+    const big = node('big', 200, 260);
+    const sizes = new Map([[big, 270]]);
+    const link = { source: a, target: b };
+    // Fill the rest of the graph so the grid is used rather than a full scan.
+    const filler = Array.from({ length: 200 }, (_, i) => node(`f${i}`, 5000 + i * 100, 5000));
+    layoutLinks([link], [a, b, big, ...filler], (n) => sizes.get(n) ?? 5, 2);
     expect(link.route.controls).toHaveLength(1);
   });
 

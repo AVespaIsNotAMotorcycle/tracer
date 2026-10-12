@@ -30,6 +30,9 @@
   --node-citing: var(--palette-3);
   --node-cited: var(--palette-1);
   --node-outline: color-mix(in srgb, var(--ink) 60%, transparent);
+  --node-icon-on-anchor: var(--paper);
+  --node-icon-on-citing: var(--ink);
+  --node-icon-on-cited: var(--ink);
   --node-selected: var(--ink);
   --graph-link: color-mix(in srgb, var(--ink) 22%, transparent);
   --graph-link-active: var(--palette-2);
@@ -61,6 +64,9 @@
     --node-anchor: color-mix(in oklab, var(--palette-2) 75%, white);
     --node-cited: color-mix(in oklab, var(--palette-1) 80%, white);
     --node-outline: color-mix(in srgb, black 45%, transparent);
+    --node-icon-on-anchor: var(--ink);
+    --node-icon-on-citing: var(--ink);
+    --node-icon-on-cited: var(--ink);
     --node-selected: var(--palette-4);
     --graph-link: color-mix(in srgb, var(--paper) 18%, transparent);
     --graph-link-active: var(--palette-3);
@@ -151,6 +157,19 @@ button.primary,
   overflow: hidden;
   clip: rect(0 0 0 0);
   white-space: nowrap;
+}
+
+/* Icons (lucide-react): sized to the surrounding text, colored by it. */
+.icon {
+  width: 1.1em;
+  height: 1.1em;
+  flex-shrink: 0;
+}
+
+.with-icon {
+  display: flex;
+  align-items: center;
+  gap: 6px;
 }
 
 /* Layout */
@@ -357,6 +376,22 @@ button.primary,
 
 .swatch.cited {
   background: var(--node-cited);
+}
+
+.source-types {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  display: grid;
+  gap: 4px;
+  font-size: 0.9em;
+}
+
+.source-types li {
+  display: grid;
+  grid-template-columns: auto 1fr auto;
+  align-items: center;
+  gap: 8px;
 }
 
 /* Canvas */

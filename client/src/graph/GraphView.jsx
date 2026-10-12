@@ -3,12 +3,23 @@ import { useEffect, useMemo, useRef, useState } from 'react';
 import ForceGraph2D from 'react-force-graph-2d';
 import { axisGeometry, DEFAULT_AXIS_ANGLE } from './axis.js';
 import { deriveEdges, yearPositions } from './graphModel.js';
+import { iconPath2D } from './sourceTypes.js';
 
-const NODE_REL_SIZE = 4;
+// Node radius = NODE_MIN_RADIUS + NODE_GROWTH * sqrt(in-graph citations). The minimum keeps
+// every circle big enough to hold its source-type icon; size still grows with citations.
+const NODE_MIN_RADIUS = 9;
+const NODE_GROWTH = 3;
 
-/** Circle area grows with in-graph citations: radius = relSize * sqrt(1 + count). */
-const nodeVal = (count) => 1 + count;
-const radiusOf = (val) => NODE_REL_SIZE * Math.sqrt(val);
+// Source-type icons are drawn inside circles at least this many screen pixels in radius;
+// smaller ones would be illegible clutter.
+const ICON_MIN_SCREEN_RADIUS = 7;
+// Icon box side as a fraction of the circle's diameter (lucide icons are drawn on 24x24).
+const ICON_FILL = 0.6;
+
+// force-graph sizes nodes as sqrt(val) * nodeRelSize. With nodeRelSize 1, val = radius², which
+// keeps arrowheads and hit areas on the circle's edge.
+const nodeVal = (count) => (NODE_MIN_RADIUS + NODE_GROWTH * Math.sqrt(count)) ** 2;
+const radiusOf = (val) => Math.sqrt(val);
 
 // Layout tuning. Years sit close together along the time axis; works spread out across it.
 const YEAR_SPACING = 15; // Distance between consecutive years along the axis.
@@ -56,6 +67,9 @@ const COLOR_VARS = {
   cited: '--node-cited',
   selected: '--node-selected',
   outline: '--node-outline',
+  iconOnAnchor: '--node-icon-on-anchor',
+  iconOnCiting: '--node-icon-on-citing',
+  iconOnCited: '--node-icon-on-cited',
   link: '--graph-link',
   linkActive: '--graph-link-active',
   label: '--text',
@@ -252,6 +266,42 @@ export default function GraphView({
     graphRef.current?.zoomToFit(200, 40);
   }, [geometry, nodeCache]);
 
+  // Automation hook (browser drivers, e.g. the run-tracer skill): with ?automation in the URL,
+  // expose where each node is on screen, since nodes are canvas pixels, not DOM elements.
+  // Off by default.
+  useEffect(() => {
+    if (!new URLSearchParams(window.location.search).has('automation')) return undefined;
+    window.__tracerAutomation = {
+      nodes: () => {
+        const fg = graphRef.current;
+        const canvas = containerRef.current?.querySelector('canvas');
+        if (!fg || !canvas) return [];
+        const rect = canvas.getBoundingClientRect();
+        const scale = fg.zoom();
+        return data.nodes
+          .filter((node) => node.x != null && visible.has(node.id))
+          .map((node) => {
+            const point = fg.graph2ScreenCoords(node.x, node.y);
+            return {
+              id: node.id,
+              relation: node.relation,
+              title: node.work.title,
+              type: node.work.type,
+              x: rect.left + point.x,
+              y: rect.top + point.y,
+              radius: radiusOf(node.val) * scale,
+            };
+          })
+          .filter(
+            (n) => n.x >= rect.left && n.x <= rect.right && n.y >= rect.top && n.y <= rect.bottom,
+          );
+      },
+    };
+    return () => {
+      delete window.__tracerAutomation;
+    };
+  }, [data, visible]);
+
   // Fit the view once the first layout settles after a new anchor.
   const fittedAnchor = useRef(null);
   const handleEngineStop = () => {
@@ -288,6 +338,26 @@ export default function GraphView({
       ctx.lineWidth = 3 / scale;
       ctx.strokeStyle = colors.selected;
       ctx.stroke();
+    }
+
+    // Source-type icon, once the circle is big enough on screen to read it.
+    const icon = r * scale >= ICON_MIN_SCREEN_RADIUS ? iconPath2D(node.work.type) : null;
+    if (icon) {
+      const size = 2 * r * ICON_FILL;
+      ctx.save();
+      ctx.translate(node.x - size / 2, node.y - size / 2);
+      ctx.scale(size / 24, size / 24);
+      ctx.lineWidth = 2;
+      ctx.lineCap = 'round';
+      ctx.lineJoin = 'round';
+      ctx.strokeStyle =
+        node.relation === 'anchor'
+          ? colors.iconOnAnchor
+          : node.relation === 'citing'
+            ? colors.iconOnCiting
+            : colors.iconOnCited;
+      ctx.stroke(icon);
+      ctx.restore();
     }
 
     // Label the anchor and selection always, other works once zoomed in enough to read them.
@@ -359,7 +429,7 @@ export default function GraphView({
           width={width}
           height={height}
           graphData={data}
-          nodeRelSize={NODE_REL_SIZE}
+          nodeRelSize={1}
           nodeVal="val"
           nodeLabel={(node) =>
             escapeHtml(

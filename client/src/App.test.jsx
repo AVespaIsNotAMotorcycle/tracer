@@ -62,7 +62,7 @@ beforeEach(() => {
   vi.mocked(api.getCited).mockImplementation(async (id) => (id === 'anchor' ? [ref] : []));
 });
 
-async function buildFromSearch() {
+async function buildFromSearch(expectedNodes = 3) {
   render(<App />);
   fireEvent.change(screen.getByLabelText('Title, DOI, or OpenAlex ID'), {
     target: { value: 'moral economy' },
@@ -70,7 +70,7 @@ async function buildFromSearch() {
   fireEvent.click(screen.getByRole('button', { name: 'Go' }));
   const results = await screen.findByRole('list', { name: 'Search results' });
   fireEvent.click(within(results).getByRole('button', { name: /Title anchor/ }));
-  await waitFor(() => expect(within(graph()).getAllByRole('button')).toHaveLength(3));
+  await waitFor(() => expect(within(graph()).getAllByRole('button')).toHaveLength(expectedNodes));
 }
 
 describe('App', () => {
@@ -252,6 +252,29 @@ describe('App', () => {
     await waitFor(() =>
       expect(screen.queryByRole('list', { name: 'Loading progress' })).toBeNull(),
     );
+  });
+
+  it('lists the source types on the graph with counts', async () => {
+    vi.mocked(api.getCited).mockImplementation(async (id) =>
+      id === 'anchor'
+        ? [ref, work('book1', { type: 'book' }), work('book2', { type: 'book' })]
+        : [],
+    );
+    await buildFromSearch(5);
+
+    const legend = screen.getByRole('region', { name: 'Source types' });
+    const rows = within(legend)
+      .getAllByRole('listitem')
+      .map((li) => li.textContent);
+    expect(rows).toEqual(['Article3', 'Book2']);
+  });
+
+  it('shows the source type in the details panel', async () => {
+    await buildFromSearch();
+    fireEvent.click(within(graph()).getByRole('button', { name: 'Title ref' }));
+
+    const details = screen.getByRole('complementary', { name: 'Title ref' });
+    expect(within(details).getByText(/Article · 1930 · Past & Present/)).toBeInTheDocument();
   });
 
   it('shows API errors', async () => {

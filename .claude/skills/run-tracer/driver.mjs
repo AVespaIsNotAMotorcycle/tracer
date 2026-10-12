@@ -65,96 +65,24 @@ async function waitForStableCanvas() {
 }
 
 /**
- * Nodes are drawn on a canvas, not in the DOM. Find them by color: resolve the theme token
- * for that kind of node, scan the canvas pixels for it, group matches into circles, and click
- * the center of the nth one (ordered top-left to bottom-right, i.e. oldest first at default
- * angles).
+ * Nodes are drawn on a canvas, not in the DOM. The app exposes their screen positions through
+ * window.__tracerAutomation when loaded with ?automation (nav adds it), so clicks are exact
+ * whatever the zoom, colors, or icons.
  */
-async function selectByColor(kind, n) {
+async function visibleNodes() {
   await waitForStableCanvas();
-  const target = await page.evaluate(
-    ([kind, n]) => {
-      const canvas = document.querySelector('.graph-view canvas');
-      if (!canvas) return { error: 'no canvas (build a graph first)' };
-      const probe = document.createElement('span');
-      probe.style.color = `var(--node-${kind})`;
-      document.body.appendChild(probe);
-      const one = document.createElement('canvas');
-      one.width = one.height = 1;
-      const oneCtx = one.getContext('2d', { willReadFrequently: true });
-      oneCtx.fillStyle = getComputedStyle(probe).color;
-      probe.remove();
-      oneCtx.fillRect(0, 0, 1, 1);
-      const [tr, tg, tb] = oneCtx.getImageData(0, 0, 1, 1).data;
+  const nodes = await page.evaluate(() => window.__tracerAutomation?.nodes() ?? null);
+  if (!nodes) throw new Error('automation hook missing (use nav, which adds ?automation)');
+  // Raster order: top to bottom, then left to right (oldest first at default angles).
+  return nodes.sort((a, b) => a.y - b.y || a.x - b.x);
+}
 
-      const { width, height } = canvas;
-      const data = canvas.getContext('2d').getImageData(0, 0, width, height).data;
-      const matches = (x, y) => {
-        const i = (y * width + x) * 4;
-        return (
-          Math.abs(data[i] - tr) < 8 &&
-          Math.abs(data[i + 1] - tg) < 8 &&
-          Math.abs(data[i + 2] - tb) < 8
-        );
-      };
-      // Interior pixels only (neighbors also match), so antialiased edges and thin
-      // same-colored links don't count. Then flood-fill to group pixels into circles.
-      const d = 2;
-      const mask = new Uint8Array(width * height);
-      for (let y = d; y < height - d; y++) {
-        for (let x = d; x < width - d; x++) {
-          if (
-            matches(x, y) &&
-            matches(x - d, y) &&
-            matches(x + d, y) &&
-            matches(x, y - d) &&
-            matches(x, y + d)
-          ) {
-            mask[y * width + x] = 1;
-          }
-        }
-      }
-      const clusters = [];
-      for (let start = 0; start < mask.length; start++) {
-        if (!mask[start]) continue;
-        let sx = 0;
-        let sy = 0;
-        let count = 0;
-        const stack = [start];
-        mask[start] = 0;
-        while (stack.length) {
-          const i = stack.pop();
-          const x = i % width;
-          const y = (i - x) / width;
-          sx += x;
-          sy += y;
-          count++;
-          for (const j of [i - 1, i + 1, i - width, i + width]) {
-            if (mask[j]) {
-              mask[j] = 0;
-              stack.push(j);
-            }
-          }
-        }
-        if (count >= 4) clusters.push({ sx, sy, count });
-      }
-      if (!clusters.length) return { error: `no ${kind} nodes visible` };
-      const c = clusters[Math.min(n, clusters.length) - 1];
-      const rect = canvas.getBoundingClientRect();
-      return {
-        x: rect.left + (c.sx / c.count) * (rect.width / width),
-        y: rect.top + (c.sy / c.count) * (rect.height / height),
-        found: clusters.length,
-      };
-    },
-    [kind, n],
-  );
-  if (target.error) throw new Error(target.error);
+async function clickNode(node, label) {
   const panelWasOpen = (await page.locator('.details').count()) > 0;
   const sizeBefore = await canvasSize();
-  await page.mouse.click(target.x, target.y);
+  await page.mouse.click(node.x, node.y);
   // Opening the panel shrinks the canvas, but not instantly: wait for the resize to start,
-  // or a "stable" reading of the old size passes and the next scan runs mid-resize.
+  // or a "stable" reading of the old size passes and the next command runs mid-resize.
   if (!panelWasOpen) {
     for (let i = 0; i < 20 && (await canvasSize()) === sizeBefore; i++) {
       await page.waitForTimeout(100);
@@ -162,7 +90,21 @@ async function selectByColor(kind, n) {
   }
   await waitForStableCanvas();
   if (!(await page.locator('.details').count())) throw new Error('click did not select a node');
-  return `${await page.locator('#details-title').textContent()} (${kind} ${Math.min(n, target.found)} of ${target.found})`;
+  return `${await page.locator('#details-title').textContent()} (${label})`;
+}
+
+async function selectByKind(kind, n) {
+  const matching = (await visibleNodes()).filter((node) => node.relation === kind);
+  if (!matching.length) throw new Error(`no ${kind} nodes visible`);
+  const index = Math.min(n, matching.length);
+  return clickNode(matching[index - 1], `${kind} ${index} of ${matching.length}`);
+}
+
+async function selectByTitle(text) {
+  const needle = text.toLowerCase();
+  const node = (await visibleNodes()).find((n) => n.title?.toLowerCase().includes(needle));
+  if (!node) throw new Error(`no visible node title contains "${text}"`);
+  return clickNode(node, node.relation);
 }
 
 /** Fallback: probe clicks outward from a point on the canvas (fractions of its size). */
@@ -191,7 +133,9 @@ const commands = {
       .map(([cmd, text]) => `  ${cmd.padEnd(34)} ${text}`)
       .join('\n'),
   nav: async (path = '/') => {
-    await page.goto(new URL(path, BASE).href);
+    const url = new URL(path, BASE);
+    url.searchParams.set('automation', '1');
+    await page.goto(url.href);
     await page.getByLabel('Title, DOI, or OpenAlex ID').waitFor();
     return page.url();
   },
@@ -244,8 +188,9 @@ const commands = {
   select: async (kind = 'anchor', n = '1') => {
     if (!['anchor', 'citing', 'cited'].includes(kind))
       throw new Error('usage: select anchor|citing|cited [n]');
-    return selectByColor(kind, Number(n));
+    return selectByKind(kind, Number(n));
   },
+  'select-title': async (...words) => selectByTitle(words.join(' ')),
   'select-at': async (fx = '0.5', fy = '0.5') => selectNear(Number(fx), Number(fy)),
   expand: async () => {
     if (await page.getByRole('button', { name: 'Expanded' }).count()) {
@@ -312,7 +257,8 @@ const HELP = {
   'pick [n]': 'Build from search result n (default 1)',
   'set <label> = <value>': 'Fill an input/select/slider by label, e.g. set Cited depth = 2',
   'select [anchor|citing|cited] [n]':
-    'Select the nth node of that kind, found by color (default anchor)',
+    'Select the nth visible node of that kind (top-left first), via the automation hook',
+  'select-title <text>': 'Select the visible node whose title contains <text>',
   'select-at [fx fy]': 'Click the node nearest a canvas point (fractions, default 0.5 0.5)',
   details: 'Print the details panel text',
   expand: 'Click Expand on the selected node and wait',

@@ -1,3 +1,5 @@
+import { sourceType } from '../graph/sourceTypes.js';
+
 const LINK_LABELS = {
   doi: 'DOI',
   landing_page: 'Publisher page',
@@ -25,7 +27,8 @@ export default function DetailsPanel({
   onClose,
 }) {
   const fullyExpanded = expanded.has('citing') && expanded.has('cited');
-  const byline = [work.year ?? 'Year unknown', work.venue, work.type].filter(Boolean).join(' · ');
+  const byline = [work.year ?? 'Year unknown', work.venue].filter(Boolean).join(' · ');
+  const { label: typeLabel, Icon: TypeIcon } = sourceType(work.type);
 
   return (
     <aside className="details" aria-labelledby="details-title">
@@ -39,7 +42,12 @@ export default function DetailsPanel({
       {work.authors.length > 0 && (
         <p className="authors">{work.authors.map((author) => author.name).join(', ')}</p>
       )}
-      {byline && <p className="muted">{byline}</p>}
+      <p className="muted with-icon">
+        <TypeIcon className="icon" aria-hidden="true" />
+        <span>
+          {typeLabel} · {byline}
+        </span>
+      </p>
 
       <dl className="stats">
         <div>

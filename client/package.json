@@ -10,6 +10,8 @@
   },
   "dependencies": {
     "d3-force": "^3.0.0",
+    "lucide": "^1.55.0",
+    "lucide-react": "^1.55.0",
     "react": "^19.3.0",
     "react-dom": "^19.3.0",
     "react-force-graph-2d": "^1.29.2"

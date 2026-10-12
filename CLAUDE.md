@@ -116,7 +116,7 @@ Tooling layout: Vitest, ESLint and Prettier are installed at the root. The root 
   - **`graph/GraphView.jsx`** renders with `react-force-graph-2d` (canvas).
     - Node objects are reused across updates, because force-graph stores positions on them.
     - Filtered-out works stay in the simulation and are hidden through `nodeVisibility`/`linkVisibility`, so filtering doesn't reshuffle the layout.
-    - Circle area is proportional to in-graph citations, via `nodeVal`. It must stay `nodeVal`-based so arrowheads land on circle edges.
+    - **Node size:** radius = `NODE_MIN_RADIUS` (9) + `NODE_GROWTH` (3) × √(in-graph citations). The minimum keeps every circle big enough for its source-type icon. It's passed as `nodeVal` = radius² with `nodeRelSize` 1, so arrowheads and hit areas stay on the circle's edge.
     - Colors come from CSS custom properties in `App.css`. The canvas resolves them through a hidden probe element and normalizes them to `rgba()` with a 1x1 canvas, because derived tokens compute to `oklab()`/`color()` strings. It re-reads them when the theme changes.
     - Tooltip HTML is escaped, because titles come from external data.
     - **Year layout:** `graph/axis.js` (`axisGeometry(angle)`) converts between screen x/y and axis coordinates: u along the time axis, v across it. A custom `yearForce` pulls each node to its year's u, with only a weak pull across the axis, so works from the same period spread out. `yearPositions` spaces distinct years in order, giving larger gaps logarithmically more room. Faint lines across the axis label the years (`onRenderFramePre`).
@@ -126,6 +126,14 @@ Tooling layout: Vitest, ESLint and Prettier are installed at the root. The root 
     - The view fits once, after the build finishes and the layout settles. Fitting to a partial graph leaves the view zoomed in on one small part of the time axis.
   - **Interaction:** clicking a node selects it and opens `DetailsPanel`; expanding is a button there. The anchor and the selected node always stay visible regardless of filters.
   - **Defaults** (`DEFAULT_OPTIONS` in `App.jsx`): depth 1 each way, 20 works per node, 300 max works. Each extra level multiplies requests, which costs OpenAlex credits.
+  - **Source-type icons** (`graph/sourceTypes.js`): each OpenAlex `type` maps to a label and a lucide icon in two forms.
+    - The lucide-react component is used in the DOM: the "Source types" legend and the details panel.
+    - The vanilla `lucide` element data is converted to a path string (`iconPathData`) and cached as a `Path2D`, then stroked inside canvas nodes. Icons appear once a circle's on-screen radius is at least `ICON_MIN_SCREEN_RADIUS`.
+    - Keep `lucide` and `lucide-react` on the same version.
+    - Import icons by name, never `import * as`, which would bundle all of lucide.
+    - Unknown types fall back to "Other".
+    - Icon colors are the `--node-icon-on-*` tokens.
+  - **Automation hook:** with `?automation` in the URL, `GraphView` sets `window.__tracerAutomation.nodes()`, returning visible nodes' screen positions, for browser drivers (`/run-tracer`). It's off by default.
   - **Theming** (`App.css`): three layers.
     1. Four `--palette-*` slots are the only place colors are defined. Swapping them re-themes everything.
     2. `--ink` and `--paper` are neutrals derived from the palette.

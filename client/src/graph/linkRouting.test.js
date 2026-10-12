@@ -3,6 +3,7 @@ import {
   controlPoint,
   layoutLinks,
   MAX_CURVATURE,
+  placeLinks,
   pointOnCurve,
   routeLink,
 } from './linkRouting.js';
@@ -153,6 +154,35 @@ describe('layoutLinks', () => {
     const filler = Array.from({ length: 200 }, (_, i) => node(`f${i}`, 5000 + i * 100, 5000));
     layoutLinks([link], [a, b, big, ...filler], (n) => sizes.get(n) ?? 5, 2);
     expect(link.route.controls).toHaveLength(1);
+  });
+
+  it('moves planned routes with their nodes, keeping bends and bundles', () => {
+    const hub = node('hub', 0, 0);
+    const p = node('p', 200, -10);
+    const q = node('q', 200, 10);
+    const block = node('block', 100, 105); // On the lone → q line.
+    const lone = node('lone', 0, 200);
+    const links = [
+      { source: hub, target: p },
+      { source: hub, target: q },
+      { source: lone, target: q },
+    ];
+    const bundles = layoutLinks(links, [hub, p, q, block, lone], radius, 2);
+    const bent = links[2].route.curvature;
+    expect(bent).not.toBe(0);
+
+    // Everything shifts; placing (not re-planning) follows it.
+    for (const n of [hub, p, q, block, lone]) {
+      n.x += 50;
+      n.y += 30;
+    }
+    placeLinks(links, bundles);
+
+    expect(bundles[0].junction.x).toBeCloseTo(50 + bundles[0].reach);
+    expect(links[0].route.start).toBe(bundles[0].junction);
+    expect(links[0].route.end).toBe(p);
+    expect(links[2].route.curvature).toBe(bent);
+    expect(links[2].route.controls[0]).toEqual(controlPoint(lone, q, bent));
   });
 
   it('bundles links leaving a node in nearly the same direction', () => {

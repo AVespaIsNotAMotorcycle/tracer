@@ -3,7 +3,7 @@ import { useEffect, useMemo, useRef, useState } from 'react';
 import ForceGraph2D from 'react-force-graph-2d';
 import { axisGeometry, DEFAULT_AXIS_ANGLE } from './axis.js';
 import { deriveEdges, yearPositions } from './graphModel.js';
-import { layoutLinks, pointOnCurve } from './linkRouting.js';
+import { layoutLinks, placeLinks, pointOnCurve } from './linkRouting.js';
 import { REFERENCE_ONLY } from './sourceTypeKeys.js';
 import { iconPath2D } from './sourceTypes.js';
 
@@ -48,6 +48,13 @@ const LINK_CLEARANCE = 3;
 const RAMP_PIXELS = 30;
 const RAMP_MAX_SHARE = 0.4;
 const RAMP_STEPS = 12;
+// While nodes move, links are re-planned (bundled and routed around circles) only every
+// ROUTE_EVERY frames; frames in between just move the planned routes with their nodes. A frame
+// after a pause (e.g. a hover once the layout has settled) always re-plans.
+const ROUTE_EVERY = 4;
+const ROUTE_AFTER_PAUSE_MS = 100;
+// Frame timestamps for the per-frame canvas callback (never called during render).
+const frameClock = () => performance.now();
 // Arrowhead length in graph units, plus this many line widths, so thick lines get visible heads.
 const ARROW_LENGTH = 4;
 const ARROW_PER_WIDTH = 2;
@@ -582,16 +589,34 @@ export default function GraphView({
   };
 
   // Runs before each frame's links are drawn, so they follow the nodes as the layout moves.
+  // Planning is the expensive part, so it's skipped on most frames (see ROUTE_EVERY), but never
+  // when the works or the visible set have changed.
+  const routing = useRef({ frame: 0, lastFrameAt: 0, data: null, visible: null, bundles: [] });
   const paintFramePre = (ctx, scale) => {
-    const bundles = layoutLinks(
-      data.links,
-      data.nodes.filter((node) => visible.has(node.id)),
-      (node) => radiusOf(node.val),
-      LINK_CLEARANCE,
-      isLinkVisible,
-    );
+    const state = routing.current;
+    const now = frameClock();
+    const replan =
+      state.data !== data ||
+      state.visible !== visible ||
+      state.frame % ROUTE_EVERY === 0 ||
+      now - state.lastFrameAt > ROUTE_AFTER_PAUSE_MS;
+    if (replan) {
+      state.bundles = layoutLinks(
+        data.links,
+        data.nodes.filter((node) => visible.has(node.id)),
+        (node) => radiusOf(node.val),
+        LINK_CLEARANCE,
+        isLinkVisible,
+      );
+      state.data = data;
+      state.visible = visible;
+    } else {
+      placeLinks(data.links, state.bundles);
+    }
+    state.frame++;
+    state.lastFrameAt = now;
     paintYearAxis(ctx, scale);
-    paintTrunks(ctx, scale, bundles);
+    paintTrunks(ctx, scale, state.bundles);
   };
 
   const paintYearAxis = (ctx, scale) => {

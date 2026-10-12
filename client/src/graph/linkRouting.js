@@ -226,10 +226,72 @@ function makeBundle(node, cluster, outgoing, grid, radius, clearance) {
   return {
     node,
     outgoing,
+    reach,
     direction: { x: ux, y: uy },
     junction: { x: node.x + ux * reach, y: node.y + uy * reach },
     links: cluster.map((entry) => entry.link),
   };
+}
+
+/**
+ * Moves a bundle's trunk to where its node and links are now, keeping its planned reach: the
+ * direction is the mean of its links' current directions.
+ */
+function placeBundle(bundle) {
+  const { node, outgoing, links, reach } = bundle;
+  let ux = 0;
+  let uy = 0;
+  for (const link of links) {
+    const other = outgoing ? link.target : link.source;
+    const length = Math.hypot(other.x - node.x, other.y - node.y);
+    if (length > 0) {
+      ux += (other.x - node.x) / length;
+      uy += (other.y - node.y) / length;
+    }
+  }
+  const norm = Math.hypot(ux, uy);
+  if (norm > 0) bundle.direction = { x: ux / norm, y: uy / norm };
+  bundle.junction = {
+    x: node.x + bundle.direction.x * reach,
+    y: node.y + bundle.direction.y * reach,
+  };
+}
+
+/**
+ * Sets a link's route geometry from its plan and the current positions: start and end (a
+ * junction, or the node), and the control points of its curve.
+ */
+function placeRoute(link) {
+  const { route, source, target } = link;
+  const { sourceBundle, targetBundle } = route;
+  route.start = sourceBundle?.junction ?? source;
+  route.end = targetBundle?.junction ?? target;
+  if (route.tangent) {
+    const length = Math.hypot(route.end.x - route.start.x, route.end.y - route.start.y);
+    const along = (bundle, end) =>
+      bundle
+        ? {
+            x: end.x + bundle.direction.x * BRANCH_TANGENT * length,
+            y: end.y + bundle.direction.y * BRANCH_TANGENT * length,
+          }
+        : end;
+    route.controls = [along(sourceBundle, route.start), along(targetBundle, route.end)];
+  } else {
+    route.controls = route.curvature ? [controlPoint(route.start, route.end, route.curvature)] : [];
+  }
+}
+
+/**
+ * Updates every link's route to the nodes' current positions without re-planning it: bundles,
+ * trunk lengths and bends (as curvatures, relative to each link) stay as layoutLinks last
+ * planned them. Cheap enough for every frame; re-plan every few frames while nodes move.
+ *
+ * @param {object[]} links
+ * @param {object[]} bundles  As returned by layoutLinks.
+ */
+export function placeLinks(links, bundles) {
+  for (const bundle of bundles) placeBundle(bundle);
+  for (const link of links) if (link.route) placeRoute(link);
 }
 
 /**
@@ -239,7 +301,8 @@ function makeBundle(node, cluster, outgoing, grid, radius, clearance) {
  * Sets `link.route = { start, controls, end, sourceBundle, targetBundle }` on each visible
  * link: the free part is a Bézier curve from `start` to `end` (a bundle's junction, or the
  * node itself) through `controls` (none for a straight line, one for quadratic, two for
- * cubic), and the bundles' trunks join it to the nodes. A branch leaves its junction along
+ * cubic), and the bundles' trunks join it to the nodes. The plan behind it is kept on the
+ * route too (`tangent`, or a `curvature`), so placeLinks can follow moving nodes cheaply. A branch leaves its junction along
  * the trunk when that curve is clear; otherwise it bends around circles like any other link.
  * Returns the bundles. `radius(node)` gives a node's radius; `clearance` is the gap kept around
  * each circle.
@@ -289,33 +352,19 @@ export function layoutLinks(links, nodes, radius, clearance, isVisible = () => t
   for (const link of visible) {
     const { route, source, target } = link;
     const { sourceBundle, targetBundle } = route;
-    route.start = sourceBundle?.junction ?? source;
-    route.end = targetBundle?.junction ?? target;
-    const obstacles = obstaclesNear(
-      route.start,
-      route.end,
-      grid,
-      [source, target],
-      radius,
-      clearance,
-    );
+    route.tangent = false;
+    route.curvature = 0;
+    const start = sourceBundle?.junction ?? source;
+    const end = targetBundle?.junction ?? target;
+    const obstacles = obstaclesNear(start, end, grid, [source, target], radius, clearance);
     if (sourceBundle || targetBundle) {
-      const length = Math.hypot(route.end.x - route.start.x, route.end.y - route.start.y);
-      const along = (bundle, end) =>
-        bundle
-          ? {
-              x: end.x + bundle.direction.x * BRANCH_TANGENT * length,
-              y: end.y + bundle.direction.y * BRANCH_TANGENT * length,
-            }
-          : end;
-      const controls = [along(sourceBundle, route.start), along(targetBundle, route.end)];
-      if (curveClear(route.start, controls, route.end, obstacles)) {
-        route.controls = controls;
-        continue;
-      }
+      route.tangent = true;
+      placeRoute(link);
+      if (curveClear(route.start, route.controls, route.end, obstacles)) continue;
+      route.tangent = false;
     }
-    const curvature = routeLink(route.start, route.end, obstacles);
-    route.controls = curvature ? [controlPoint(route.start, route.end, curvature)] : [];
+    route.curvature = routeLink(start, end, obstacles);
+    placeRoute(link);
   }
   return bundles;
 }

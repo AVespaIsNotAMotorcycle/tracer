@@ -3,6 +3,7 @@ import { useEffect, useMemo, useRef, useState } from 'react';
 import ForceGraph2D from 'react-force-graph-2d';
 import { axisGeometry, DEFAULT_AXIS_ANGLE } from './axis.js';
 import { deriveEdges, yearPositions } from './graphModel.js';
+import { routeLinks } from './linkRouting.js';
 import { iconPath2D } from './sourceTypes.js';
 
 // Node radius = NODE_MIN_RADIUS + NODE_GROWTH * sqrt(in-graph citations). The minimum keeps
@@ -32,8 +33,10 @@ const COLLIDE_PADDING = 4; // Minimum gap between circles.
 // Link widths. Links to the anchor stand out from links between other works; links to the
 // selected work are highlighted by adding LINK_SELECTED_EXTRA to either.
 const LINK_WIDTH = 0.5;
-const ANCHOR_LINK_WIDTH = 1.5;
+const ANCHOR_LINK_WIDTH = 2.5;
 const LINK_SELECTED_EXTRA = 1;
+// Links bend around circles in their way, keeping at least this gap (see linkRouting.js).
+const LINK_CLEARANCE = 3;
 
 /**
  * Pulls each node toward its year's position along the time axis (node.targetU). Movement
@@ -391,6 +394,21 @@ export default function GraphView({
     ctx.fillText(label, node.x, y);
   };
 
+  const isLinkVisible = (link) =>
+    visible.has(endId(link.source)) && visible.has(endId(link.target));
+
+  // Runs before each frame's links are drawn, so they follow the nodes as the layout moves.
+  const paintFramePre = (ctx, scale) => {
+    routeLinks(
+      data.links,
+      data.nodes.filter((node) => visible.has(node.id)),
+      (node) => radiusOf(node.val),
+      LINK_CLEARANCE,
+      isLinkVisible,
+    );
+    paintYearAxis(ctx, scale);
+  };
+
   const paintYearAxis = (ctx, scale) => {
     if (ticks.length === 0 || data.nodes.length === 0) return;
     let spread = 0;
@@ -445,9 +463,8 @@ export default function GraphView({
             )
           }
           nodeVisibility={(node) => visible.has(node.id)}
-          linkVisibility={(link) =>
-            visible.has(endId(link.source)) && visible.has(endId(link.target))
-          }
+          linkVisibility={isLinkVisible}
+          linkCurvature="curvature"
           nodeCanvasObject={paintNode}
           nodePointerAreaPaint={paintPointerArea}
           linkColor={(link) => (isActiveLink(link) ? colors.linkActive : colors.link)}
@@ -460,7 +477,7 @@ export default function GraphView({
           onNodeClick={(node) => onSelect(node.id)}
           onBackgroundClick={() => onSelect(null)}
           onEngineStop={handleEngineStop}
-          onRenderFramePre={paintYearAxis}
+          onRenderFramePre={paintFramePre}
           cooldownTicks={150}
         />
       )}

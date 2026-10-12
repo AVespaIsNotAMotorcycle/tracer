@@ -327,15 +327,28 @@ button.primary,
 .results button {
   width: 100%;
   text-align: left;
-  display: flex;
-  flex-direction: column;
-  gap: 2px;
+  /* The type icon sits in its own column, left of the title and byline. */
+  display: grid;
+  grid-template-columns: auto 1fr;
+  column-gap: 8px;
+  row-gap: 2px;
   background: transparent;
   border-color: transparent;
 }
 
 .results button:hover:not(:disabled) {
   background: var(--surface-2);
+}
+
+.result-icon {
+  grid-row: 1 / span 2;
+  /* Level with the title's first line. */
+  margin-top: 0.15em;
+}
+
+.result-title,
+.results .muted {
+  grid-column: 2;
 }
 
 .results .muted {

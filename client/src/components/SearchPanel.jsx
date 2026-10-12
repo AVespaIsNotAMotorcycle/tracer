@@ -1,5 +1,6 @@
 import { useState } from 'react';
 import { looksLikeWorkId, searchWorks } from '../api.js';
+import { sourceType } from '../graph/sourceTypes.js';
 
 const DEPTHS = [0, 1, 2, 3];
 
@@ -145,16 +146,21 @@ export default function SearchPanel({
       )}
       {results && results.length > 0 && (
         <ul className="results" aria-label="Search results">
-          {results.map((work) => (
-            <li key={work.id}>
-              <button type="button" onClick={() => onBuild(work.id)} disabled={busy}>
-                <span className="result-title">{work.title ?? 'Untitled'}</span>
-                <span className="muted">
-                  {[work.authors[0]?.name, work.year, work.venue].filter(Boolean).join(' · ')}
-                </span>
-              </button>
-            </li>
-          ))}
+          {results.map((work) => {
+            const { label, Icon } = sourceType(work.type);
+            return (
+              <li key={work.id}>
+                <button type="button" onClick={() => onBuild(work.id)} disabled={busy}>
+                  <Icon className="icon result-icon" aria-hidden="true" />
+                  <span className="visually-hidden">{`${label}: `}</span>
+                  <span className="result-title">{work.title ?? 'Untitled'}</span>
+                  <span className="muted">
+                    {[work.authors[0]?.name, work.year, work.venue].filter(Boolean).join(' · ')}
+                  </span>
+                </button>
+              </li>
+            );
+          })}
         </ul>
       )}
     </section>

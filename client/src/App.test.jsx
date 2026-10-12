@@ -91,6 +91,19 @@ describe('App', () => {
     }
   });
 
+  it('labels each search result with its source type', async () => {
+    vi.mocked(api.searchWorks).mockResolvedValue([anchor, work('b', { type: 'book' })]);
+    render(<App />);
+    fireEvent.change(screen.getByLabelText('Title, DOI, or OpenAlex ID'), {
+      target: { value: 'moral economy' },
+    });
+    fireEvent.click(screen.getByRole('button', { name: 'Go' }));
+    const results = await screen.findByRole('list', { name: 'Search results' });
+
+    expect(within(results).getByRole('button', { name: /^Article:\s*Title anchor/ })).toBeVisible();
+    expect(within(results).getByRole('button', { name: /^Book:\s*Title b/ })).toBeVisible();
+  });
+
   it('closes the search results, keeping the graph', async () => {
     await buildFromSearch();
     fireEvent.click(screen.getByRole('button', { name: 'Close search results' }));

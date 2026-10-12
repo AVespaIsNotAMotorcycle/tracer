@@ -19,7 +19,9 @@ export default function DetailsPanel({
   citesOnGraph,
   expanded,
   expanding,
+  busy = false,
   onExpand,
+  onMakeAnchor,
   onClose,
 }) {
   const fullyExpanded = expanded.has('citing') && expanded.has('cited');
@@ -60,10 +62,15 @@ export default function DetailsPanel({
         type="button"
         className="primary"
         onClick={onExpand}
-        disabled={expanding || fullyExpanded}
+        disabled={busy || expanding || fullyExpanded}
       >
         {expanding ? 'Expanding…' : fullyExpanded ? 'Expanded' : 'Expand citing and cited works'}
       </button>
+      {relation !== 'anchor' && (
+        <button type="button" onClick={onMakeAnchor} disabled={busy}>
+          Make this the anchor
+        </button>
+      )}
 
       {work.links.length > 0 && (
         <>

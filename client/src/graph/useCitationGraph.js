@@ -1,18 +1,20 @@
 import { useCallback, useEffect, useRef, useState } from 'react';
 import * as defaultApi from '../api.js';
-import { buildGraph, emptyGraph, expandWork } from './graphModel.js';
+import { buildGraph, emptyGraph, expandWork, reanchorGraph } from './graphModel.js';
 
 /** @typedef {import('./graphModel.js').BuildOptions} BuildOptions */
 
 /**
- * Graph state plus build and expand actions. Starting a new build cancels any build in
- * progress; results from a cancelled build are discarded.
+ * Graph state plus build, re-anchor, and expand actions. Starting a build or re-anchor cancels
+ * any one in progress; results from a cancelled run are discarded.
  */
 export function useCitationGraph(api = defaultApi) {
   const [graph, setGraph] = useState(emptyGraph);
   const [status, setStatus] = useState(
-    /** @type {'idle' | 'loading' | 'done' | 'error'} */ ('idle'),
+    /** @type {'idle' | 'loading' | 'reanchoring' | 'done' | 'error'} */ ('idle'),
   );
+  // Works gathered so far by a re-anchor, which doesn't show its graph until it's done.
+  const [progressCount, setProgressCount] = useState(0);
   const [error, setError] = useState(null);
   const [truncated, setTruncated] = useState(false);
   const [expanding, setExpanding] = useState(() => new Set());
@@ -22,18 +24,23 @@ export function useCitationGraph(api = defaultApi) {
     graphRef.current = graph;
   }, [graph]);
 
+  /** Cancels any run in progress and returns an API bound to a fresh abort signal. */
+  const startRun = useCallback(() => {
+    controller.current?.abort();
+    const current = new AbortController();
+    controller.current = current;
+    const { signal } = current;
+    const scoped = {
+      getWork: (id) => api.getWork(id, { signal }),
+      getCiting: (id, opts) => api.getCiting(id, { ...opts, signal }),
+      getCited: (id, opts) => api.getCited(id, { ...opts, signal }),
+    };
+    return { signal, scoped };
+  }, [api]);
+
   const build = useCallback(
     async (anchorId, /** @type {BuildOptions} */ options) => {
-      controller.current?.abort();
-      const current = new AbortController();
-      controller.current = current;
-      const { signal } = current;
-      const scoped = {
-        getWork: (id) => api.getWork(id, { signal }),
-        getCiting: (id, opts) => api.getCiting(id, { ...opts, signal }),
-        getCited: (id, opts) => api.getCited(id, { ...opts, signal }),
-      };
-
+      const { signal, scoped } = startRun();
       setGraph(emptyGraph());
       setStatus('loading');
       setError(null);
@@ -53,7 +60,33 @@ export function useCitationGraph(api = defaultApi) {
         setStatus('error');
       }
     },
-    [api],
+    [startRun],
+  );
+
+  // Keeps showing the current graph until the new one is complete, so works that stay keep
+  // their positions instead of the view collapsing to the new anchor and regrowing.
+  const reanchor = useCallback(
+    async (anchorId, /** @type {BuildOptions} */ options) => {
+      const { signal, scoped } = startRun();
+      setStatus('reanchoring');
+      setProgressCount(0);
+      setError(null);
+      try {
+        const result = await reanchorGraph(graphRef.current, anchorId, options, scoped, (g) => {
+          if (!signal.aborted) setProgressCount(g.works.size);
+        });
+        if (signal.aborted) return;
+        setGraph(result.graph);
+        setTruncated(result.truncated);
+        setStatus('done');
+      } catch (err) {
+        if (signal.aborted) return;
+        // The previous graph is still intact, so stay usable and just report the error.
+        setError(err.message);
+        setStatus('done');
+      }
+    },
+    [startRun],
   );
 
   const expand = useCallback(
@@ -75,5 +108,5 @@ export function useCitationGraph(api = defaultApi) {
     [api],
   );
 
-  return { graph, status, error, truncated, expanding, build, expand };
+  return { graph, status, progressCount, error, truncated, expanding, build, reanchor, expand };
 }

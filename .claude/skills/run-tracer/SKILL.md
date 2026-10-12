@@ -74,6 +74,7 @@ Screenshots go to `.claude/skills/run-tracer/out/<name>.png` (gitignored). Set `
 | `select-at [fx fy]`                     | Fallback: click the node nearest a canvas point, given as fractions of its size                                               |
 | `details`                               | Print the details panel text                                                                                                  |
 | `expand`                                | Expand the selected node and wait                                                                                             |
+| `reanchor`                              | Make the selected node the anchor; waits for the rebuild and layout settle                                                    |
 | `click <button name>`                   | Click a button by its accessible name                                                                                         |
 | `theme light\|dark`, `viewport <w> <h>` | Switch color scheme, resize                                                                                                   |
 | `screenshot [name] [full]`              | Save a PNG; add `full` for the whole page                                                                                     |

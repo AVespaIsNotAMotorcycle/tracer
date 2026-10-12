@@ -22,7 +22,9 @@ const DEFAULT_OPTIONS = { citingDepth: 1, citedDepth: 1, limit: 20, maxNodes: 30
 const EMPTY_SET = new Set();
 
 export default function App() {
-  const { graph, status, error, truncated, expanding, build, expand } = useCitationGraph();
+  const { graph, status, progressCount, error, truncated, expanding, build, reanchor, expand } =
+    useCitationGraph();
+  const busy = status === 'loading' || status === 'reanchoring';
   const [options, setOptions] = useState(DEFAULT_OPTIONS);
   const [filters, setFilters] = useState(NO_FILTERS);
   const [selectedId, setSelectedId] = useState(null);
@@ -63,7 +65,7 @@ export default function App() {
           options={options}
           onOptionsChange={setOptions}
           onBuild={handleBuild}
-          busy={status === 'loading'}
+          busy={busy}
         />
         {hasGraph && (
           <FiltersPanel
@@ -97,6 +99,7 @@ export default function App() {
       <main className="canvas">
         <div className="status" role="status">
           {status === 'loading' && `Building graph… ${graph.works.size} works`}
+          {status === 'reanchoring' && `Re-anchoring… ${progressCount} works`}
           {status === 'done' &&
             truncated &&
             `Stopped at ${graph.works.size} works (max works limit). Expand nodes to add more.`}
@@ -114,7 +117,7 @@ export default function App() {
             visible={visible}
             selectedId={selectedId}
             onSelect={setSelectedId}
-            building={status === 'loading'}
+            building={busy}
             axisAngle={axisAngle}
           />
         ) : (
@@ -134,7 +137,9 @@ export default function App() {
           citesOnGraph={outgoing.get(selected.id) ?? 0}
           expanded={graph.expanded.get(selected.id) ?? EMPTY_SET}
           expanding={expanding.has(selected.id)}
+          busy={busy}
           onExpand={() => expand(selected.id, { limit: options.limit })}
+          onMakeAnchor={() => reanchor(selected.id, options)}
           onClose={() => setSelectedId(null)}
         />
       )}

@@ -150,6 +150,33 @@ describe('App', () => {
     expect(screen.getByRole('button', { name: 'Expanded' })).toBeDisabled();
   });
 
+  it('makes a selected work the new anchor, keeping the old anchor expanded', async () => {
+    await buildFromSearch();
+    vi.mocked(api.getWork).mockClear();
+    fireEvent.click(within(graph()).getByRole('button', { name: 'Title ref' }));
+
+    fireEvent.click(screen.getByRole('button', { name: 'Make this the anchor' }));
+
+    // From ref: its citing work "more". Kept: the old anchor with its neighbors (citer, ref).
+    expect(await within(graph()).findByRole('button', { name: 'Title more' })).toBeInTheDocument();
+    const titles = within(graph())
+      .getAllByRole('button')
+      .map((button) => button.textContent)
+      .sort();
+    expect(titles).toEqual(['Title anchor', 'Title citer', 'Title more', 'Title ref']);
+    const details = screen.getByRole('complementary', { name: 'Title ref' });
+    expect(within(details).getByText('Anchor')).toBeInTheDocument();
+    expect(within(details).queryByRole('button', { name: 'Make this the anchor' })).toBeNull();
+    expect(api.getWork).not.toHaveBeenCalled();
+  });
+
+  it('does not offer to re-anchor on the anchor', async () => {
+    await buildFromSearch();
+    fireEvent.click(within(graph()).getByRole('button', { name: 'Title anchor' }));
+
+    expect(screen.queryByRole('button', { name: 'Make this the anchor' })).toBeNull();
+  });
+
   it('marks the anchor as already expanded', async () => {
     await buildFromSearch();
 

@@ -14,6 +14,7 @@ Core model:
 - **Graph build:** from the anchor, fetch citing works (incoming edges) and cited works (outgoing edges), breadth-first. The two directions have **separate depths**, e.g. citing depth 1 and cited depth 3.
 - **Expansion:** clicking a node fetches its citing and cited works and merges them into the existing graph.
 - **Layout by year:** time runs along an axis tilted 30° below horizontal by default, with older works up and to the left and newer works down and to the right. Users can rotate the axis from 0° (horizontal) to 90° (vertical). For undated works, a work the anchor cites is treated as older than the anchor, and a work citing the anchor as newer. Beyond that, a work is placed older than its dated citers and newer than the dated works it cites (`layoutYears`).
+- **Re-anchoring:** any selected work can become the anchor. The graph is rebuilt from it at the configured depths, so depth is always measured from the current anchor. **Sticky** works keep their neighbors as if still expanded: the previous anchor(s) and works the user expanded with the button. Works the old build reached only through traversal are dropped unless the new build reaches them.
 - **Filters:** filters hide nodes from the view. They don't remove nodes from the graph or stop them being fetched. Keep the graph data separate from what is visible.
 
 ## Data sources
@@ -102,9 +103,11 @@ Tooling layout: Vitest, ESLint and Prettier are installed at the root. The root 
     - The graph is `{ anchorId, works: Map, relations: Map, expanded: Map }`.
     - `relations` records how each work joined: `anchor`, `citing` or `cited`.
     - `expanded` records which directions have been fetched for each work.
+    - `sticky` holds works that keep their neighbors across re-anchoring. `expandWork` (user expansion) adds to it, and `reanchorGraph` adds the outgoing anchor. Build traversal never makes a work sticky; if it did, re-anchoring could never drop anything.
+    - `reanchorGraph` reuses the anchor's data (no `getWork`), runs `buildGraph`, then re-expands each sticky work. Neighbor lists are fetched again rather than tracked, which is cheap because the server caches them. A sticky work the new build didn't reach is recolored relative to the new anchor (`relationTo`).
     - Edges (`deriveEdges`) and node sizes (`inGraphCitationCounts`) are always calculated from `works`, never stored.
     - `buildGraph` runs breadth-first with a separate depth per direction. Levels alternate between directions so `maxNodes` doesn't starve one of them, and requests run with limited concurrency. `expandWork` returns an updater to apply to the latest state.
-  - **`graph/useCitationGraph.js`:** holds graph state. A new build aborts the one in progress (`AbortController`).
+  - **`graph/useCitationGraph.js`:** holds graph state. A new build or re-anchor aborts the one in progress (`AbortController`). A re-anchor keeps the old graph on screen and swaps in the result once (status `reanchoring`, with `progressCount` for the status line), so kept nodes hold their positions. If it fails, the old graph stays.
   - **`graph/GraphView.jsx`** renders with `react-force-graph-2d` (canvas).
     - Node objects are reused across updates, because force-graph stores positions on them.
     - Filtered-out works stay in the simulation and are hidden through `nodeVisibility`/`linkVisibility`, so filtering doesn't reshuffle the layout.

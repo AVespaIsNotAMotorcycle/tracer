@@ -7,6 +7,7 @@ import {
   expandWork,
   inGraphCitationCounts,
   layoutYears,
+  reanchorGraph,
   NO_FILTERS,
   visibleIds,
   yearPositions,
@@ -338,5 +339,105 @@ describe('yearPositions', () => {
 
   it('handles no years', () => {
     expect(yearPositions([]).size).toBe(0);
+  });
+});
+
+describe('reanchorGraph', () => {
+  // R cites A and B; A cites D; B cites F; F cites G; C and E cite R and A respectively.
+  const network = { R: ['A', 'B'], A: ['D'], B: ['F'], F: ['G'], D: [], G: [], C: ['R'], E: ['A'] };
+  const ids = (graph) => [...graph.works.keys()].sort();
+  const oldGraph = async (
+    api,
+    options = { citingDepth: 0, citedDepth: 2, limit: 10, maxNodes: 100 },
+  ) => (await buildGraph('R', options, api)).graph;
+
+  it('measures depth from the new anchor and drops what only the old build reached', async () => {
+    const api = fakeApi(network);
+    const before = await oldGraph(api); // R; A, B at depth 1; D, F at depth 2
+    expect(ids(before)).toEqual(['A', 'B', 'D', 'F', 'R']);
+
+    const { graph } = await reanchorGraph(
+      before,
+      'B',
+      { citingDepth: 0, citedDepth: 2, limit: 10, maxNodes: 100 },
+      api,
+    );
+
+    expect(graph.anchorId).toBe('B');
+    // From B: F (depth 1), G (depth 2). Kept: R with its neighbors A, B, C. Dropped: D.
+    expect(ids(graph)).toEqual(['A', 'B', 'C', 'F', 'G', 'R']);
+  });
+
+  it('keeps the previous anchor expanded and recolors it relative to the new anchor', async () => {
+    const api = fakeApi(network);
+    const before = await oldGraph(api);
+
+    const { graph } = await reanchorGraph(
+      before,
+      'B',
+      { citingDepth: 0, citedDepth: 1, limit: 10, maxNodes: 100 },
+      api,
+    );
+
+    expect(graph.relations.get('B')).toBe('anchor');
+    expect(graph.relations.get('R')).toBe('citing'); // R cites B.
+    expect(graph.expanded.get('R')).toEqual(new Set(['citing', 'cited']));
+    expect(graph.sticky).toEqual(new Set(['R']));
+  });
+
+  it('keeps works the user expanded, with their neighbors', async () => {
+    const api = fakeApi(network);
+    let before = await oldGraph(api, { citingDepth: 0, citedDepth: 1, limit: 10, maxNodes: 100 });
+    before = (await expandWork(before, 'A', { limit: 10 }, api))(before); // adds D and E
+    expect(before.sticky).toEqual(new Set(['A']));
+
+    const { graph } = await reanchorGraph(
+      before,
+      'B',
+      { citingDepth: 0, citedDepth: 1, limit: 10, maxNodes: 100 },
+      api,
+    );
+
+    expect(ids(graph)).toEqual(['A', 'B', 'C', 'D', 'E', 'F', 'R']);
+    expect(graph.sticky).toEqual(new Set(['A', 'R']));
+  });
+
+  it('carries sticky works through a chain of re-anchors', async () => {
+    const api = fakeApi(network);
+    const options = { citingDepth: 0, citedDepth: 1, limit: 10, maxNodes: 100 };
+    const first = await reanchorGraph(await oldGraph(api), 'B', options, api);
+
+    const { graph } = await reanchorGraph(first.graph, 'F', options, api);
+
+    expect(graph.anchorId).toBe('F');
+    expect(graph.sticky).toEqual(new Set(['R', 'B']));
+    expect(graph.works.has('G')).toBe(true);
+  });
+
+  it('does not refetch the new anchor', async () => {
+    const api = fakeApi(network);
+    const before = await oldGraph(api);
+    api.getWork.mockClear();
+
+    await reanchorGraph(
+      before,
+      'B',
+      { citingDepth: 1, citedDepth: 1, limit: 10, maxNodes: 100 },
+      api,
+    );
+
+    expect(api.getWork).not.toHaveBeenCalled();
+  });
+
+  it('rejects a work that is not on the graph', async () => {
+    const api = fakeApi(network);
+    await expect(
+      reanchorGraph(
+        await oldGraph(api),
+        'Z',
+        { citingDepth: 1, citedDepth: 1, limit: 10, maxNodes: 100 },
+        api,
+      ),
+    ).rejects.toThrow(/not on the graph/);
   });
 });

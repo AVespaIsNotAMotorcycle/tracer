@@ -13,11 +13,21 @@
  * @property {Map<string, 'anchor' | Direction>} relations
  *   How each work joined the graph: the anchor, found as a citing work, or found as a cited work.
  * @property {Map<string, Set<Direction>>} expanded  Directions already fetched for each work.
+ * @property {Set<string>} sticky
+ *   Works whose neighbors stay on the graph when the anchor changes: works the user expanded,
+ *   and previous anchors. (Works the build traversed on its own are not sticky; they're
+ *   rebuilt relative to the new anchor.)
  */
 
 /** @returns {Graph} */
 export function emptyGraph() {
-  return { anchorId: null, works: new Map(), relations: new Map(), expanded: new Map() };
+  return {
+    anchorId: null,
+    works: new Map(),
+    relations: new Map(),
+    expanded: new Map(),
+    sticky: new Set(),
+  };
 }
 
 /**
@@ -201,11 +211,64 @@ export async function expandWork(graph, id, { limit }, api) {
       works: await api[fetchers[direction]](id, { limit }),
     })),
   );
-  return (latest) =>
-    results.reduce(
+  return (latest) => {
+    const expanded = results.reduce(
       (acc, { direction, works }) => markExpanded(addWorks(acc, works, direction), id, direction),
       latest,
     );
+    return { ...expanded, sticky: new Set(expanded.sticky).add(id) };
+  };
+}
+
+/**
+ * Relation for a kept work relative to a new anchor, when it wasn't reached by the new build:
+ * direct citations decide it, otherwise publication order.
+ */
+function relationTo(anchor, work) {
+  if (anchor.references.includes(work.id)) return 'cited';
+  if (work.references.includes(anchor.id)) return 'citing';
+  if (work.year != null && anchor.year != null)
+    return work.year <= anchor.year ? 'cited' : 'citing';
+  return 'cited';
+}
+
+/**
+ * Rebuilds the graph around a different work already on it.
+ *
+ * The new anchor gets a fresh build at `options` depths, so depth is measured from it. Sticky
+ * works (the previous anchor, works the user expanded, and earlier anchors) stay, along with
+ * their citing and cited works, as if still expanded. Everything else the old build reached
+ * is dropped unless the new build reaches it too.
+ *
+ * Neighbor lists are fetched again rather than tracked; the server caches them.
+ *
+ * @param {Graph} graph
+ * @param {string} anchorId  Tracer ID of a work on `graph`.
+ * @param {BuildOptions} options
+ * @param {GraphApi} api
+ * @param {(graph: Graph) => void} [onProgress]
+ * @returns {Promise<{ graph: Graph, truncated: boolean }>}
+ */
+export async function reanchorGraph(graph, anchorId, options, api, onProgress = () => {}) {
+  const anchor = graph.works.get(anchorId);
+  if (!anchor) throw new Error(`Work ${anchorId} is not on the graph`);
+  const sticky = new Set([...graph.sticky, graph.anchorId].filter((id) => id && id !== anchorId));
+
+  // The anchor's data is already here, so the build doesn't need to fetch it.
+  const scoped = { ...api, getWork: async (id) => (id === anchorId ? anchor : api.getWork(id)) };
+  const built = await buildGraph(anchorId, options, scoped, onProgress);
+
+  let next = { ...built.graph, sticky };
+  for (const id of sticky) {
+    const work = graph.works.get(id);
+    if (!next.works.has(id)) {
+      const previous = graph.relations.get(id);
+      next = addWorks(next, [work], previous === 'anchor' ? relationTo(anchor, work) : previous);
+    }
+    next = (await expandWork(next, id, { limit: options.limit }, api))(next);
+    onProgress(next);
+  }
+  return { graph: next, truncated: built.truncated };
 }
 
 /**

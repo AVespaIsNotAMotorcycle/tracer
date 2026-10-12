@@ -34,7 +34,7 @@ const shown = async () =>
 
 async function waitForBuild() {
   await page.waitForFunction(
-    () => !document.querySelector('[role=status]')?.textContent.includes('Building'),
+    () => !/Building|Re-anchoring/.test(document.querySelector('[role=status]')?.textContent ?? ''),
     null,
     { timeout: 120000 },
   );
@@ -236,10 +236,21 @@ const commands = {
   },
   'select-at': async (fx = '0.5', fy = '0.5') => selectNear(Number(fx), Number(fy)),
   expand: async () => {
+    if (await page.getByRole('button', { name: 'Expanded' }).count()) {
+      throw new Error('selected node is already expanded');
+    }
     await page.getByRole('button', { name: /Expand citing/ }).click();
     await page.getByRole('button', { name: 'Expanded' }).waitFor({ timeout: 60000 });
     await page.waitForTimeout(3000);
     return shown();
+  },
+  reanchor: async () => {
+    const button = page.getByRole('button', { name: 'Make this the anchor' });
+    if (!(await button.count())) throw new Error('select a node other than the anchor first');
+    const title = await page.locator('#details-title').textContent();
+    await button.click();
+    await waitForBuild();
+    return `${title} | ${await shown()}`;
   },
   details: async () => {
     const panel = page.locator('.details');
@@ -291,6 +302,7 @@ const HELP = {
   'select-at [fx fy]': 'Click the node nearest a canvas point (fractions, default 0.5 0.5)',
   details: 'Print the details panel text',
   expand: 'Click Expand on the selected node and wait',
+  reanchor: 'Make the selected node the anchor; waits for the rebuild + settle',
   'click <button name>': 'Click a button by accessible name',
   'theme light|dark': 'Emulate color scheme',
   'viewport <w> <h>': 'Resize, e.g. viewport 390 844',

@@ -3,7 +3,7 @@ import { useEffect, useMemo, useRef, useState } from 'react';
 import ForceGraph2D from 'react-force-graph-2d';
 import { axisGeometry, DEFAULT_AXIS_ANGLE } from './axis.js';
 import { deriveEdges, yearPositions } from './graphModel.js';
-import { layoutLinks } from './linkRouting.js';
+import { layoutLinks, pointOnCurve } from './linkRouting.js';
 import { iconPath2D } from './sourceTypes.js';
 
 // Node radius = NODE_MIN_RADIUS + NODE_GROWTH * sqrt(in-graph citations). The minimum keeps
@@ -37,6 +37,11 @@ const ANCHOR_LINK_WIDTH = 2.5;
 const LINK_SELECTED_EXTRA = 1;
 // Links bend around circles in their way, keeping at least this gap (see linkRouting.js).
 const LINK_CLEARANCE = 3;
+// Branches widen to their trunk's width over this many screen pixels before a junction (at
+// most RAMP_MAX_SHARE of the branch), drawn as RAMP_STEPS segments of growing width.
+const RAMP_PIXELS = 30;
+const RAMP_MAX_SHARE = 0.4;
+const RAMP_STEPS = 12;
 // Arrowhead length in graph units, plus this many line widths, so thick lines get visible heads.
 const ARROW_LENGTH = 4;
 const ARROW_PER_WIDTH = 2;
@@ -111,7 +116,8 @@ const COLOR_VARS = {
 /**
  * Returns a function converting any CSS color the browser understands (including oklab() and
  * color(), which is how derived color-mix() tokens compute) into a plain rgba() string, by
- * painting it on a 1x1 canvas and reading the pixel back. Falls back to the input where
+ * painting it on a 1x1 canvas and reading the pixel back. With a `background`, the color is
+ * painted over it, giving the opaque color it shows as there. Falls back to the input where
  * canvas isn't available (e.g. jsdom).
  */
 function createColorNormalizer() {
@@ -120,8 +126,12 @@ function createColorNormalizer() {
   canvas.height = 1;
   const ctx = canvas.getContext?.('2d', { willReadFrequently: true });
   if (!ctx) return (color) => color;
-  return (color) => {
+  return (color, background) => {
     ctx.clearRect(0, 0, 1, 1);
+    if (background) {
+      ctx.fillStyle = background;
+      ctx.fillRect(0, 0, 1, 1);
+    }
     ctx.fillStyle = color;
     ctx.fillRect(0, 0, 1, 1);
     const [r, g, b, a] = ctx.getImageData(0, 0, 1, 1).data;
@@ -130,11 +140,26 @@ function createColorNormalizer() {
 }
 
 /**
+ * The background showing behind `element` (the canvas itself is transparent): the first
+ * ancestor background that isn't fully transparent, normalized with `normalize`.
+ */
+function backgroundBehind(element, normalize) {
+  for (let el = element; el; el = el.parentElement) {
+    const color = normalize(getComputedStyle(el).backgroundColor);
+    if (!color.endsWith(', 0.000)')) return color;
+  }
+  return 'white';
+}
+
+/**
  * Reads graph colors from CSS custom properties, and re-reads them when the theme changes.
  *
  * Tokens are often derived (`color-mix()` of palette variables), and reading a custom property
  * returns that unevaluated text. So each token is applied to a hidden probe element, the
  * browser computes it, and the result is normalized to rgba() for the canvas.
+ *
+ * `link` comes back opaque: the translucent token as it looks over the graph's background.
+ * Overlapping links then look the same as one link, instead of darkening where they stack.
  */
 function useThemeColors(ref) {
   const [colors, setColors] = useState(null);
@@ -150,6 +175,7 @@ function useThemeColors(ref) {
         resolved[key] = normalize(getComputedStyle(probe).color);
       }
       probe.remove();
+      resolved.link = normalize(resolved.link, backgroundBehind(ref.current, normalize));
       setColors(resolved);
     };
     read();
@@ -422,6 +448,39 @@ export default function GraphView({
     (isActiveLink(link) ? LINK_SELECTED_EXTRA : 0);
   const arrowLength = (width, scale) => ARROW_LENGTH + (ARROW_PER_WIDTH * width) / scale;
 
+  const trunkWidth = (bundle) =>
+    Math.max(...bundle.links.map((link) => (isAnchorLink(link) ? ANCHOR_LINK_WIDTH : LINK_WIDTH))) *
+    Math.sqrt(bundle.links.length);
+
+  // Widens a branch from `width` to its trunk's width as it nears the junction at its start
+  // (atStart) or end, so it doesn't step up abruptly where it joins. Links are opaque, so the
+  // overlapping segments don't show.
+  const paintRamp = (ctx, route, atStart, width, bundle, scale) => {
+    const { start, controls, end } = route;
+    const length = Math.hypot(end.x - start.x, end.y - start.y);
+    if (length === 0) return;
+    const span = Math.min(RAMP_PIXELS / scale / length, RAMP_MAX_SHARE);
+    const to = trunkWidth(bundle);
+    ctx.save();
+    ctx.lineCap = 'round';
+    ctx.strokeStyle = colors.link;
+    for (let i = 0; i < RAMP_STEPS; i++) {
+      // Progress toward the junction, 0 to 1, eased so the width grows smoothly.
+      const p = (i + 0.5) / RAMP_STEPS;
+      const eased = p * p * (3 - 2 * p);
+      const t0 = span * (1 - i / RAMP_STEPS);
+      const t1 = span * (1 - (i + 1) / RAMP_STEPS);
+      const a = pointOnCurve(start, controls, end, atStart ? t0 : 1 - t0);
+      const b = pointOnCurve(start, controls, end, atStart ? t1 : 1 - t1);
+      ctx.beginPath();
+      ctx.moveTo(a.x, a.y);
+      ctx.lineTo(b.x, b.y);
+      ctx.lineWidth = (width + (to - width) * eased) / scale;
+      ctx.stroke();
+    }
+    ctx.restore();
+  };
+
   // A link's free part, from its start (node or junction) to its end. Trunks (paintTrunks)
   // join bundled ends to their nodes; a selected link also redraws its own share of them, so
   // the highlight runs node to node without implying the whole bundle is selected.
@@ -432,6 +491,10 @@ export default function GraphView({
     const active = isActiveLink(link);
     const width = linkWidth(link);
     const color = active ? colors.linkActive : colors.link;
+    // Ramps use the trunk's look; a selected link is drawn over them.
+    const plainWidth = isAnchorLink(link) ? ANCHOR_LINK_WIDTH : LINK_WIDTH;
+    if (sourceBundle) paintRamp(ctx, route, true, plainWidth, sourceBundle, scale);
+    if (targetBundle) paintRamp(ctx, route, false, plainWidth, targetBundle, scale);
     ctx.beginPath();
     if (active && sourceBundle) {
       ctx.moveTo(link.source.x, link.source.y);
@@ -443,8 +506,6 @@ export default function GraphView({
       ctx.quadraticCurveTo(controls[0].x, controls[0].y, end.x, end.y);
     else ctx.lineTo(end.x, end.y);
     if (active && targetBundle) ctx.lineTo(link.target.x, link.target.y);
-    // Butt caps: the link color is translucent, and round caps overlapping at a junction
-    // would leave a dark blot.
     ctx.lineCap = 'butt';
     ctx.lineJoin = 'round';
     ctx.lineWidth = width / scale;
@@ -475,11 +536,9 @@ export default function GraphView({
     ctx.lineCap = 'butt';
     ctx.strokeStyle = colors.link;
     ctx.fillStyle = colors.link;
-    for (const { node, junction, links, outgoing } of bundles) {
-      const base = Math.max(
-        ...links.map((link) => (isAnchorLink(link) ? ANCHOR_LINK_WIDTH : LINK_WIDTH)),
-      );
-      const width = base * Math.sqrt(links.length);
+    for (const bundle of bundles) {
+      const { node, junction, outgoing } = bundle;
+      const width = trunkWidth(bundle);
       ctx.beginPath();
       ctx.moveTo(node.x, node.y);
       ctx.lineTo(junction.x, junction.y);

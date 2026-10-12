@@ -49,7 +49,8 @@ Run from the repo root:
 
 ```sh
 npm install                          # installs all workspaces
-cp server/.env.example server/.env   # optional; sets PORT and MONGODB_URI
+docker run -d -p 27017:27017 --name tracer-mongo mongo:8.2   # local MongoDB (first time; then: docker start tracer-mongo)
+cp server/.env.example server/.env   # sets PORT, MONGODB_URI, OPENALEX_API_KEY
 npm run dev                          # server (:5000, node --watch) + Vite (:5173) via concurrently
 npm run build                        # builds client to client/dist
 npm start                            # production server (what Heroku runs)
@@ -92,6 +93,7 @@ Tooling layout: Vitest, ESLint and Prettier are installed at the root. The root 
     | 502    | Provider failure                               |
     | 503    | Provider rate limit, or no database connection |
 
+- **MongoDB version:** use 8.2. MongoDB 8.3+ refuses to start on Linux kernel 6.19 and later ([SERVER-121912](https://jira.mongodb.org/browse/SERVER-121912)), and this dev machine runs kernel 7.0. That's why the Docker image is `mongo:8.2`, and why root `package.json` pins `config.mongodbMemoryServer.version` for tests. Don't bump either to 8.3+ until that bug is fixed.
 - **Works tests** (`works.test.js`) use `mongodb-memory-server` (a real `mongod`, downloaded to `~/.cache` on first run) and a fake provider backed by an in-memory catalog. They assert on provider call counts to verify caching, and inject `now` to test expiry.
 - **Client** (`client/src/`):
   - **`graph/graphModel.js`:** pure graph logic, independent of React.
@@ -111,5 +113,5 @@ Tooling layout: Vitest, ESLint and Prettier are installed at the root. The root 
   - **Defaults** (`DEFAULT_OPTIONS` in `App.jsx`): depth 1 each way, 20 works per node, 300 max works. Each extra level multiplies requests, which costs OpenAlex credits.
   - **Client tests** mock `GraphView` (jsdom has no canvas) and `api.js`. To check the real canvas, run the app and drive it in a browser.
 - **Heroku build:** `npm install`, then `heroku-postbuild` (client build), then the `Procfile` `web: npm start`. The server reads `PORT` from the environment.
-- **Database:** the connection is optional. If `MONGODB_URI` is unset or the connection fails, the server still starts and logs a warning, and `/api/works` returns 503. `bufferCommands` is off, so queries fail fast instead of hanging. `/api/health` reports `db: connected|disconnected`. The dev script loads `server/.env` with `--env-file-if-exists`; there is no dotenv dependency.
+- **Database:** the server calls `listen` first, then connects to MongoDB in the background through `connectWithRetry` (`server/src/db.js`), retrying every 5 seconds. Mongoose never retries a failed _initial_ connection by itself. Until it connects, or if `MONGODB_URI` is unset, `/api/works` returns 503. In dev, a closed API port shows up as a bare **502 from Vite's proxy**, not from Express. `bufferCommands` is off, so queries fail fast instead of hanging. `/api/health` reports `db: connected|disconnected`. The dev script loads `server/.env` with `--env-file-if-exists`; there is no dotenv dependency.
 - **Express 5:** path syntax differs from Express 4, e.g. the SPA fallback uses a regex rather than `*`. Async route handlers that reject are forwarded to error middleware automatically.

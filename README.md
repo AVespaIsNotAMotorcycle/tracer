@@ -16,11 +16,24 @@ MERN app: React (Vite) frontend in `client/`, Express + Mongoose backend in `ser
 
 ## Development
 
+Tracer needs a MongoDB database. The quickest way to get one locally is Docker:
+
+```sh
+docker run -d -p 27017:27017 --name tracer-mongo mongo:8.2   # first time
+docker start tracer-mongo                                  # after a reboot
+```
+
+Use `mongo:8.2`, not `mongo:8` or newer. MongoDB 8.3+ refuses to start on Linux kernel 6.19 and later ([SERVER-121912](https://jira.mongodb.org/browse/SERVER-121912)).
+
+Then:
+
 ```sh
 npm install
-cp server/.env.example server/.env   # optional; set MONGODB_URI
+cp server/.env.example server/.env   # set OPENALEX_API_KEY; MONGODB_URI defaults to the container above
 npm run dev                          # API on :5000, Vite on :5173 (proxies /api)
 ```
+
+The server starts without MongoDB and connects as soon as it's available, retrying every 5 seconds. Until then, `/api/works` returns 503 "Database unavailable". Tests don't need it, because they start their own in-memory MongoDB.
 
 ## Deploying to Heroku
 

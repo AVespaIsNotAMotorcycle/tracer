@@ -31,5 +31,10 @@
     "prettier": "^3.9.10",
     "vitest": "^5.0.3"
   },
-  "type": "module"
+  "type": "module",
+  "config": {
+    "mongodbMemoryServer": {
+      "version": "8.2.6"
+    }
+  }
 }

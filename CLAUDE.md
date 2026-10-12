@@ -109,7 +109,7 @@ Tooling layout: Vitest, ESLint and Prettier are installed at the root. The root 
     - Node objects are reused across updates, because force-graph stores positions on them.
     - Filtered-out works stay in the simulation and are hidden through `nodeVisibility`/`linkVisibility`, so filtering doesn't reshuffle the layout.
     - Circle area is proportional to in-graph citations, via `nodeVal`. It must stay `nodeVal`-based so arrowheads land on circle edges.
-    - Colors come from CSS custom properties in `App.css`; the canvas re-reads them when the theme changes.
+    - Colors come from CSS custom properties in `App.css`. The canvas resolves them through a hidden probe element and normalizes them to `rgba()` with a 1x1 canvas, because derived tokens compute to `oklab()`/`color()` strings. It re-reads them when the theme changes.
     - Tooltip HTML is escaped, because titles come from external data.
     - **Year layout:** `graph/axis.js` (`axisGeometry(angle)`) converts between screen x/y and axis coordinates: u along the time axis, v across it. A custom `yearForce` pulls each node to its year's u, with only a weak pull across the axis, so works from the same period spread out. `yearPositions` spaces distinct years in order, giving larger gaps logarithmically more room. Faint lines across the axis label the years (`onRenderFramePre`).
     - **Rotation:** the angle lives in `App` state (`ViewPanel` slider). On change, `GraphView` moves every node straight to its rotated position (keeping its u and v), instead of letting the simulation drag nodes there, and refits the view. The force reads the current geometry through a ref, so it never needs replacing.
@@ -118,6 +118,13 @@ Tooling layout: Vitest, ESLint and Prettier are installed at the root. The root 
     - The view fits once, after the build finishes and the layout settles. Fitting to a partial graph leaves the view zoomed in on one small part of the time axis.
   - **Interaction:** clicking a node selects it and opens `DetailsPanel`; expanding is a button there. The anchor and the selected node always stay visible regardless of filters.
   - **Defaults** (`DEFAULT_OPTIONS` in `App.jsx`): depth 1 each way, 20 works per node, 300 max works. Each extra level multiplies requests, which costs OpenAlex credits.
+  - **Theming** (`App.css`): three layers.
+    1. Four `--palette-*` slots are the only place colors are defined. Swapping them re-themes everything.
+    2. `--ink` and `--paper` are neutrals derived from the palette.
+    3. Role tokens (`--bg`, `--accent`, `--node-anchor`, `--graph-link`, …) are derived with `color-mix()`, separately for light and dark.
+
+    Components and canvas code use only role tokens; never put a literal color anywhere else. `accent-color` themes native controls. Light-mode node fills (orange and sage on cream) are below 3:1, so nodes get a `--node-outline` that meets 3:1 on its own. Re-check contrast when changing the palette.
+
   - **Client tests** mock `GraphView` (jsdom has no canvas) and `api.js`. To check the real canvas, run the app and drive it in a browser.
 - **Heroku build:** `npm install`, then `heroku-postbuild` (client build), then the `Procfile` `web: npm start`. The server reads `PORT` from the environment.
 - **Database:** the server calls `listen` first, then connects to MongoDB in the background through `connectWithRetry` (`server/src/db.js`), retrying every 5 seconds. Mongoose never retries a failed _initial_ connection by itself. Until it connects, or if `MONGODB_URI` is unset, `/api/works` returns 503. In dev, a closed API port shows up as a bare **502 from Vite's proxy**, not from Express. `bufferCommands` is off, so queries fail fast instead of hanging. `/api/health` reports `db: connected|disconnected`. The dev script loads `server/.env` with `--env-file-if-exists`; there is no dotenv dependency.

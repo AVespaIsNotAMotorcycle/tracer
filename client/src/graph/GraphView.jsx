@@ -55,6 +55,7 @@ const COLOR_VARS = {
   citing: '--node-citing',
   cited: '--node-cited',
   selected: '--node-selected',
+  outline: '--node-outline',
   link: '--graph-link',
   linkActive: '--graph-link-active',
   label: '--text',
@@ -63,20 +64,49 @@ const COLOR_VARS = {
   axisLabel: '--muted',
 };
 
-/** Reads graph colors from CSS custom properties, and re-reads them when the theme changes. */
+/**
+ * Returns a function converting any CSS color the browser understands (including oklab() and
+ * color(), which is how derived color-mix() tokens compute) into a plain rgba() string, by
+ * painting it on a 1x1 canvas and reading the pixel back. Falls back to the input where
+ * canvas isn't available (e.g. jsdom).
+ */
+function createColorNormalizer() {
+  const canvas = document.createElement('canvas');
+  canvas.width = 1;
+  canvas.height = 1;
+  const ctx = canvas.getContext?.('2d', { willReadFrequently: true });
+  if (!ctx) return (color) => color;
+  return (color) => {
+    ctx.clearRect(0, 0, 1, 1);
+    ctx.fillStyle = color;
+    ctx.fillRect(0, 0, 1, 1);
+    const [r, g, b, a] = ctx.getImageData(0, 0, 1, 1).data;
+    return `rgba(${r}, ${g}, ${b}, ${(a / 255).toFixed(3)})`;
+  };
+}
+
+/**
+ * Reads graph colors from CSS custom properties, and re-reads them when the theme changes.
+ *
+ * Tokens are often derived (`color-mix()` of palette variables), and reading a custom property
+ * returns that unevaluated text. So each token is applied to a hidden probe element, the
+ * browser computes it, and the result is normalized to rgba() for the canvas.
+ */
 function useThemeColors(ref) {
   const [colors, setColors] = useState(null);
   useEffect(() => {
+    const normalize = createColorNormalizer();
     const read = () => {
-      const style = getComputedStyle(ref.current ?? document.documentElement);
-      setColors(
-        Object.fromEntries(
-          Object.entries(COLOR_VARS).map(([key, name]) => [
-            key,
-            style.getPropertyValue(name).trim(),
-          ]),
-        ),
-      );
+      const probe = document.createElement('span');
+      probe.style.display = 'none';
+      (ref.current ?? document.body).appendChild(probe);
+      const resolved = {};
+      for (const [key, name] of Object.entries(COLOR_VARS)) {
+        probe.style.color = `var(${name})`;
+        resolved[key] = normalize(getComputedStyle(probe).color);
+      }
+      probe.remove();
+      setColors(resolved);
     };
     read();
     const media = window.matchMedia('(prefers-color-scheme: dark)');
@@ -251,6 +281,9 @@ export default function GraphView({
     ctx.arc(node.x, node.y, r, 0, 2 * Math.PI);
     ctx.fillStyle = colors[node.relation] ?? colors.cited;
     ctx.fill();
+    ctx.lineWidth = 1 / scale;
+    ctx.strokeStyle = colors.outline;
+    ctx.stroke();
     if (isSelected) {
       ctx.lineWidth = 3 / scale;
       ctx.strokeStyle = colors.selected;

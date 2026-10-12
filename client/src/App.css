@@ -1,21 +1,40 @@
 :root {
   color-scheme: light dark;
-  --bg: #f6f5f1;
-  --surface: #ffffff;
-  --surface-2: #efede7;
-  --border: #dcd8ce;
-  --text: #1f1d1a;
-  --muted: #6b665d;
-  --accent: #8a4b2a;
-  --accent-text: #ffffff;
-  --error: #b42318;
-  --node-anchor: #8a4b2a;
-  --node-citing: #2f6f8f;
-  --node-cited: #7a8f3a;
-  --node-selected: #1f1d1a;
-  --graph-link: rgba(60, 55, 48, 0.25);
-  --graph-link-active: rgba(138, 75, 42, 0.9);
-  --graph-axis: rgba(60, 55, 48, 0.12);
+
+  /*
+   * Palette: the color scheme, and the only place colors are defined. Swap these four to
+   * re-theme the app; every color below is derived from them.
+   * Current scheme: https://colorhunt.co/palette/7d9c65b93636ff9c4cfff2a0
+   */
+  --palette-1: #7d9c65; /* Sage: cited works, neutral tints */
+  --palette-2: #b93636; /* Crimson: anchor, primary actions */
+  --palette-3: #ff9c4c; /* Orange: citing works, focus, dark-mode accent */
+  --palette-4: #fff2a0; /* Cream: backgrounds, dark-mode text */
+
+  /* Neutrals, tinted by the palette so they belong with it. */
+  --ink: color-mix(in oklab, var(--palette-1) 22%, black);
+  --paper: color-mix(in oklab, var(--palette-4) 10%, white);
+
+  /* Roles. Components use only these. */
+  --bg: color-mix(in oklab, var(--palette-4) 28%, white);
+  --surface: var(--paper);
+  --surface-2: color-mix(in oklab, var(--palette-4) 50%, white);
+  --border: color-mix(in oklab, var(--palette-1) 40%, white);
+  --text: var(--ink);
+  --muted: color-mix(in oklab, var(--ink) 58%, white);
+  --accent: var(--palette-2);
+  --accent-text: var(--paper);
+  --focus: var(--palette-2);
+  --error: var(--palette-2);
+  --node-anchor: var(--palette-2);
+  --node-citing: var(--palette-3);
+  --node-cited: var(--palette-1);
+  --node-outline: color-mix(in srgb, var(--ink) 60%, transparent);
+  --node-selected: var(--ink);
+  --graph-link: color-mix(in srgb, var(--ink) 22%, transparent);
+  --graph-link-active: var(--palette-2);
+  --graph-axis: color-mix(in srgb, var(--ink) 12%, transparent);
+
   font-family:
     system-ui,
     -apple-system,
@@ -26,22 +45,26 @@
 
 @media (prefers-color-scheme: dark) {
   :root {
-    --bg: #171614;
-    --surface: #211f1c;
-    --surface-2: #2b2925;
-    --border: #3a3732;
-    --text: #ece8e1;
-    --muted: #a39d92;
-    --accent: #d08a5f;
-    --accent-text: #171614;
-    --error: #f97066;
-    --node-anchor: #e09a6c;
-    --node-citing: #6fb3d4;
-    --node-cited: #b3c76a;
-    --node-selected: #ffffff;
-    --graph-link: rgba(236, 232, 225, 0.2);
-    --graph-link-active: rgba(224, 154, 108, 0.95);
-    --graph-axis: rgba(236, 232, 225, 0.1);
+    --ink: color-mix(in oklab, var(--palette-1) 14%, black);
+    --paper: color-mix(in oklab, var(--palette-4) 85%, white);
+
+    --bg: var(--ink);
+    --surface: color-mix(in oklab, var(--palette-1) 20%, black);
+    --surface-2: color-mix(in oklab, var(--palette-1) 30%, black);
+    --border: color-mix(in oklab, var(--palette-1) 38%, black);
+    --text: var(--paper);
+    --muted: color-mix(in oklab, var(--paper) 68%, black);
+    --accent: var(--palette-3);
+    --focus: var(--palette-3);
+    --accent-text: var(--ink);
+    --error: color-mix(in oklab, var(--palette-2) 55%, white);
+    --node-anchor: color-mix(in oklab, var(--palette-2) 75%, white);
+    --node-cited: color-mix(in oklab, var(--palette-1) 80%, white);
+    --node-outline: color-mix(in srgb, black 45%, transparent);
+    --node-selected: var(--palette-4);
+    --graph-link: color-mix(in srgb, var(--paper) 18%, transparent);
+    --graph-link-active: var(--palette-3);
+    --graph-axis: color-mix(in srgb, var(--paper) 10%, transparent);
   }
 }
 
@@ -72,6 +95,7 @@ input,
 select {
   font: inherit;
   color: inherit;
+  accent-color: var(--accent);
 }
 
 input,
@@ -104,7 +128,7 @@ button.primary,
 }
 
 :focus-visible {
-  outline: 2px solid var(--accent);
+  outline: 2px solid var(--focus);
   outline-offset: 2px;
 }
 

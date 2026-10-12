@@ -29,6 +29,12 @@ const CHARGE = -90; // Repulsion between works. Mostly spreads works across the 
 const CHARGE_RANGE = 200; // because YEAR_PULL resists movement along it.
 const COLLIDE_PADDING = 4; // Minimum gap between circles.
 
+// Link widths. Links to the anchor stand out from links between other works; links to the
+// selected work are highlighted by adding LINK_SELECTED_EXTRA to either.
+const LINK_WIDTH = 0.5;
+const ANCHOR_LINK_WIDTH = 1.5;
+const LINK_SELECTED_EXTRA = 1;
+
 /**
  * Pulls each node toward its year's position along the time axis (node.targetU). Movement
  * across the axis gets only a gentle pull toward it, so works from the same period spread out
@@ -321,6 +327,8 @@ export default function GraphView({
   }, [building, graph.anchorId]);
 
   const endId = (end) => (typeof end === 'object' ? end.id : end);
+  const isAnchorLink = (link) =>
+    endId(link.source) === graph.anchorId || endId(link.target) === graph.anchorId;
   const isActiveLink = (link) =>
     selectedId != null && (endId(link.source) === selectedId || endId(link.target) === selectedId);
 
@@ -443,7 +451,10 @@ export default function GraphView({
           nodeCanvasObject={paintNode}
           nodePointerAreaPaint={paintPointerArea}
           linkColor={(link) => (isActiveLink(link) ? colors.linkActive : colors.link)}
-          linkWidth={(link) => (isActiveLink(link) ? 1.5 : 0.5)}
+          linkWidth={(link) =>
+            (isAnchorLink(link) ? ANCHOR_LINK_WIDTH : LINK_WIDTH) +
+            (isActiveLink(link) ? LINK_SELECTED_EXTRA : 0)
+          }
           linkDirectionalArrowLength={4}
           linkDirectionalArrowRelPos={1}
           onNodeClick={(node) => onSelect(node.id)}

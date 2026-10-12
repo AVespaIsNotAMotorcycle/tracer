@@ -500,6 +500,19 @@ function relationTo(anchor, work) {
 }
 
 /**
+ * Returns `graph` with `ids` no longer sticky, ready for reanchorGraph on the same anchor:
+ * the rebuild then keeps their neighbors only if the build (or another sticky work) reaches
+ * them. This is how a user expansion is collapsed.
+ *
+ * @param {Graph} graph
+ * @param {string[]} ids
+ */
+export function collapseWorks(graph, ids) {
+  const drop = new Set(ids);
+  return { ...graph, sticky: new Set([...graph.sticky].filter((id) => !drop.has(id))) };
+}
+
+/**
  * Rebuilds the graph around a different work already on it.
  *
  * The new anchor gets a fresh build at `options` depths, so depth is measured from it. Sticky

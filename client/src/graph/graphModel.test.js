@@ -4,6 +4,7 @@ import {
   addFoundWorks,
   addWorks,
   buildGraph,
+  collapseWorks,
   deriveEdges,
   emptyGraph,
   expandWork,
@@ -448,6 +449,37 @@ describe('yearPositions', () => {
 
   it('handles no years', () => {
     expect(yearPositions([]).size).toBe(0);
+  });
+});
+
+describe('collapseWorks', () => {
+  // R cites A; A cites D; E cites A.
+  const network = { R: ['A'], A: ['D'], D: [], E: ['A'] };
+  const options = { citingDepth: 0, citedDepth: 1, limit: 10, maxNodes: 100 };
+  const ids = (graph) => [...graph.works.keys()].sort();
+
+  it('drops what only the collapsed expansion reached, keeping what the build reaches', async () => {
+    const api = fakeApi(network);
+    let graph = (await buildGraph('R', options, api)).graph;
+    graph = (await expandWork(graph, 'A', { limit: 10 }, api))(graph);
+    expect(ids(graph)).toEqual(['A', 'D', 'E', 'R']);
+
+    const { graph: collapsed } = await reanchorGraph(
+      collapseWorks(graph, ['A']),
+      'R',
+      options,
+      api,
+    );
+
+    expect(collapsed.anchorId).toBe('R');
+    expect(ids(collapsed)).toEqual(['A', 'R']); // A stays: the build reaches it.
+    expect(collapsed.sticky.has('A')).toBe(false);
+    expect(collapsed.expanded.get('A')).toBeUndefined();
+  });
+
+  it('leaves other expansions alone', async () => {
+    const graph = { ...emptyGraph(), sticky: new Set(['A', 'B']) };
+    expect([...collapseWorks(graph, ['A']).sticky]).toEqual(['B']);
   });
 });
 

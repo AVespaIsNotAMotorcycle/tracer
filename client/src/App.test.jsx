@@ -315,6 +315,29 @@ describe('App', () => {
     expect(screen.getByText('Expanded', { selector: '.legend span' })).toBeInTheDocument();
   });
 
+  it('collapses a work the user expanded, dropping what only it brought in', async () => {
+    await buildFromSearch();
+    // Only works the user expanded can be collapsed.
+    fireEvent.click(within(graph()).getByRole('button', { name: 'Title anchor' }));
+    expect(screen.queryByRole('button', { name: 'Collapse' })).toBeNull();
+
+    fireEvent.click(within(graph()).getByRole('button', { name: 'Title ref' }));
+    expect(screen.queryByRole('button', { name: 'Collapse' })).toBeNull();
+    fireEvent.click(screen.getByRole('button', { name: 'Expand citing and cited works' }));
+    await within(graph()).findByRole('button', { name: 'Title more' });
+
+    fireEvent.click(screen.getByRole('button', { name: 'Collapse' }));
+
+    await waitFor(() =>
+      expect(within(graph()).queryByRole('button', { name: 'Title more' })).toBeNull(),
+    );
+    // ref stays (the build reaches it), no longer expanded, and the anchor is unchanged.
+    expect(within(graph()).getByRole('button', { name: 'Title ref' })).toBeInTheDocument();
+    expect(screen.getByRole('button', { name: 'Expand citing and cited works' })).toBeEnabled();
+    expect(screen.queryByRole('button', { name: 'Collapse' })).toBeNull();
+    expect(window.location.search).toContain('anchor=');
+  });
+
   it('makes a selected work the new anchor, keeping the old anchor expanded', async () => {
     await buildFromSearch();
     vi.mocked(api.getWork).mockClear();

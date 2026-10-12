@@ -1,6 +1,6 @@
 import { useCallback, useEffect, useRef, useState } from 'react';
 import * as defaultApi from '../api.js';
-import { buildGraph, emptyGraph, expandWorks, reanchorGraph } from './graphModel.js';
+import { buildGraph, collapseWorks, emptyGraph, expandWorks, reanchorGraph } from './graphModel.js';
 import { createProgressTracker } from './progress.js';
 
 /** @typedef {import('./graphModel.js').BuildOptions} BuildOptions */
@@ -93,21 +93,14 @@ export function useCitationGraph(api = defaultApi) {
 
   // Keeps showing the current graph until the new one is complete, so works that stay keep
   // their positions instead of the view collapsing to the new anchor and regrowing.
-  const reanchor = useCallback(
-    async (anchorId, /** @type {BuildOptions} */ options) => {
+  const rebuild = useCallback(
+    async (from, anchorId, /** @type {BuildOptions} */ options, label) => {
       const { signal, scoped } = startRun();
       setStatus('reanchoring');
       setError(null);
-      const progress = track('run', 'Re-anchoring', signal, 3);
+      const progress = track('run', label, signal, 3);
       try {
-        const result = await reanchorGraph(
-          graphRef.current,
-          anchorId,
-          options,
-          scoped,
-          undefined,
-          progress,
-        );
+        const result = await reanchorGraph(from, anchorId, options, scoped, undefined, progress);
         if (signal.aborted) return;
         setGraph(result.graph);
         setTruncated(result.truncated);
@@ -122,6 +115,31 @@ export function useCitationGraph(api = defaultApi) {
       }
     },
     [startRun, track, untrack],
+  );
+
+  const reanchor = useCallback(
+    (anchorId, /** @type {BuildOptions} */ options) =>
+      rebuild(graphRef.current, anchorId, options, 'Re-anchoring'),
+    [rebuild],
+  );
+
+  /**
+   * Undoes the expansion of `ids` (a work, or a book and its chapters): rebuilds on the same
+   * anchor without them sticky, so their neighbors stay only if something else reaches them.
+   */
+  const collapse = useCallback(
+    (ids, /** @type {BuildOptions} */ options) => {
+      const current = graphRef.current;
+      const title = current.works.get(ids[0])?.title ?? 'work';
+      const short = title.length > 40 ? `${title.slice(0, 39)}…` : title;
+      return rebuild(
+        collapseWorks(current, ids),
+        current.anchorId,
+        options,
+        `Collapsing “${short}”`,
+      );
+    },
+    [rebuild],
   );
 
   /** Cancels any run in progress and clears the graph. */
@@ -177,6 +195,7 @@ export function useCitationGraph(api = defaultApi) {
     build,
     reanchor,
     expand,
+    collapse,
     reset,
   };
 }

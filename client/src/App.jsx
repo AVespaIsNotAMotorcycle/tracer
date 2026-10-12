@@ -39,8 +39,19 @@ function outgoingCounts(works) {
 }
 
 export default function App() {
-  const { graph, status, tasks, error, truncated, expanding, build, reanchor, expand, reset } =
-    useCitationGraph();
+  const {
+    graph,
+    status,
+    tasks,
+    error,
+    truncated,
+    expanding,
+    build,
+    reanchor,
+    expand,
+    collapse,
+    reset,
+  } = useCitationGraph();
   const busy = status === 'loading' || status === 'reanchoring';
   // Build options start from the URL (or the defaults), so a shared link reproduces the graph.
   const [options, setOptions] = useState(() => readUrlState(window.location.search).options);
@@ -277,6 +288,18 @@ export default function App() {
             })
           }
           onMakeAnchor={() => handleReanchor(selected.id)}
+          onCollapse={
+            // Only works the user expanded (or earlier anchors) can be collapsed; the build's
+            // own expansions would just come back.
+            selected.id !== graph.anchorId &&
+            [selected.id, ...parts.map((part) => part.work.id)].some((id) => graph.sticky.has(id))
+              ? () =>
+                  collapse(
+                    [selected.id, ...parts.map((part) => part.work.id)],
+                    graphOptions ?? options,
+                  )
+              : undefined
+          }
           onClose={() => setSelectedId(null)}
         />
       )}

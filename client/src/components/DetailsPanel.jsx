@@ -24,7 +24,8 @@ const doiLink = (work) => work.links.find((link) => link.kind === 'doi');
  * `parts` (chapters folded into it on the graph; see foldBookParts), each as
  * `{ work, citedByOnGraph, citesOnGraph }`. A chapter's authors are shown only when they
  * differ from the book's. A work not on OpenAlex (known only from a reference list) can't be
- * expanded or made the anchor, so it shows its citation as printed instead.
+ * expanded or made the anchor, so it shows its citation as printed instead. `onCollapse` is
+ * given only for works the user expanded, and undoes that.
  */
 export default function DetailsPanel({
   work,
@@ -37,6 +38,7 @@ export default function DetailsPanel({
   busy = false,
   onExpand,
   onMakeAnchor,
+  onCollapse,
   onClose,
 }) {
   const fullyExpanded = expanded.has('citing') && expanded.has('cited');
@@ -100,6 +102,11 @@ export default function DetailsPanel({
           disabled={busy || expanding || fullyExpanded}
         >
           {expanding ? 'Expanding…' : fullyExpanded ? 'Expanded' : 'Expand citing and cited works'}
+        </button>
+      )}
+      {onCollapse && (
+        <button type="button" onClick={onCollapse} disabled={busy || expanding}>
+          Collapse
         </button>
       )}
       {expandable && relation !== 'anchor' && (

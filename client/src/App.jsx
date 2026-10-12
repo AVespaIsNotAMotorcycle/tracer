@@ -2,6 +2,7 @@ import { useMemo, useState } from 'react';
 import './App.css';
 import DetailsPanel from './components/DetailsPanel.jsx';
 import FiltersPanel from './components/FiltersPanel.jsx';
+import LoadingProgress from './components/LoadingProgress.jsx';
 import SearchPanel from './components/SearchPanel.jsx';
 import ViewPanel from './components/ViewPanel.jsx';
 import { DEFAULT_AXIS_ANGLE } from './graph/axis.js';
@@ -22,7 +23,7 @@ const DEFAULT_OPTIONS = { citingDepth: 1, citedDepth: 1, limit: 20, maxNodes: 30
 const EMPTY_SET = new Set();
 
 export default function App() {
-  const { graph, status, progressCount, error, truncated, expanding, build, reanchor, expand } =
+  const { graph, status, tasks, error, truncated, expanding, build, reanchor, expand } =
     useCitationGraph();
   const busy = status === 'loading' || status === 'reanchoring';
   const [options, setOptions] = useState(DEFAULT_OPTIONS);
@@ -97,18 +98,23 @@ export default function App() {
       </aside>
 
       <main className="canvas">
-        <div className="status" role="status">
-          {status === 'loading' && `Building graph… ${graph.works.size} works`}
-          {status === 'reanchoring' && `Re-anchoring… ${progressCount} works`}
-          {status === 'done' &&
-            truncated &&
-            `Stopped at ${graph.works.size} works (max works limit). Expand nodes to add more.`}
+        <div className="canvas-overlay">
+          <LoadingProgress tasks={tasks} />
+          {/* Announced to screen readers only on start/finish, not every request. While a
+              progress card shows the same thing visually, it's hidden from sight. */}
+          <div className={tasks.length > 0 ? 'visually-hidden' : 'status'} role="status">
+            {tasks.length > 0
+              ? `${tasks[0].label}…`
+              : status === 'done' && truncated
+                ? `Stopped at ${graph.works.size} works (max works limit). Expand nodes to add more.`
+                : ''}
+          </div>
+          {error && (
+            <p role="alert" className="error">
+              {error}
+            </p>
+          )}
         </div>
-        {error && (
-          <p role="alert" className="error canvas-error">
-            {error}
-          </p>
-        )}
         {hasGraph ? (
           <GraphView
             graph={graph}

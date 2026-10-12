@@ -211,6 +211,49 @@ describe('App', () => {
     expect(graph()).toHaveAttribute('data-axis-angle', '30');
   });
 
+  it('shows loading progress while a graph builds, then clears it', async () => {
+    let releaseCited;
+    vi.mocked(api.getCited).mockImplementation(
+      () => new Promise((resolve) => (releaseCited = () => resolve([ref]))),
+    );
+    render(<App />);
+    fireEvent.change(screen.getByLabelText('Title, DOI, or OpenAlex ID'), {
+      target: { value: 'W1' },
+    });
+    fireEvent.click(screen.getByRole('button', { name: 'Go' }));
+
+    const progress = await screen.findByRole('list', { name: 'Loading progress' });
+    expect(within(progress).getByText('Building graph')).toBeInTheDocument();
+    // Anchor lookup and citing list done; cited list still pending.
+    await waitFor(() => expect(within(progress).getByText(/2 of 3 requests/)).toBeInTheDocument());
+    expect(within(progress).getByRole('progressbar')).toHaveAttribute('value', '2');
+    expect(screen.getByRole('status')).toHaveTextContent('Building graph…');
+
+    releaseCited();
+    await waitFor(() =>
+      expect(screen.queryByRole('list', { name: 'Loading progress' })).toBeNull(),
+    );
+  });
+
+  it('shows progress while expanding a work', async () => {
+    await buildFromSearch();
+    let releaseCiting;
+    vi.mocked(api.getCiting).mockImplementation(
+      () => new Promise((resolve) => (releaseCiting = () => resolve([more]))),
+    );
+    fireEvent.click(within(graph()).getByRole('button', { name: 'Title ref' }));
+    fireEvent.click(screen.getByRole('button', { name: 'Expand citing and cited works' }));
+
+    const progress = await screen.findByRole('list', { name: 'Loading progress' });
+    expect(within(progress).getByText('Expanding “Title ref”')).toBeInTheDocument();
+    await waitFor(() => expect(within(progress).getByText(/1 of 2 requests/)).toBeInTheDocument());
+
+    releaseCiting();
+    await waitFor(() =>
+      expect(screen.queryByRole('list', { name: 'Loading progress' })).toBeNull(),
+    );
+  });
+
   it('shows API errors', async () => {
     vi.mocked(api.getWork).mockRejectedValue(new Error('Work not found: W1'));
     render(<App />);

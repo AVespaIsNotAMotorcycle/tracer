@@ -69,6 +69,7 @@ Screenshots go to `.claude/skills/run-tracer/out/<name>.png` (gitignored). Set `
 | `nav [path]`                            | Open the app                                                                                                                  |
 | `build <DOI or OpenAlex ID>`            | Build a graph. Waits for the build to finish and the layout to settle (about 6 s), then prints `Showing N of N`               |
 | `search <query>` / `pick [n]`           | Title search with a numbered result list, then build from result n                                                            |
+| `start <id>` / `progress`               | Start a build without waiting, then print the loading-progress cards (requests, works, time left)                             |
 | `set <label> = <value>`                 | Fill any input, select or slider by its label, e.g. `set Cited depth = 0`, `set Time axis angle = 60`, `set From year = 1990` |
 | `select [anchor\|citing\|cited] [n]`    | Select the nth visible node of that kind, found by its color on the canvas                                                    |
 | `select-at [fx fy]`                     | Fallback: click the node nearest a canvas point, given as fractions of its size                                               |

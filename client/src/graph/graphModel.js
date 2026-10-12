@@ -4,6 +4,8 @@
 // each work's `references`, never stored, because they change whenever works are added.
 // Filters decide what is visible; they never remove works from the graph.
 
+import { noProgress } from './progress.js';
+
 /** @typedef {'citing' | 'cited'} Direction */
 
 /**
@@ -156,37 +158,111 @@ const fetchers = { citing: 'getCiting', cited: 'getCited' };
  * @param {BuildOptions} options
  * @param {GraphApi} api
  * @param {(graph: Graph) => void} [onProgress]  Called with each intermediate graph.
+ * @param {ReturnType<typeof import('./progress.js').createProgressTracker>} [progress]
+ *   Receives planned, completed, and projected request counts.
+ * @param {object | null} [knownAnchor]  The anchor's work, if already loaded (skips the lookup).
  * @returns {Promise<{ graph: Graph, truncated: boolean }>}
  */
-export async function buildGraph(anchorId, options, api, onProgress = () => {}) {
+export async function buildGraph(
+  anchorId,
+  options,
+  api,
+  onProgress = () => {},
+  progress = noProgress,
+  knownAnchor = null,
+) {
   const { citingDepth, citedDepth, limit, maxNodes, concurrency = 4 } = options;
-  const anchor = await api.getWork(anchorId);
+  const directions = /** @type {Direction[]} */ (['citing', 'cited']);
+  const depths = { citing: citingDepth, cited: citedDepth };
+
+  // New works per request so far, per direction; drives projections of later levels.
+  const stats = { citing: { requests: 0, added: 0 }, cited: { requests: 0, added: 0 } };
+  const rate = (d) => (stats[d].requests ? stats[d].added / stats[d].requests : limit);
+  const overallRate = () => {
+    const requests = stats.citing.requests + stats.cited.requests;
+    return requests ? (stats.citing.added + stats.cited.added) / requests : limit;
+  };
+  let pending = 0; // Planned requests not yet completed.
+
+  /**
+   * Reports projected requests beyond `level`, given estimated frontier sizes for level + 1,
+   * and the expected final work count. Once the graph reaches maxNodes, remaining requests
+   * are skipped, so projections are scaled down to fit.
+   */
+  const report = (level, nextSizes) => {
+    let requests = 0;
+    let newWorks = pending * overallRate();
+    for (const d of directions) {
+      let frontier = nextSizes[d];
+      for (let k = level + 1; k <= depths[d]; k++) {
+        requests += frontier;
+        newWorks += frontier * rate(d);
+        frontier *= rate(d);
+      }
+    }
+    const room = Math.max(0, maxNodes - graph.works.size);
+    if (newWorks > room) {
+      requests *= newWorks > 0 ? room / newWorks : 0;
+      newWorks = room;
+    }
+    progress.project(requests);
+    progress.setWorks(graph.works.size, graph.works.size + newWorks);
+  };
+
+  let anchor = knownAnchor;
+  if (!anchor) {
+    progress.plan(1);
+    const finish = progress.begin();
+    anchor = await api.getWork(anchorId);
+    finish();
+  }
   let graph = addWorks({ ...emptyGraph(), anchorId: anchor.id }, [anchor], 'anchor');
   onProgress(graph);
 
   let truncated = false;
   const frontiers = { citing: [anchor.id], cited: [anchor.id] };
-  const depths = { citing: citingDepth, cited: citedDepth };
+  report(0, { citing: 1, cited: 1 });
 
   for (let level = 1; level <= Math.max(citingDepth, citedDepth); level++) {
-    for (const direction of /** @type {Direction[]} */ (['citing', 'cited'])) {
-      if (level > depths[direction]) continue;
-      const next = [];
+    const active = directions.filter((d) => level <= depths[d]);
+    const remaining = { citing: 0, cited: 0 };
+    const next = { citing: [], cited: [] };
+    for (const d of active) {
+      remaining[d] = frontiers[d].length;
+      pending += remaining[d];
+      progress.plan(remaining[d]);
+    }
+    const estimateNext = () =>
+      Object.fromEntries(directions.map((d) => [d, next[d].length + remaining[d] * rate(d)]));
+    const finishRequest = (d, finish = () => progress.complete()) => {
+      remaining[d]--;
+      pending--;
+      finish();
+      report(level, estimateNext());
+    };
+    report(level, estimateNext());
+
+    for (const direction of active) {
       await forEachLimited(frontiers[direction], concurrency, async (id) => {
         if (graph.works.size >= maxNodes) {
           truncated = true;
+          finishRequest(direction);
           return;
         }
+        const finish = progress.begin();
         const found = await api[fetchers[direction]](id, { limit });
         const fresh = found.filter((work) => !graph.works.has(work.id));
         const room = maxNodes - graph.works.size;
         if (fresh.length > room) truncated = true;
         const added = fresh.slice(0, Math.max(0, room));
+        stats[direction].requests++;
+        stats[direction].added += added.length;
         graph = markExpanded(addWorks(graph, added, direction), id, direction);
-        next.push(...added.map((work) => work.id));
+        next[direction].push(...added.map((work) => work.id));
         onProgress(graph);
+        finishRequest(direction, finish);
       });
-      frontiers[direction] = next;
+      frontiers[direction] = next[direction];
     }
   }
   return { graph, truncated };
@@ -200,16 +276,26 @@ export async function buildGraph(anchorId, options, api, onProgress = () => {}) 
  * @param {string} id
  * @param {{ limit: number }} options
  * @param {GraphApi} api
+ * @param {ReturnType<typeof import('./progress.js').createProgressTracker>} [progress]
+ *   Gets one completed request per direction; the caller plans 2.
  * @returns {Promise<(graph: Graph) => Graph>}  An updater to apply to the latest graph.
  */
-export async function expandWork(graph, id, { limit }, api) {
+export async function expandWork(graph, id, { limit }, api, progress = noProgress) {
   const done = graph.expanded.get(id) ?? new Set();
-  const directions = /** @type {Direction[]} */ (['citing', 'cited']).filter((d) => !done.has(d));
+  const all = /** @type {Direction[]} */ (['citing', 'cited']);
+  const directions = all.filter((d) => !done.has(d));
+  // The caller plans one request per direction; directions already fetched are skipped.
+  progress.complete(all.length - directions.length);
+  let loaded = 0;
   const results = await Promise.all(
-    directions.map(async (direction) => ({
-      direction,
-      works: await api[fetchers[direction]](id, { limit }),
-    })),
+    directions.map(async (direction) => {
+      const finish = progress.begin();
+      const works = await api[fetchers[direction]](id, { limit });
+      loaded += works.length;
+      progress.setWorks(loaded);
+      finish();
+      return { direction, works };
+    }),
   );
   return (latest) => {
     const expanded = results.reduce(
@@ -247,16 +333,25 @@ function relationTo(anchor, work) {
  * @param {BuildOptions} options
  * @param {GraphApi} api
  * @param {(graph: Graph) => void} [onProgress]
+ * @param {ReturnType<typeof import('./progress.js').createProgressTracker>} [progress]
  * @returns {Promise<{ graph: Graph, truncated: boolean }>}
  */
-export async function reanchorGraph(graph, anchorId, options, api, onProgress = () => {}) {
+export async function reanchorGraph(
+  graph,
+  anchorId,
+  options,
+  api,
+  onProgress = () => {},
+  progress = noProgress,
+) {
   const anchor = graph.works.get(anchorId);
   if (!anchor) throw new Error(`Work ${anchorId} is not on the graph`);
   const sticky = new Set([...graph.sticky, graph.anchorId].filter((id) => id && id !== anchorId));
+  // Two requests per sticky work (citing and cited) are known up front.
+  progress.plan(sticky.size * 2);
 
-  // The anchor's data is already here, so the build doesn't need to fetch it.
-  const scoped = { ...api, getWork: async (id) => (id === anchorId ? anchor : api.getWork(id)) };
-  const built = await buildGraph(anchorId, options, scoped, onProgress);
+  // The anchor's data is already here, so the build doesn't fetch it.
+  const built = await buildGraph(anchorId, options, api, onProgress, progress, anchor);
 
   let next = { ...built.graph, sticky };
   for (const id of sticky) {
@@ -265,7 +360,8 @@ export async function reanchorGraph(graph, anchorId, options, api, onProgress = 
       const previous = graph.relations.get(id);
       next = addWorks(next, [work], previous === 'anchor' ? relationTo(anchor, work) : previous);
     }
-    next = (await expandWork(next, id, { limit: options.limit }, api))(next);
+    next = (await expandWork(next, id, { limit: options.limit }, api, progress))(next);
+    progress.setWorks(next.works.size);
     onProgress(next);
   }
   return { graph: next, truncated: built.truncated };

@@ -203,6 +203,18 @@ const commands = {
     await waitForBuild();
     return `${await shown()}${(await status()) ? ` | ${await status()}` : ''}`;
   },
+  start: async (...words) => {
+    await page.getByLabel('Title, DOI, or OpenAlex ID').fill(words.join(' '));
+    await page.getByRole('button', { name: 'Go' }).click();
+    return 'started (not waiting)';
+  },
+  progress: async () => {
+    const list = page.getByRole('list', { name: 'Loading progress' });
+    if (!(await list.count())) return 'idle';
+    return (await list.locator('li').allInnerTexts())
+      .map((t) => t.replace(/\n+/g, ' | '))
+      .join(' || ');
+  },
   search: async (...words) => {
     await page.getByLabel('Title, DOI, or OpenAlex ID').fill(words.join(' '));
     await page.getByRole('button', { name: 'Go' }).click();
@@ -295,6 +307,8 @@ const HELP = {
   'nav [path]': 'Open the app (default /)',
   'build <DOI|OpenAlex ID>': 'Build a graph from an ID; waits for build + layout settle',
   'search <query>': 'Search by title; lists numbered results',
+  'start <DOI|OpenAlex ID>': 'Start a build without waiting (to watch progress)',
+  progress: 'Print the loading-progress cards (or idle)',
   'pick [n]': 'Build from search result n (default 1)',
   'set <label> = <value>': 'Fill an input/select/slider by label, e.g. set Cited depth = 2',
   'select [anchor|citing|cited] [n]':

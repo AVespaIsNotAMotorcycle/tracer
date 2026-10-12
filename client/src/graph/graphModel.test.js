@@ -1,4 +1,5 @@
 import { describe, expect, it, vi } from 'vitest';
+import { createProgressTracker } from './progress.js';
 import {
   addWorks,
   buildGraph,
@@ -439,5 +440,99 @@ describe('reanchorGraph', () => {
         api,
       ),
     ).rejects.toThrow(/not on the graph/);
+  });
+});
+
+describe('progress reporting', () => {
+  // R cites A and B; A cites D; B cites F; F cites G; C and E cite R and A respectively.
+  const network = { R: ['A', 'B'], A: ['D'], B: ['F'], F: ['G'], D: [], G: [], C: ['R'], E: ['A'] };
+  const record = () => {
+    const snapshots = [];
+    const tracker = createProgressTracker({ label: 'test', onChange: (s) => snapshots.push(s) });
+    return { tracker, snapshots };
+  };
+
+  it('accounts for every request by the end of a build', async () => {
+    const { tracker, snapshots } = record();
+
+    const { graph } = await buildGraph(
+      'R',
+      { citingDepth: 1, citedDepth: 2, limit: 10, maxNodes: 100 },
+      fakeApi(network),
+      undefined,
+      tracker,
+    );
+
+    const last = snapshots.at(-1);
+    // 1 anchor lookup + citing(R) + cited(R) + cited(A) + cited(B).
+    expect(last).toMatchObject({ done: 5, total: 5, estimated: false, works: graph.works.size });
+    const dones = snapshots.map((s) => s.done);
+    expect(dones).toEqual([...dones].sort((a, b) => a - b));
+    expect(snapshots.every((s) => s.done <= s.total)).toBe(true);
+  });
+
+  it('projects deeper levels before they are reached', async () => {
+    const { tracker, snapshots } = record();
+
+    await buildGraph(
+      'R',
+      { citingDepth: 0, citedDepth: 3, limit: 10, maxNodes: 100 },
+      fakeApi(network),
+      undefined,
+      tracker,
+    );
+
+    // Early on, later levels are only projected, so the total is an estimate.
+    expect(snapshots.some((s) => s.estimated && s.total > s.done)).toBe(true);
+    expect(snapshots.at(-1)).toMatchObject({ estimated: false });
+    expect(snapshots.at(-1).done).toBe(snapshots.at(-1).total);
+  });
+
+  it('counts skipped requests when maxNodes is reached', async () => {
+    const { tracker, snapshots } = record();
+
+    await buildGraph(
+      'R',
+      { citingDepth: 3, citedDepth: 3, limit: 10, maxNodes: 3 },
+      fakeApi(network),
+      undefined,
+      tracker,
+    );
+
+    expect(snapshots.at(-1).done).toBe(snapshots.at(-1).total);
+    expect(snapshots.at(-1).works).toBe(3);
+  });
+
+  it('reports expansion requests, counting directions already fetched as done', async () => {
+    const { tracker, snapshots } = record();
+    const graph = {
+      ...addWorks(emptyGraph(), [work('A', ['D'])], 'anchor'),
+      expanded: new Map([['A', new Set(['cited'])]]),
+    };
+    tracker.plan(2);
+
+    await expandWork(graph, 'A', { limit: 10 }, fakeApi(network), tracker);
+
+    expect(snapshots.at(-1)).toMatchObject({ done: 2, total: 2, works: 2 }); // R and E cite A.
+  });
+
+  it('includes sticky expansions when re-anchoring', async () => {
+    const api = fakeApi(network);
+    const before = (
+      await buildGraph('R', { citingDepth: 0, citedDepth: 1, limit: 10, maxNodes: 100 }, api)
+    ).graph;
+    const { tracker, snapshots } = record();
+
+    await reanchorGraph(
+      before,
+      'B',
+      { citingDepth: 0, citedDepth: 1, limit: 10, maxNodes: 100 },
+      api,
+      undefined,
+      tracker,
+    );
+
+    // 2 for sticky R + cited(B). The anchor is already loaded, so no lookup.
+    expect(snapshots.at(-1)).toMatchObject({ done: 3, total: 3 });
   });
 });

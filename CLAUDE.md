@@ -108,6 +108,11 @@ Tooling layout: Vitest, ESLint and Prettier are installed at the root. The root 
     - Edges (`deriveEdges`) and node sizes (`inGraphCitationCounts`) are always calculated from `works`, never stored.
     - `buildGraph` runs breadth-first with a separate depth per direction. Levels alternate between directions so `maxNodes` doesn't starve one of them, and requests run with limited concurrency. `expandWork` returns an updater to apply to the latest state.
   - **`graph/useCitationGraph.js`:** holds graph state. A new build or re-anchor aborts the one in progress (`AbortController`). A re-anchor keeps the old graph on screen and swaps in the result once (status `reanchoring`, with `progressCount` for the status line), so kept nodes hold their positions. If it fails, the old graph stays.
+  - **Loading progress** (`graph/progress.js`, `components/LoadingProgress.jsx`): builds, re-anchors and expansions each report to a tracker, which counts work in API requests.
+    - `plan` adds requests known to be coming. Each real request is timed with `begin()` and its returned finish function. `complete()` marks planned requests that were skipped (for example, when the graph is full), so `done` always reaches `total`.
+    - `project` estimates requests on deeper levels from the new works per request seen so far, scaled down to fit `maxNodes`.
+    - Time remaining = remaining requests × average request latency ÷ parallelism (4 for builds, 2 for expansions, roughly 3 for re-anchors). Latency is measured per request rather than by wall clock; a wall-clock rate overestimated about 4× while early requests ran one at a time.
+    - The hook keeps one entry per task in `tasks`. The visible cards update on every request, but the `role=status` line changes only on start and finish, so screen readers aren't flooded.
   - **`graph/GraphView.jsx`** renders with `react-force-graph-2d` (canvas).
     - Node objects are reused across updates, because force-graph stores positions on them.
     - Filtered-out works stay in the simulation and are hidden through `nodeVisibility`/`linkVisibility`, so filtering doesn't reshuffle the layout.

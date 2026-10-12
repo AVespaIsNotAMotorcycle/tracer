@@ -1,4 +1,4 @@
-// Client for the server's /api/works routes. All IDs in responses are Tracer IDs.
+// Client for the server's /api/works and /api/auth routes. All IDs in responses are Tracer IDs.
 
 const DOI_PATTERN = /^(?:https?:\/\/(?:dx\.)?doi\.org\/|doi:)?10\.\d{4,9}\/\S+$/i;
 const OPENALEX_PATTERN = /^(?:https?:\/\/openalex\.org\/)?W\d+$/i;
@@ -34,4 +34,34 @@ export async function getCiting(id, { limit, signal } = {}) {
 
 export async function getCited(id, { limit, signal } = {}) {
   return (await get(`${workPath(id)}/cited?limit=${limit}`, { signal })).works;
+}
+
+// Accounts. The session lives in an httpOnly cookie the browser sends with same-origin
+// requests; the server requires JSON for anything that changes state.
+async function post(path, body = {}) {
+  const res = await fetch(path, {
+    method: 'POST',
+    headers: { Accept: 'application/json', 'Content-Type': 'application/json' },
+    body: JSON.stringify(body),
+  });
+  const data = res.status === 204 ? {} : await res.json().catch(() => ({}));
+  if (!res.ok) throw new Error(data.error ?? `Request failed (${res.status})`);
+  return data;
+}
+
+/** The signed-in account, or null. */
+export async function getCurrentUser() {
+  return (await get('/api/auth/me')).user;
+}
+
+export async function signUp(email, password) {
+  return (await post('/api/auth/signup', { email, password })).user;
+}
+
+export async function logIn(email, password) {
+  return (await post('/api/auth/login', { email, password })).user;
+}
+
+export async function logOut() {
+  await post('/api/auth/logout');
 }

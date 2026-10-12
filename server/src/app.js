@@ -2,6 +2,7 @@ import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 import express from 'express';
 import mongoose from 'mongoose';
+import { createAuthRouter } from './auth/routes.js';
 import { createWorksRouter } from './works/routes.js';
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
@@ -13,10 +14,14 @@ const clientDist = path.resolve(__dirname, '../../client/dist');
  *
  * @param {object} [deps]
  * @param {ReturnType<typeof import('./works/workService.js').createWorkService>} [deps.workService]
+ * @param {ReturnType<typeof import('./auth/authService.js').createAuthService>} [deps.authService]
+ * @param {object} [deps.authOptions]  Passed to createAuthRouter (e.g. secureCookies).
  */
-export function createApp({ workService } = {}) {
+export function createApp({ workService, authService, authOptions } = {}) {
   const app = express();
-  app.use(express.json());
+  // Heroku's router sits in front: trust its X-Forwarded-* headers for req.ip and HTTPS.
+  app.set('trust proxy', 1);
+  app.use(express.json({ limit: '16kb' }));
 
   app.get('/api/health', (req, res) => {
     res.json({
@@ -26,6 +31,7 @@ export function createApp({ workService } = {}) {
   });
 
   if (workService) app.use('/api/works', createWorksRouter(workService));
+  if (authService) app.use('/api/auth', createAuthRouter(authService, authOptions));
 
   if (process.env.NODE_ENV === 'production') {
     app.use(express.static(clientDist));

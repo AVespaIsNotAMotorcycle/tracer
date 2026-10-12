@@ -46,7 +46,7 @@ Combining several citation databases to fill each other's coverage gaps is the a
 ## MongoDB roles
 
 1. Cache provider responses, to stay under rate limits and speed up repeat lookups.
-2. Save user-built graphs.
+2. Store accounts and sessions (see Accounts), and later save user-built graphs.
 3. Maintain an internal database of sources, ID mappings and citations merged from all providers. This merged database is the reason MongoDB is in the stack, not just a cache.
 
 Models are in `server/src/models/`:
@@ -92,7 +92,7 @@ Tooling layout: Vitest, ESLint and Prettier are installed at the root. The root 
 
 ## Architecture
 
-- **Dev:** two processes. Vite proxies `/api/*` to `http://localhost:5000` (`client/vite.config.js`), so client code always calls relative `/api/...` URLs and never hardcodes a host.
+- **Dev:** two processes. Vite proxies `/api/*` to `http://localhost:5000` (`client/vite.config.js`), so client code always calls relative `/api/...` URLs and never hardcodes a host. The proxy keeps the browser's `Host` header (`changeOrigin: false`): the auth routes compare it with `Origin`, and Vite's string shorthand would rewrite it to `localhost:5000`, refusing every login as cross-site.
 - **Production:** one process. When `NODE_ENV=production` (Heroku sets this by default), Express serves `client/dist` as static files and sends `index.html` for every non-`/api` route as an SPA fallback. New API routes must live under `/api` and be registered _before_ that fallback in `server/src/app.js`.
 - **Server entry split:** `server/src/app.js` exports `createApp({ workService })`, which has no side effects. `server/src/index.js` connects to Mongo, builds the OpenAlex provider and work service, and calls `listen`. Tests call `createApp` with their own dependencies.
 - **Works API** (`server/src/works/`): `routes.js` is thin; `workService.js` does lookup, caching and Tracer ID translation.
@@ -112,6 +112,14 @@ Tooling layout: Vitest, ESLint and Prettier are installed at the root. The root 
     | 502    | Provider failure                               |
     | 503    | Provider rate limit, or no database connection |
 
+- **Accounts** (`server/src/auth/`): email-and-password sign-up, log in and log out. No saved graphs yet.
+  - `POST /api/auth/signup` and `POST /api/auth/login` take `{ email, password }` and return `{ user }` (`{ id, email }`) with a session cookie; `POST /api/auth/logout` ends the session (204); `GET /api/auth/me` returns `{ user }` or `{ user: null }`. Statuses: 400 bad email or password, 401 wrong credentials, 409 email taken, 415 not JSON, 403 cross-site, 429 rate-limited, 503 no database.
+  - **Models:** `User` (one per account, unique lowercased `email`) and `Identity` (one per sign-in method: `provider` + unique `subject`, plus `passwordHash` for `password`). Keeping them separate is what makes ORCID or Google easy to add: a new `provider` value and OAuth routes that find or create the account, then call `authService.startSession` like `logIn` does.
+  - **Passwords:** scrypt from `node:crypto` (`auth/password.js`), stored as `scrypt$N$r$p$salt$hash` so the cost can be raised later; 8–256 characters. A login for an unknown email checks against `DUMMY_HASH`, so it costs the same as a wrong password and gets the same 401: logins don't reveal who has an account (sign-up's 409 does, as usual).
+  - **Sessions:** a random 32-byte token in an httpOnly, SameSite=Lax cookie (`tracer_session`, Secure in production), lasting `SESSION_TTL_MS` (30 days). Only its SHA-256 is stored (`Session._id`), and a TTL index removes expired ones. `loadUser(authService)` attaches `req.user` for future routes. The app trusts Heroku's proxy (`trust proxy`) for `req.ip` and HTTPS.
+  - **Request checks:** POSTs must be JSON and, when the browser sends an `Origin`, same-origin; with SameSite that blocks cross-site form posts. Rate limits (`auth/rateLimit.js`, in memory, fine for one dyno): 30 logins per IP and 10 per email per 15 minutes, 10 sign-ups per IP per hour.
+  - **Password reset (not built):** add a short-lived, single-use token stored hashed like sessions, a route that emails a reset link (needs an email service), and one that sets a new `passwordHash` and calls `authService.endAllSessions`.
+  - **Client:** `useAuth` (`client/src/auth/`) checks `/api/auth/me` on load (`user` is undefined until then); `AccountMenu` in the header shows "Log in" and "Sign up" or the email and "Log out", with a modal form for logging in and signing up.
 - **MongoDB version:** use 8.2. MongoDB 8.3+ refuses to start on Linux kernel 6.19 and later ([SERVER-121912](https://jira.mongodb.org/browse/SERVER-121912)), and this dev machine runs kernel 7.0. That's why the Docker image is `mongo:8.2`, and why root `package.json` pins `config.mongodbMemoryServer.version` for tests. Don't bump either to 8.3+ until that bug is fixed.
 - **Works tests** (`works.test.js`) use `mongodb-memory-server` (a real `mongod`, downloaded to `~/.cache` on first run) and a fake provider backed by an in-memory catalog. They assert on provider call counts to verify caching, and inject `now` to test expiry.
 - **Client** (`client/src/`):

@@ -1,5 +1,6 @@
 import mongoose from 'mongoose';
 import { createApp } from './app.js';
+import { createAuthService } from './auth/authService.js';
 import { connectWithRetry } from './db.js';
 import { createCrossrefProvider } from './providers/crossref.js';
 import { createOpenAlexProvider } from './providers/openalex.js';
@@ -25,6 +26,9 @@ const linkProvider = createOpenCitationsProvider({
 });
 const app = createApp({
   workService: createWorkService({ provider, referenceProvider, linkProvider }),
+  authService: createAuthService(),
+  // Session cookies only over HTTPS in production (Heroku serves HTTPS).
+  authOptions: { secureCookies: process.env.NODE_ENV === 'production' },
 });
 
 // Listen first so the API is reachable while MongoDB connects (or is down).

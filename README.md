@@ -9,6 +9,7 @@ No single citation database covers the humanities well. Tracer combines several 
 - **Explore:** click a node to pull in its own citing and cited works and grow the graph from there.
 - **Gauge influence:** each source is drawn as a circle sized by its citation count.
 - **Inspect:** select a node to see details about the source, with external links.
+- **Accounts:** sign up and log in with an email and password. (Saving graphs to an account is planned.)
 
 ## Data sources
 

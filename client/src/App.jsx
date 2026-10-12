@@ -1,5 +1,7 @@
 import { useEffect, useMemo, useRef, useState } from 'react';
 import './App.css';
+import { useAuth } from './auth/useAuth.js';
+import AccountMenu from './components/AccountMenu.jsx';
 import DetailsPanel from './components/DetailsPanel.jsx';
 import FiltersPanel from './components/FiltersPanel.jsx';
 import LoadingProgress from './components/LoadingProgress.jsx';
@@ -52,6 +54,7 @@ export default function App() {
     collapse,
     reset,
   } = useCitationGraph();
+  const auth = useAuth();
   const busy = status === 'loading' || status === 'reanchoring';
   // Build options start from the URL (or the defaults), so a shared link reproduces the graph.
   const [options, setOptions] = useState(() => readUrlState(window.location.search).options);
@@ -187,6 +190,12 @@ export default function App() {
       <header className="app-header">
         <h1>Tracer</h1>
         <p className="muted">Citation graphs for the humanities</p>
+        <AccountMenu
+          user={auth.user}
+          onSignUp={auth.signUp}
+          onLogIn={auth.logIn}
+          onLogOut={auth.logOut}
+        />
       </header>
 
       <aside className="sidebar">

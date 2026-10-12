@@ -30,6 +30,10 @@ vi.mock('./api.js', async (importOriginal) => ({
   getWork: vi.fn(),
   getCiting: vi.fn(),
   getCited: vi.fn(),
+  getCurrentUser: vi.fn(),
+  signUp: vi.fn(),
+  logIn: vi.fn(),
+  logOut: vi.fn(),
 }));
 
 const work = (id, { references = [], year = 1971, ...rest } = {}) => ({
@@ -62,6 +66,7 @@ const graph = () => screen.getByRole('list', { name: 'Graph' });
 beforeEach(() => {
   // The URL carries the anchor, and jsdom shares one location across tests.
   window.history.replaceState(null, '', '/');
+  vi.mocked(api.getCurrentUser).mockResolvedValue(null);
   vi.mocked(api.searchWorks).mockResolvedValue([anchor]);
   vi.mocked(api.getWork).mockResolvedValue(anchor);
   vi.mocked(api.getCiting).mockImplementation(async (id) => (id === 'anchor' ? [citer] : [more]));
@@ -653,5 +658,62 @@ describe('App', () => {
     fireEvent.click(screen.getByRole('button', { name: 'Go' }));
 
     expect(await screen.findByRole('alert')).toHaveTextContent('Work not found: W1');
+  });
+});
+
+describe('accounts', () => {
+  const user = { id: 'u1', email: 'historian@example.org' };
+  const fill = (label, value) =>
+    fireEvent.change(screen.getByLabelText(label), { target: { value } });
+
+  it('signs up from the header', async () => {
+    vi.mocked(api.signUp).mockResolvedValue(user);
+    render(<App />);
+    fireEvent.click(await screen.findByRole('button', { name: 'Sign up' }));
+
+    const dialog = screen.getByRole('dialog', { name: 'Create an account' });
+    expect(within(dialog).getByLabelText('Email')).toHaveFocus();
+    fill('Email', 'historian@example.org');
+    fill('Password', 'correct horse');
+    fireEvent.click(within(dialog).getByRole('button', { name: 'Create an account' }));
+
+    expect(await screen.findByText('historian@example.org')).toBeInTheDocument();
+    expect(api.signUp).toHaveBeenCalledWith('historian@example.org', 'correct horse');
+    expect(screen.queryByRole('dialog')).toBeNull();
+    expect(screen.getByRole('button', { name: 'Log out' })).toBeInTheDocument();
+  });
+
+  it('shows a failed login in the dialog', async () => {
+    vi.mocked(api.logIn).mockRejectedValue(new Error('Incorrect email or password'));
+    render(<App />);
+    fireEvent.click(await screen.findByRole('button', { name: 'Log in' }));
+    fill('Email', 'historian@example.org');
+    fill('Password', 'wrong horse');
+    fireEvent.submit(screen.getByLabelText('Password').closest('form'));
+
+    const dialog = screen.getByRole('dialog', { name: 'Log in' });
+    expect(await within(dialog).findByRole('alert')).toHaveTextContent(
+      'Incorrect email or password',
+    );
+  });
+
+  it('switches between logging in and signing up, and closes on Escape', async () => {
+    render(<App />);
+    fireEvent.click(await screen.findByRole('button', { name: 'Log in' }));
+    fireEvent.click(screen.getByRole('button', { name: 'Create an account' }));
+    expect(screen.getByRole('dialog', { name: 'Create an account' })).toBeInTheDocument();
+    fireEvent.keyDown(screen.getByRole('dialog'), { key: 'Escape' });
+    expect(screen.queryByRole('dialog')).toBeNull();
+  });
+
+  it('shows who is signed in, and logs out', async () => {
+    vi.mocked(api.getCurrentUser).mockResolvedValue(user);
+    vi.mocked(api.logOut).mockResolvedValue();
+    render(<App />);
+    expect(await screen.findByText('historian@example.org')).toBeInTheDocument();
+    fireEvent.click(screen.getByRole('button', { name: 'Log out' }));
+
+    expect(await screen.findByRole('button', { name: 'Log in' })).toBeInTheDocument();
+    expect(screen.queryByText('historian@example.org')).toBeNull();
   });
 });

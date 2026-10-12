@@ -19,7 +19,7 @@ Core model:
   - The anchor is written as its DOI, falling back to the OpenAlex ID, then the Tracer ID (`shareableId`). Tracer IDs only mean something within one database.
   - Build options are written only when they differ from the defaults (`citing`, `cited`, `perNode`, `max`).
   - Manual expansions, sticky works, filters and the axis angle are _not_ in the URL.
-- **Filters:** filters hide nodes from the view. They don't remove nodes from the graph or stop them being fetched. Keep the graph data separate from what is visible.
+- **Filters:** filters hide nodes from the view. They don't remove nodes from the graph or stop them being fetched. Keep the graph data separate from what is visible. Available filters: year range, minimum in-graph citations and source type. Source type is an exclusion list (`excludedTypes`), so types that first appear after expanding a node are shown.
 
 ## Data sources
 
@@ -138,7 +138,8 @@ Tooling layout: Vitest, ESLint and Prettier are installed at the root. The root 
     - Failed builds leave the URL alone.
     - App tests reset `window.location` in `beforeEach`, because jsdom shares it across tests.
   - **Source-type icons** (`graph/sourceTypes.js`): each OpenAlex `type` maps to a label and a lucide icon in two forms.
-    - The lucide-react component is used in the DOM: the "Source types" legend and the details panel.
+    - The lucide-react component is used in the DOM: the source-type checkboxes in Filters (which double as the icon legend) and the details panel.
+    - `sourceTypeKeys.js` has the type keys and the unknown-to-"Other" grouping with no UI dependencies, so `graphModel` can filter by type without importing icon libraries. A test keeps it in sync with `SOURCE_TYPES`.
     - The vanilla `lucide` element data is converted to a path string (`iconPathData`) and cached as a `Path2D`, then stroked inside canvas nodes. Icons appear once a circle's on-screen radius is at least `ICON_MIN_SCREEN_RADIUS`.
     - Keep `lucide` and `lucide-react` on the same version.
     - Import icons by name, never `import * as`, which would bundle all of lucide.

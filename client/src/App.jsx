@@ -4,7 +4,6 @@ import DetailsPanel from './components/DetailsPanel.jsx';
 import FiltersPanel from './components/FiltersPanel.jsx';
 import LoadingProgress from './components/LoadingProgress.jsx';
 import SearchPanel from './components/SearchPanel.jsx';
-import SourceTypeLegend from './components/SourceTypeLegend.jsx';
 import ViewPanel from './components/ViewPanel.jsx';
 import { DEFAULT_AXIS_ANGLE } from './graph/axis.js';
 import GraphView from './graph/GraphView.jsx';
@@ -128,6 +127,7 @@ export default function App() {
           <FiltersPanel
             filters={filters}
             onChange={setFilters}
+            works={graph.works}
             maxCount={maxCount}
             visibleCount={visible.size}
             totalCount={graph.works.size}
@@ -151,7 +151,6 @@ export default function App() {
             <span className="muted small">Circle size: times cited by works on this graph</span>
           </section>
         )}
-        {hasGraph && <SourceTypeLegend works={graph.works} />}
       </aside>
 
       <main className="canvas">

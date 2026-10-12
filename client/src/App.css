@@ -387,11 +387,23 @@ button.primary,
   font-size: 0.9em;
 }
 
-.source-types li {
+.type-filter {
+  border: none;
+  padding: 0;
+  margin: 0;
+}
+
+.type-filter legend {
+  font-size: 0.85em;
+  margin-bottom: 4px;
+}
+
+.source-types label {
   display: grid;
-  grid-template-columns: auto 1fr auto;
+  grid-template-columns: auto auto 1fr auto;
   align-items: center;
   gap: 8px;
+  cursor: pointer;
 }
 
 /* Canvas */

@@ -180,8 +180,9 @@ const commands = {
     const [label, value] = words.join(' ').split(/\s*=\s*/);
     if (!label || value === undefined) throw new Error('usage: set <label> = <value>');
     const field = page.getByLabel(label, { exact: false }).first();
-    const tag = await field.evaluate((el) => el.tagName);
+    const { tag, type } = await field.evaluate((el) => ({ tag: el.tagName, type: el.type }));
     if (tag === 'SELECT') await field.selectOption(value);
+    else if (type === 'checkbox') await field.setChecked(/^(on|true|yes|1)$/i.test(value));
     else await field.fill(value);
     return `${label} = ${value}`;
   },
@@ -255,7 +256,8 @@ const HELP = {
   'start <DOI|OpenAlex ID>': 'Start a build without waiting (to watch progress)',
   progress: 'Print the loading-progress cards (or idle)',
   'pick [n]': 'Build from search result n (default 1)',
-  'set <label> = <value>': 'Fill an input/select/slider by label, e.g. set Cited depth = 2',
+  'set <label> = <value>':
+    'Fill an input/select/slider by label, e.g. set Cited depth = 2; checkboxes take on/off',
   'select [anchor|citing|cited] [n]':
     'Select the nth visible node of that kind (top-left first), via the automation hook',
   'select-title <text>': 'Select the visible node whose title contains <text>',

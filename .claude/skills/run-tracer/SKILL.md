@@ -64,25 +64,25 @@ EOF
 
 Screenshots go to `.claude/skills/run-tracer/out/<name>.png` (gitignored). Set `TRACER_SHOTS=dir` to save them elsewhere. Look at them. A blank canvas means the view fit before the layout settled; see Gotchas.
 
-| command                                 | what it does                                                                                                                  |
-| --------------------------------------- | ----------------------------------------------------------------------------------------------------------------------------- |
-| `nav [path]`                            | Open the app                                                                                                                  |
-| `build <DOI or OpenAlex ID>`            | Build a graph. Waits for the build to finish and the layout to settle (about 6 s), then prints `Showing N of N`               |
-| `search <query>` / `pick [n]`           | Title search with a numbered result list, then build from result n                                                            |
-| `start <id>` / `progress`               | Start a build without waiting, then print the loading-progress cards (requests, works, time left)                             |
-| `set <label> = <value>`                 | Fill any input, select or slider by its label, e.g. `set Cited depth = 0`, `set Time axis angle = 60`, `set From year = 1990` |
-| `select [anchor\|citing\|cited] [n]`    | Select the nth visible node of that kind (top-left first), using the app's automation hook                                    |
-| `select-title <text>`                   | Select the visible node whose title contains the text                                                                         |
-| `select-at [fx fy]`                     | Fallback: click the node nearest a canvas point, given as fractions of its size                                               |
-| `details`                               | Print the details panel text                                                                                                  |
-| `expand`                                | Expand the selected node and wait                                                                                             |
-| `reanchor`                              | Make the selected node the anchor; waits for the rebuild and layout settle                                                    |
-| `click <button name>`                   | Click a button by its accessible name                                                                                         |
-| `theme light\|dark`, `viewport <w> <h>` | Switch color scheme, resize                                                                                                   |
-| `screenshot [name] [full]`              | Save a PNG; add `full` for the whole page                                                                                     |
-| `eval <js>`                             | Run JS in the page and print the result as JSON                                                                               |
-| `errors`                                | Console and page errors so far. Check this before declaring success                                                           |
-| `wait [ms]`, `help`, `quit`             |                                                                                                                               |
+| command                                 | what it does                                                                                                                                        |
+| --------------------------------------- | --------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `nav [path]`                            | Open the app                                                                                                                                        |
+| `build <DOI or OpenAlex ID>`            | Build a graph. Waits for the build to finish and the layout to settle (about 6 s), then prints `Showing N of N`                                     |
+| `search <query>` / `pick [n]`           | Title search with a numbered result list, then build from result n                                                                                  |
+| `start <id>` / `progress`               | Start a build without waiting, then print the loading-progress cards (requests, works, time left)                                                   |
+| `set <label> = <value>`                 | Fill any input, select or slider by its label, e.g. `set Cited depth = 0`, `set Time axis angle = 60`, `set Article = off` (checkboxes take on/off) |
+| `select [anchor\|citing\|cited] [n]`    | Select the nth visible node of that kind (top-left first), using the app's automation hook                                                          |
+| `select-title <text>`                   | Select the visible node whose title contains the text                                                                                               |
+| `select-at [fx fy]`                     | Fallback: click the node nearest a canvas point, given as fractions of its size                                                                     |
+| `details`                               | Print the details panel text                                                                                                                        |
+| `expand`                                | Expand the selected node and wait                                                                                                                   |
+| `reanchor`                              | Make the selected node the anchor; waits for the rebuild and layout settle                                                                          |
+| `click <button name>`                   | Click a button by its accessible name                                                                                                               |
+| `theme light\|dark`, `viewport <w> <h>` | Switch color scheme, resize                                                                                                                         |
+| `screenshot [name] [full]`              | Save a PNG; add `full` for the whole page                                                                                                           |
+| `eval <js>`                             | Run JS in the page and print the result as JSON                                                                                                     |
+| `errors`                                | Console and page errors so far. Check this before declaring success                                                                                 |
+| `wait [ms]`, `help`, `quit`             |                                                                                                                                                     |
 
 Good test anchors:
 

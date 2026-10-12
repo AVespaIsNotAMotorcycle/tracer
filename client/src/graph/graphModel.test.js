@@ -89,6 +89,30 @@ describe('visibleIds', () => {
     expect(visibleIds(graph, filters, counts)).toEqual(new Set(['R', 'B']));
   });
 
+  it('filters by source type, grouping unknown types as other', () => {
+    const typed = {
+      ...addWorks(
+        emptyGraph(),
+        [
+          { ...work('N', ['A', 'B', 'C']), type: 'article' },
+          { ...work('A'), type: 'book' },
+          { ...work('B'), type: 'article' },
+          { ...work('C'), type: 'brand-new-type' },
+        ],
+        'cited',
+      ),
+      anchorId: 'N',
+    };
+    const typedCounts = inGraphCitationCounts(typed.works);
+
+    expect(visibleIds(typed, { ...NO_FILTERS, excludedTypes: ['article'] }, typedCounts)).toEqual(
+      new Set(['N', 'A', 'C']), // N is the anchor, so it stays.
+    );
+    expect(visibleIds(typed, { ...NO_FILTERS, excludedTypes: ['other'] }, typedCounts)).toEqual(
+      new Set(['N', 'A', 'B']),
+    );
+  });
+
   it('filters by in-graph citations but always keeps the anchor and pinned IDs', () => {
     const filters = { ...NO_FILTERS, minCitations: 2 };
     expect(visibleIds(graph, filters, counts, ['C'])).toEqual(new Set(['R', 'A', 'C']));

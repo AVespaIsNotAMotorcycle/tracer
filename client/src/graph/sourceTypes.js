@@ -57,9 +57,11 @@ import {
   Ruler as RulerShape,
   StickyNote as StickyNoteShape,
 } from 'lucide';
+import { sourceTypeKey } from './sourceTypeKeys.js';
 
 /** @type {Record<string, { label: string, Icon: import('react').ComponentType<any>, shape: Array<[string, Record<string, string>]> }>} */
-const SOURCE_TYPES = {
+// Keys must match SOURCE_TYPE_KEYS in sourceTypeKeys.js (checked by a test).
+export const SOURCE_TYPES = {
   article: { label: 'Article', Icon: FileText, shape: FileTextShape },
   book: { label: 'Book', Icon: Book, shape: BookShape },
   'book-chapter': { label: 'Book chapter', Icon: BookOpenText, shape: BookOpenTextShape },
@@ -97,7 +99,7 @@ const SOURCE_TYPES = {
  * @param {string | null | undefined} type
  */
 export function sourceType(type) {
-  const key = type && SOURCE_TYPES[type] ? type : 'other';
+  const key = sourceTypeKey(type);
   return { key, ...SOURCE_TYPES[key] };
 }
 

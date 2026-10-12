@@ -23,6 +23,7 @@ export default function ViewPanel({ axisAngle, onAxisAngleChange }) {
           className="link-button"
           onClick={() => onAxisAngleChange(DEFAULT_AXIS_ANGLE)}
           disabled={axisAngle === DEFAULT_AXIS_ANGLE}
+          aria-label="Reset angle"
         >
           Reset
         </button>

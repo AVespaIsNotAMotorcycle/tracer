@@ -207,9 +207,7 @@ describe('App', () => {
     expect(graph()).toHaveAttribute('data-axis-angle', '60');
     expect(screen.getByText('Time axis angle: 60°')).toBeInTheDocument();
 
-    fireEvent.click(
-      within(screen.getByRole('region', { name: 'View' })).getByRole('button', { name: 'Reset' }),
-    );
+    fireEvent.click(screen.getByRole('button', { name: 'Reset angle' }));
     expect(graph()).toHaveAttribute('data-axis-angle', '30');
   });
 
@@ -256,19 +254,67 @@ describe('App', () => {
     );
   });
 
-  it('lists the source types on the graph with counts', async () => {
-    vi.mocked(api.getCited).mockImplementation(async (id) =>
-      id === 'anchor'
-        ? [ref, work('book1', { type: 'book' }), work('book2', { type: 'book' })]
-        : [],
-    );
-    await buildFromSearch(5);
+  describe('source type filter', () => {
+    const withBooks = () =>
+      vi
+        .mocked(api.getCited)
+        .mockImplementation(async (id) =>
+          id === 'anchor'
+            ? [ref, work('book1', { type: 'book' }), work('book2', { type: 'book' })]
+            : [],
+        );
+    const typeFilter = () => screen.getByRole('group', { name: 'Source types' });
+    const titles = () =>
+      within(graph())
+        .getAllByRole('button')
+        .map((button) => button.textContent)
+        .sort();
 
-    const legend = screen.getByRole('region', { name: 'Source types' });
-    const rows = within(legend)
-      .getAllByRole('listitem')
-      .map((li) => li.textContent);
-    expect(rows).toEqual(['Article3', 'Book2']);
+    it('lists the source types on the graph with icons and counts', async () => {
+      withBooks();
+      await buildFromSearch(5);
+
+      const rows = within(typeFilter())
+        .getAllByRole('listitem')
+        .map((li) => li.textContent);
+      expect(rows).toEqual(['Article3', 'Book2']);
+      expect(
+        within(typeFilter())
+          .getAllByRole('checkbox')
+          .every((box) => box.checked),
+      ).toBe(true);
+    });
+
+    it('hides works of an unchecked type but keeps the anchor', async () => {
+      withBooks();
+      await buildFromSearch(5);
+
+      fireEvent.click(within(typeFilter()).getByRole('checkbox', { name: /Article/ }));
+
+      expect(titles()).toEqual(['Title anchor', 'Title book1', 'Title book2']);
+      expect(screen.getByText('Showing 3 of 5')).toBeInTheDocument();
+    });
+
+    it('keeps the selected work visible even if its type is hidden', async () => {
+      withBooks();
+      await buildFromSearch(5);
+      fireEvent.click(within(graph()).getByRole('button', { name: 'Title ref' }));
+
+      fireEvent.click(within(typeFilter()).getByRole('checkbox', { name: /Article/ }));
+
+      expect(titles()).toContain('Title ref');
+    });
+
+    it('restores hidden types on Reset', async () => {
+      withBooks();
+      await buildFromSearch(5);
+      fireEvent.click(within(typeFilter()).getByRole('checkbox', { name: /Book/ }));
+      expect(titles()).toHaveLength(3);
+
+      fireEvent.click(screen.getByRole('button', { name: 'Reset filters' }));
+
+      expect(titles()).toHaveLength(5);
+    });
   });
 
   it('shows the source type in the details panel', async () => {

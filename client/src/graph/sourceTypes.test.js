@@ -1,5 +1,6 @@
 import { describe, expect, it } from 'vitest';
-import { iconPathData, sourceType } from './sourceTypes.js';
+import { SOURCE_TYPE_KEYS, sourceTypeKey } from './sourceTypeKeys.js';
+import { iconPathData, SOURCE_TYPES, sourceType } from './sourceTypes.js';
 
 describe('sourceType', () => {
   it.each([
@@ -26,6 +27,18 @@ describe('sourceType', () => {
     for (const type of ['article', 'book', 'book-review', 'dataset', 'other']) {
       expect(iconPathData(sourceType(type).shape)).toMatch(/^M/);
     }
+  });
+});
+
+describe('sourceTypeKeys', () => {
+  it('matches the icon mapping exactly', () => {
+    expect(Object.keys(SOURCE_TYPES).sort()).toEqual([...SOURCE_TYPE_KEYS].sort());
+  });
+
+  it('groups unknown types as other', () => {
+    expect(sourceTypeKey('book-review')).toBe('book-review');
+    expect(sourceTypeKey('brand-new-type')).toBe('other');
+    expect(sourceTypeKey(null)).toBe('other');
   });
 });
 

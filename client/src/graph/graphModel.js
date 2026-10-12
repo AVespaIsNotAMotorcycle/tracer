@@ -5,6 +5,7 @@
 // Filters decide what is visible; they never remove works from the graph.
 
 import { noProgress } from './progress.js';
+import { sourceTypeKey } from './sourceTypeKeys.js';
 
 /** @typedef {'citing' | 'cited'} Direction */
 
@@ -94,10 +95,12 @@ export function inGraphCitationCounts(works) {
  * @property {number | null} minYear
  * @property {number | null} maxYear
  * @property {number} minCitations  Minimum in-graph citation count.
+ * @property {string[]} excludedTypes  Source type keys to hide (see sourceTypeKeys.js). An
+ *   exclusion list, so types that first appear after expanding a node are shown.
  */
 
 /** @type {Filters} */
-export const NO_FILTERS = { minYear: null, maxYear: null, minCitations: 0 };
+export const NO_FILTERS = { minYear: null, maxYear: null, minCitations: 0, excludedTypes: [] };
 
 /**
  * IDs of works that pass the filters. The anchor and any `alwaysShow` IDs (e.g. the selection)
@@ -111,12 +114,14 @@ export const NO_FILTERS = { minYear: null, maxYear: null, minCitations: 0 };
  */
 export function visibleIds(graph, filters, counts, alwaysShow = []) {
   const keep = new Set([graph.anchorId, ...alwaysShow].filter(Boolean));
+  const excluded = new Set(filters.excludedTypes ?? []);
   const visible = new Set();
   for (const work of graph.works.values()) {
     const passes =
       (filters.minYear == null || (work.year != null && work.year >= filters.minYear)) &&
       (filters.maxYear == null || (work.year != null && work.year <= filters.maxYear)) &&
-      (counts.get(work.id) ?? 0) >= filters.minCitations;
+      (counts.get(work.id) ?? 0) >= filters.minCitations &&
+      !excluded.has(sourceTypeKey(work.type));
     if (passes || keep.has(work.id)) visible.add(work.id);
   }
   return visible;

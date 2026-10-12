@@ -501,6 +501,21 @@ button.primary,
 
 /* Details */
 
+.parts {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+}
+
+.parts li {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+}
+
 .details-header {
   display: flex;
   justify-content: space-between;
@@ -551,7 +566,8 @@ button.primary,
   padding-left: 18px;
 }
 
-.links a {
+.links a,
+.parts a {
   color: var(--accent);
 }
 

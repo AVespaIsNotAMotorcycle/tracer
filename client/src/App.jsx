@@ -9,6 +9,7 @@ import { DEFAULT_AXIS_ANGLE } from './graph/axis.js';
 import GraphView from './graph/GraphView.jsx';
 import {
   deriveEdges,
+  foldBookParts,
   inGraphCitationCounts,
   layoutYears,
   NO_FILTERS,
@@ -18,6 +19,13 @@ import { useCitationGraph } from './graph/useCitationGraph.js';
 import { readUrlState, writeUrlState } from './urlState.js';
 
 const EMPTY_SET = new Set();
+
+/** How many works on the graph each work cites. */
+function outgoingCounts(works) {
+  const result = new Map();
+  for (const { source } of deriveEdges(works)) result.set(source, (result.get(source) ?? 0) + 1);
+  return result;
+}
 
 export default function App() {
   const { graph, status, tasks, error, truncated, expanding, build, reanchor, expand, reset } =
@@ -29,17 +37,26 @@ export default function App() {
   const [selectedId, setSelectedId] = useState(null);
   const [axisAngle, setAxisAngle] = useState(DEFAULT_AXIS_ANGLE);
 
-  const counts = useMemo(() => inGraphCitationCounts(graph.works), [graph.works]);
-  const years = useMemo(() => layoutYears(graph), [graph]);
-  const outgoing = useMemo(() => {
-    const result = new Map();
-    for (const { source } of deriveEdges(graph.works))
-      result.set(source, (result.get(source) ?? 0) + 1);
-    return result;
-  }, [graph.works]);
+  // What the graph shows: each book's chapters folded into the book (see foldBookParts).
+  // Everything drawn or filtered works from this view; `graph` keeps every work.
+  const { graph: view, partsOf, bookOf } = useMemo(() => foldBookParts(graph), [graph]);
+  // A selected chapter whose book has since arrived is shown as the book.
+  const shownId = selectedId ? (bookOf.get(selectedId) ?? selectedId) : null;
+  const counts = useMemo(() => inGraphCitationCounts(view.works), [view.works]);
+  const years = useMemo(() => layoutYears(view), [view]);
+  const outgoing = useMemo(() => outgoingCounts(view.works), [view.works]);
   const visible = useMemo(
-    () => visibleIds(graph, filters, counts, selectedId ? [selectedId] : []),
-    [graph, filters, counts, selectedId],
+    () => visibleIds(view, filters, counts, shownId ? [shownId] : []),
+    [view, filters, counts, shownId],
+  );
+  // Per-chapter counts for a book's details, from the unfolded graph.
+  const partCounts = useMemo(
+    () => (partsOf.size ? inGraphCitationCounts(graph.works) : null),
+    [graph.works, partsOf],
+  );
+  const partOutgoing = useMemo(
+    () => (partsOf.size ? outgoingCounts(graph.works) : null),
+    [graph.works, partsOf],
   );
   const maxCount = useMemo(() => Math.max(0, ...counts.values()), [counts]);
 
@@ -106,7 +123,14 @@ export default function App() {
     else window.history.replaceState(null, '', url);
   }, [busy, status, graph]);
 
-  const selected = selectedId ? graph.works.get(selectedId) : null;
+  const selected = shownId ? view.works.get(shownId) : null;
+  const parts = selected
+    ? (partsOf.get(selected.id) ?? []).map((work) => ({
+        work,
+        citedByOnGraph: partCounts.get(work.id) ?? 0,
+        citesOnGraph: partOutgoing.get(work.id) ?? 0,
+      }))
+    : [];
   const hasGraph = graph.works.size > 0;
 
   return (
@@ -127,10 +151,10 @@ export default function App() {
           <FiltersPanel
             filters={filters}
             onChange={setFilters}
-            works={graph.works}
+            works={view.works}
             maxCount={maxCount}
             visibleCount={visible.size}
-            totalCount={graph.works.size}
+            totalCount={view.works.size}
           />
         )}
         {hasGraph && <ViewPanel axisAngle={axisAngle} onAxisAngleChange={setAxisAngle} />}
@@ -173,11 +197,11 @@ export default function App() {
         </div>
         {hasGraph ? (
           <GraphView
-            graph={graph}
+            graph={view}
             counts={counts}
             years={years}
             visible={visible}
-            selectedId={selectedId}
+            selectedId={shownId}
             onSelect={setSelectedId}
             building={busy}
             axisAngle={axisAngle}
@@ -197,6 +221,7 @@ export default function App() {
           relation={graph.relations.get(selected.id)}
           citedByOnGraph={counts.get(selected.id) ?? 0}
           citesOnGraph={outgoing.get(selected.id) ?? 0}
+          parts={parts}
           expanded={graph.expanded.get(selected.id) ?? EMPTY_SET}
           expanding={expanding.has(selected.id)}
           busy={busy}

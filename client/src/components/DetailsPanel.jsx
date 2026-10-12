@@ -13,12 +13,23 @@ const RELATION_LABELS = {
   cited: 'Found as a cited work',
 };
 
-/** Details for the selected work, with external links and an expand action. */
+const authorsOf = (work) => work.authors.map((author) => author.name).join(', ');
+
+/** The DOI link for a work, if it has one. */
+const doiLink = (work) => work.links.find((link) => link.kind === 'doi');
+
+/**
+ * Details for the selected work, with external links and an expand action. A book lists its
+ * `parts` (chapters folded into it on the graph; see foldBookParts), each as
+ * `{ work, citedByOnGraph, citesOnGraph }`. A chapter's authors are shown only when they
+ * differ from the book's.
+ */
 export default function DetailsPanel({
   work,
   relation,
   citedByOnGraph,
   citesOnGraph,
+  parts = [],
   expanded,
   expanding,
   busy = false,
@@ -39,9 +50,7 @@ export default function DetailsPanel({
         </button>
       </div>
       <h2 id="details-title">{work.title ?? 'Untitled'}</h2>
-      {work.authors.length > 0 && (
-        <p className="authors">{work.authors.map((author) => author.name).join(', ')}</p>
-      )}
+      {work.authors.length > 0 && <p className="authors">{authorsOf(work)}</p>}
       <p className="muted with-icon">
         <TypeIcon className="icon" aria-hidden="true" />
         <span>
@@ -65,6 +74,7 @@ export default function DetailsPanel({
           </div>
         )}
       </dl>
+      {parts.length > 0 && <p className="muted small">On-graph counts include its chapters.</p>}
 
       <button
         type="button"
@@ -103,6 +113,43 @@ export default function DetailsPanel({
       )}
 
       <p className="muted small">Data from {work.providers.join(', ')}</p>
+
+      {parts.length > 0 && (
+        <>
+          <h3>Chapters ({parts.length})</h3>
+          <ul className="parts" aria-label="Chapters">
+            {parts.map(({ work: part, citedByOnGraph: citedBy, citesOnGraph: cites }) => {
+              const link = doiLink(part);
+              const { key, label } = sourceType(part.type);
+              return (
+                <li key={part.id}>
+                  <span className="part-title">
+                    {link ? (
+                      <a href={link.url} target="_blank" rel="noopener noreferrer">
+                        {part.title ?? 'Untitled'}
+                      </a>
+                    ) : (
+                      (part.title ?? 'Untitled')
+                    )}
+                  </span>
+                  {authorsOf(part) !== authorsOf(work) && authorsOf(part) && (
+                    <span className="muted">{authorsOf(part)}</span>
+                  )}
+                  <span className="muted small">
+                    {[
+                      key !== 'book-chapter' && label,
+                      `Cited by ${citedBy} on graph`,
+                      `cites ${cites}`,
+                    ]
+                      .filter(Boolean)
+                      .join(' · ')}
+                  </span>
+                </li>
+              );
+            })}
+          </ul>
+        </>
+      )}
     </aside>
   );
 }

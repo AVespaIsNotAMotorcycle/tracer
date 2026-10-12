@@ -112,6 +112,51 @@ describe('App', () => {
     expect(screen.queryByText('No works found.')).not.toBeInTheDocument();
   });
 
+  it('shows a book’s chapters in its details instead of as nodes', async () => {
+    const book = work('book', {
+      type: 'book',
+      year: 2020,
+      externalIds: { doi: '10.1017/9781108647403' },
+    });
+    const chapter = (id, suffix, title, authors) =>
+      work(id, {
+        type: 'book-chapter',
+        year: 2020,
+        title,
+        authors,
+        references: ['anchor'],
+        externalIds: { doi: `10.1017/9781108647403.${suffix}` },
+      });
+    vi.mocked(api.getCiting).mockImplementation(async (id) =>
+      id === 'anchor'
+        ? [
+            book,
+            chapter('ch2', '010', 'The Atlantic World', [{ name: 'E. P. Thompson', orcid: null }]),
+            chapter('ch1', '005', 'The Grumbling Hive', [{ name: 'A. Author' }]),
+          ]
+        : [],
+    );
+    await buildFromSearch(3);
+
+    expect(within(graph()).queryByRole('button', { name: 'The Grumbling Hive' })).toBeNull();
+    fireEvent.click(within(graph()).getByRole('button', { name: 'Title book' }));
+    const chapters = screen.getByRole('list', { name: 'Chapters' });
+    const items = within(chapters).getAllByRole('listitem');
+    expect(items.map((item) => item.textContent)).toEqual([
+      expect.stringContaining('The Grumbling Hive'),
+      expect.stringContaining('The Atlantic World'),
+    ]);
+    expect(items[0]).toHaveTextContent('A. Author');
+    // The same authors as the book's aren't repeated.
+    expect(items[1]).not.toHaveTextContent('Thompson');
+    expect(within(items[0]).getByRole('link', { name: 'The Grumbling Hive' })).toHaveAttribute(
+      'href',
+      'https://doi.org/10.1234/ch1',
+    );
+    // The book cites the anchor once, through its chapters.
+    expect(screen.getByText('Cites on graph').nextSibling).toHaveTextContent('1');
+  });
+
   it('builds directly from a DOI without searching', async () => {
     render(<App />);
     fireEvent.change(screen.getByLabelText('Title, DOI, or OpenAlex ID'), {

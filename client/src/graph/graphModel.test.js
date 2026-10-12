@@ -6,6 +6,7 @@ import {
   deriveEdges,
   emptyGraph,
   expandWork,
+  foldBookParts,
   inGraphCitationCounts,
   layoutYears,
   reanchorGraph,
@@ -558,5 +559,68 @@ describe('progress reporting', () => {
 
     // 2 for sticky R + cited(B). The anchor is already loaded, so no lookup.
     expect(snapshots.at(-1)).toMatchObject({ done: 3, total: 3 });
+  });
+});
+
+describe('foldBookParts', () => {
+  const withDoi = (w, doi, type) => ({ ...w, externalIds: { doi }, type });
+  const book = withDoi(work('book'), '10.1017/9781108647403', 'book');
+  const ch2 = withDoi(work('ch2', ['old']), '10.1017/9781108647403.010', 'book-chapter');
+  const ch1 = withDoi(work('ch1', ['anchor', 'ch2']), '10.1017/9781108647403.005', 'book-chapter');
+  const preface = withDoi(work('preface'), '10.1017/9781108647403.002', 'other');
+  const graphOf = (anchorId, ...works) => ({
+    ...emptyGraph(),
+    anchorId,
+    works: worksMap(...works),
+  });
+
+  it('folds parts into their book, in DOI order', () => {
+    const graph = graphOf('anchor', work('anchor'), book, ch2, ch1, preface);
+    const { graph: view, partsOf, bookOf } = foldBookParts(graph);
+    expect([...view.works.keys()].sort()).toEqual(['anchor', 'book']);
+    expect(partsOf.get('book').map((w) => w.id)).toEqual(['preface', 'ch1', 'ch2']);
+    expect(bookOf.get('ch1')).toBe('book');
+    // The graph itself is untouched.
+    expect(graph.works.size).toBe(5);
+  });
+
+  it('moves citations to and from parts onto the book', () => {
+    const citer = work('citer', ['ch1', 'ch2']);
+    const graph = graphOf('anchor', work('anchor'), work('old'), citer, book, ch1, ch2);
+    const { graph: view } = foldBookParts(graph);
+    // ch1 cites anchor and its sibling ch2; ch2 cites old. The sibling citation disappears.
+    expect(deriveEdges(view.works)).toEqual(
+      expect.arrayContaining([
+        { source: 'citer', target: 'book' },
+        { source: 'book', target: 'anchor' },
+        { source: 'book', target: 'old' },
+      ]),
+    );
+    expect(deriveEdges(view.works)).toHaveLength(3);
+    expect(inGraphCitationCounts(view.works).get('book')).toBe(1);
+  });
+
+  it('matches Springer and De Gruyter suffixes, but not DOIs that merely share a prefix', () => {
+    const springer = withDoi(work('s'), '10.1007/978-3-030-12345-6', 'book');
+    const springerCh = withDoi(work('s5'), '10.1007/978-3-030-12345-6_5', 'book-chapter');
+    const gruyter = withDoi(work('g'), '10.1515/9783110123456', 'book');
+    const gruyterCh = withDoi(work('g5'), '10.1515/9783110123456-005', 'book-chapter');
+    const lookalike = withDoi(work('x'), '10.1515/97831101234567', 'article');
+    const { bookOf } = foldBookParts(
+      graphOf(null, springer, springerCh, gruyter, gruyterCh, lookalike),
+    );
+    expect(Object.fromEntries(bookOf)).toEqual({ s5: 's', g5: 'g' });
+  });
+
+  it('leaves parts alone when their book is not on the graph, and never folds the anchor', () => {
+    expect(foldBookParts(graphOf('x', work('x'), ch1, ch2)).bookOf.size).toBe(0);
+    const { graph: view, partsOf } = foldBookParts(graphOf('ch1', book, ch1, ch2));
+    expect([...view.works.keys()].sort()).toEqual(['book', 'ch1']);
+    expect(partsOf.get('book').map((w) => w.id)).toEqual(['ch2']);
+  });
+
+  it('returns the same graph when nothing folds', () => {
+    const graph = graphOf('anchor', work('anchor'), book);
+    expect(foldBookParts(graph).graph).toBe(graph);
   });
 });

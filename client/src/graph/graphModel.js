@@ -90,6 +90,71 @@ export function inGraphCitationCounts(works) {
   return counts;
 }
 
+// Separators that start a part's DOI suffix after its book's DOI: Cambridge `….005`,
+// Springer `…_5`, De Gruyter `…-005`, and `/`.
+const PART_SEPARATOR = /[._\-/]/;
+
+/**
+ * The view of the graph with each book's parts (chapters, front matter) folded into the book:
+ * a work whose DOI is a book's DOI plus a suffix (`10.1017/9781108647403.005` is part of
+ * `10.1017/9781108647403`) isn't a node of its own when that book is on the graph. Citations to
+ * and from a part count as citations to and from its book. The anchor is never folded away.
+ *
+ * Like filters, this only changes what is shown: the graph itself keeps every part, so
+ * fetching, expansion and re-anchoring are unaffected.
+ *
+ * @param {Graph} graph
+ * @returns {{ graph: Graph, partsOf: Map<string, object[]>, bookOf: Map<string, string> }}
+ *   The view graph (same shape as a Graph), each book's parts in DOI order, and each folded
+ *   part's book.
+ */
+export function foldBookParts(graph) {
+  const bookByDoi = new Map();
+  for (const work of graph.works.values()) {
+    const doi = work.externalIds?.doi;
+    if (work.type === 'book' && doi) bookByDoi.set(doi, work.id);
+  }
+  const bookOf = new Map();
+  if (bookByDoi.size > 0) {
+    for (const work of graph.works.values()) {
+      const doi = work.externalIds?.doi;
+      if (!doi || work.type === 'book' || work.id === graph.anchorId) continue;
+      // The longest book DOI this DOI extends, if any.
+      for (let i = doi.length - 1; i > 0; i--) {
+        if (!PART_SEPARATOR.test(doi[i])) continue;
+        const bookId = bookByDoi.get(doi.slice(0, i));
+        if (bookId) {
+          bookOf.set(work.id, bookId);
+          break;
+        }
+      }
+    }
+  }
+  if (bookOf.size === 0) return { graph, partsOf: new Map(), bookOf };
+
+  const partsOf = new Map();
+  for (const [partId, bookId] of bookOf) {
+    if (!partsOf.has(bookId)) partsOf.set(bookId, []);
+    partsOf.get(bookId).push(graph.works.get(partId));
+  }
+  for (const parts of partsOf.values())
+    parts.sort((a, b) =>
+      a.externalIds.doi.localeCompare(b.externalIds.doi, undefined, { numeric: true }),
+    );
+
+  const fold = (id) => bookOf.get(id) ?? id;
+  const works = new Map();
+  for (const work of graph.works.values()) {
+    if (bookOf.has(work.id)) continue;
+    const references = [
+      ...(partsOf.get(work.id) ?? []).flatMap((part) => part.references),
+      ...work.references,
+    ].map(fold);
+    works.set(work.id, { ...work, references: [...new Set(references)] });
+  }
+  return { graph: { ...graph, works }, partsOf, bookOf };
+}
+
 /**
  * @typedef {object} Filters
  * @property {number | null} minYear

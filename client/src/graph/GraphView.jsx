@@ -13,6 +13,10 @@ import { iconPath2D } from './sourceTypes.js';
 const NODE_MIN_RADIUS = 9;
 const NODE_GROWTH = 6;
 
+// Ring around expanded works, in screen pixels: its width, and its gap from the circle's edge.
+const EXPANDED_RING_WIDTH = 2;
+const EXPANDED_RING_GAP = 3.5;
+
 // Source-type icons are drawn inside circles at least this many screen pixels in radius;
 // smaller ones would be illegible clutter.
 const ICON_MIN_SCREEN_RADIUS = 7;
@@ -104,6 +108,7 @@ const COLOR_VARS = {
   cited: '--node-cited',
   referenceOnly: '--node-reference-only',
   selected: '--node-selected',
+  expanded: '--node-expanded',
   outline: '--node-outline',
   iconOnAnchor: '--node-icon-on-anchor',
   iconOnCiting: '--node-icon-on-citing',
@@ -224,6 +229,7 @@ const escapeHtml = (text) =>
 export default function GraphView({
   graph,
   sizes,
+  expandedIds = new Set(),
   years,
   visible,
   selectedId,
@@ -403,6 +409,14 @@ export default function GraphView({
     if (isSelected) {
       ctx.lineWidth = 3 / scale;
       ctx.strokeStyle = colors.selected;
+      ctx.stroke();
+    }
+    // Expanded works get a ring just outside the circle, clear of the selection stroke.
+    if (expandedIds.has(node.id)) {
+      ctx.beginPath();
+      ctx.arc(node.x, node.y, r + EXPANDED_RING_GAP / scale, 0, 2 * Math.PI);
+      ctx.lineWidth = EXPANDED_RING_WIDTH / scale;
+      ctx.strokeStyle = colors.expanded;
       ctx.stroke();
     }
 

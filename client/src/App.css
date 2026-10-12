@@ -40,6 +40,7 @@
   --node-icon-on-cited: var(--paper);
   --node-icon-on-reference-only: var(--ink);
   --node-selected: var(--ink);
+  --node-expanded: var(--palette-2);
   --graph-link: color-mix(in srgb, var(--ink) 22%, transparent);
   --graph-link-active: var(--palette-2);
   --graph-axis: color-mix(in srgb, var(--ink) 12%, transparent);
@@ -78,6 +79,7 @@
     --node-icon-on-cited: var(--ink);
     --node-icon-on-reference-only: var(--ink);
     --node-selected: var(--palette-4);
+    --node-expanded: color-mix(in oklab, var(--palette-2) 85%, white);
     --graph-link: color-mix(in srgb, var(--paper) 18%, transparent);
     --graph-link-active: var(--accent);
     --graph-axis: color-mix(in srgb, var(--paper) 10%, transparent);
@@ -410,6 +412,11 @@ button.primary,
 
 .swatch.cited {
   background: var(--node-cited);
+}
+
+.swatch.expanded {
+  background: none;
+  border: 2px solid var(--node-expanded);
 }
 
 .source-types {

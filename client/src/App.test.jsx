@@ -5,13 +5,17 @@ import App from './App.jsx';
 
 // jsdom has no canvas, so render visible nodes as buttons instead.
 vi.mock('./graph/GraphView.jsx', () => ({
-  default: ({ graph, visible, onSelect, axisAngle }) => (
+  default: ({ graph, visible, onSelect, axisAngle, expandedIds }) => (
     <ul aria-label="Graph" data-axis-angle={axisAngle}>
       {[...graph.works.values()]
         .filter((work) => visible.has(work.id))
         .map((work) => (
           <li key={work.id}>
-            <button type="button" onClick={() => onSelect(work.id)}>
+            <button
+              type="button"
+              onClick={() => onSelect(work.id)}
+              data-expanded={expandedIds?.has(work.id) || undefined}
+            >
               {work.title}
             </button>
           </li>
@@ -292,6 +296,23 @@ describe('App', () => {
     expect(await within(graph()).findByRole('button', { name: 'Title more' })).toBeInTheDocument();
     expect(api.getCiting).toHaveBeenCalledWith('ref', { limit: 20 });
     expect(screen.getByRole('button', { name: 'Expanded' })).toBeDisabled();
+  });
+
+  it('marks works whose citing and cited works have both been fetched', async () => {
+    await buildFromSearch();
+    const expanded = () =>
+      within(graph())
+        .getAllByRole('button')
+        .filter((button) => button.dataset.expanded)
+        .map((button) => button.textContent);
+    // Depth 1 each way: the build fetched both directions for the anchor only.
+    expect(expanded()).toEqual(['Title anchor']);
+
+    fireEvent.click(within(graph()).getByRole('button', { name: 'Title ref' }));
+    fireEvent.click(screen.getByRole('button', { name: 'Expand citing and cited works' }));
+    await screen.findByRole('button', { name: 'Expanded' });
+    expect(expanded()).toEqual(['Title anchor', 'Title ref']);
+    expect(screen.getByText('Expanded', { selector: '.legend span' })).toBeInTheDocument();
   });
 
   it('makes a selected work the new anchor, keeping the old anchor expanded', async () => {

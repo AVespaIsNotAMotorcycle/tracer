@@ -149,6 +149,18 @@ export default function App() {
     else window.history.replaceState(null, '', url);
   }, [busy, status, graph]);
 
+  // Works whose citing and cited works have both been fetched (for a book, its chapters' too),
+  // as the details panel's "Expanded" button shows. The graph rings them.
+  const expandedIds = useMemo(() => {
+    const ids = new Set();
+    for (const id of view.works.keys()) {
+      const parts = (partsOf.get(id) ?? []).map((part) => part.id);
+      const done = expandedDirections(graph, [id, ...parts]);
+      if (done.has('citing') && done.has('cited')) ids.add(id);
+    }
+    return ids;
+  }, [view.works, graph, partsOf]);
+
   const selected = shownId ? view.works.get(shownId) : null;
   const parts = selected
     ? (partsOf.get(selected.id) ?? []).map((work) => ({
@@ -197,6 +209,9 @@ export default function App() {
             <span>
               <i className="swatch cited" /> Cited works
             </span>
+            <span>
+              <i className="swatch expanded" /> Expanded
+            </span>
             <span className="muted small">
               Older works toward the top left, newer toward the bottom right
             </span>
@@ -227,6 +242,7 @@ export default function App() {
           <GraphView
             graph={view}
             sizes={sizes}
+            expandedIds={expandedIds}
             years={years}
             visible={visible}
             selectedId={shownId}

@@ -1,5 +1,11 @@
 import { describe, expect, it } from 'vitest';
-import { MAX_CURVATURE, routeLink, routeLinks } from './linkRouting.js';
+import {
+  controlPoint,
+  layoutLinks,
+  MAX_CURVATURE,
+  pointOnCurve,
+  routeLink,
+} from './linkRouting.js';
 
 /** Smallest distance from (x, y) to force-graph's curve for a link with this curvature. */
 function distanceToCurve(start, end, curvature, { x, y }) {
@@ -63,24 +69,144 @@ describe('routeLink', () => {
   });
 });
 
-describe('routeLinks', () => {
+describe('controlPoint', () => {
+  it('matches force-graph: perpendicular to the chord, at angle - 90°', () => {
+    const a = { x: 3, y: 4 };
+    const b = { x: 53, y: -16 };
+    const length = Math.hypot(b.x - a.x, b.y - a.y);
+    const angle = Math.atan2(b.y - a.y, b.x - a.x);
+    const cp = controlPoint(a, b, 0.3);
+    expect(cp.x).toBeCloseTo((a.x + b.x) / 2 + 0.3 * length * Math.cos(angle - Math.PI / 2));
+    expect(cp.y).toBeCloseTo((a.y + b.y) / 2 + 0.3 * length * Math.sin(angle - Math.PI / 2));
+  });
+});
+
+const node = (id, x, y) => ({ id, x, y });
+const radius = () => 5;
+
+describe('layoutLinks', () => {
   it('ignores the link’s own ends and hidden links', () => {
-    const a = { id: 'a', x: 0, y: 0 };
-    const b = { id: 'b', x: 100, y: 0 };
-    const c = { id: 'c', x: 50, y: 0 };
-    const own = { source: a, target: b };
-    const hidden = { source: a, target: b };
-    routeLinks([own], [a, b], () => 10, 2);
-    expect(own.curvature).toBe(0);
-    routeLinks(
-      [hidden],
-      [a, b, c],
-      () => 10,
-      2,
-      () => false,
-    );
-    expect(hidden.curvature).toBe(0);
-    routeLinks([own], [a, b, c], () => 10, 2);
-    expect(own.curvature).not.toBe(0);
+    const a = node('a', 0, 0);
+    const b = node('b', 100, 0);
+    const c = node('c', 50, 0);
+    const link = { source: a, target: b };
+    layoutLinks([link], [a, b], radius, 2);
+    expect(link.route.controls).toEqual([]);
+    layoutLinks([link], [a, b, c], radius, 2, () => false);
+    expect(link.route).toBeNull();
+    layoutLinks([link], [a, b, c], radius, 2);
+    expect(link.route.controls).toHaveLength(1);
+  });
+
+  it('bundles links leaving a node in nearly the same direction', () => {
+    const hub = node('hub', 0, 0);
+    const p = node('p', 200, -10);
+    const q = node('q', 200, 10);
+    const links = [
+      { source: hub, target: p },
+      { source: hub, target: q },
+    ];
+    const bundles = layoutLinks(links, [hub, p, q], radius, 2);
+    expect(bundles).toHaveLength(1);
+    const [bundle] = bundles;
+    expect(bundle).toMatchObject({ node: hub, outgoing: true });
+    expect(bundle.junction.x).toBeGreaterThan(20);
+    expect(bundle.junction.x).toBeLessThanOrEqual(0.45 * Math.hypot(200, 10) + 1e-9);
+    expect(Math.abs(bundle.junction.y)).toBeLessThan(1e-9);
+    for (const link of links) {
+      expect(link.route.sourceBundle).toBe(bundle);
+      expect(link.route.start).toBe(bundle.junction);
+      expect(link.route.end).toBe(link.target);
+    }
+  });
+
+  it('starts branches along the trunk, so they merge smoothly', () => {
+    const hub = node('hub', 0, 0);
+    const p = node('p', 200, -30);
+    const q = node('q', 200, 30);
+    const links = [
+      { source: hub, target: p },
+      { source: hub, target: q },
+    ];
+    const [bundle] = layoutLinks(links, [hub, p, q], radius, 2);
+    for (const { route } of links) {
+      expect(route.controls).toHaveLength(2);
+      // The first control point lies on the trunk's line, beyond the junction.
+      const [first] = route.controls;
+      const across =
+        (first.x - hub.x) * bundle.direction.y - (first.y - hub.y) * bundle.direction.x;
+      expect(across).toBeCloseTo(0);
+      expect(first.x).toBeGreaterThan(bundle.junction.x);
+    }
+  });
+
+  it('bends a branch around a circle instead when the smooth curve would cross it', () => {
+    const hub = node('hub', 0, 0);
+    const p = node('p', 200, -10);
+    const q = node('q', 200, 10);
+    const block = node('block', 140, -7);
+    const links = [
+      { source: hub, target: p },
+      { source: hub, target: q },
+    ];
+    layoutLinks(links, [hub, p, q, block], radius, 2);
+    const { route } = links[0];
+    for (let i = 0; i <= 50; i++) {
+      const point = pointOnCurve(route.start, route.controls, route.end, i / 50);
+      expect(Math.hypot(point.x - block.x, point.y - block.y)).toBeGreaterThan(7 - 0.3);
+    }
+  });
+
+  it('bundles incoming links at their shared target', () => {
+    const hub = node('hub', 0, 0);
+    const p = node('p', -200, -10);
+    const q = node('q', -200, 10);
+    const links = [
+      { source: p, target: hub },
+      { source: q, target: hub },
+    ];
+    const [bundle] = layoutLinks(links, [hub, p, q], radius, 2);
+    expect(bundle).toMatchObject({ node: hub, outgoing: false });
+    for (const link of links) expect(link.route.end).toBe(bundle.junction);
+  });
+
+  it('keeps links apart when they point different ways or diverge widely', () => {
+    const hub = node('hub', 0, 0);
+    const p = node('p', 200, -10);
+    const q = node('q', 200, 10);
+    const r = node('r', 0, 200);
+    // hub cites p, q cites hub: same direction from hub, but opposite citation directions.
+    const mixed = [
+      { source: hub, target: p },
+      { source: q, target: hub },
+      { source: hub, target: r },
+    ];
+    expect(layoutLinks(mixed, [hub, p, q, r], radius, 2)).toHaveLength(0);
+  });
+
+  it('bundles across the ±180° boundary', () => {
+    const hub = node('hub', 0, 0);
+    const p = node('p', -200, -10);
+    const q = node('q', -200, 10);
+    const links = [
+      { source: hub, target: p },
+      { source: hub, target: q },
+    ];
+    expect(layoutLinks(links, [hub, p, q], radius, 2)).toHaveLength(1);
+  });
+
+  it('stops the trunk before a circle in its way, or drops it if too short', () => {
+    const hub = node('hub', 0, 0);
+    const p = node('p', 200, -10);
+    const q = node('q', 200, 10);
+    const near = node('near', 15, 0);
+    const links = [
+      { source: hub, target: p },
+      { source: hub, target: q },
+    ];
+    expect(layoutLinks(links, [hub, p, q, near], radius, 2)).toHaveLength(0);
+    const far = node('far', 45, 0);
+    const [bundle] = layoutLinks(links, [hub, p, q, far], radius, 2);
+    expect(bundle.junction.x).toBeCloseTo(45 - 7);
   });
 });

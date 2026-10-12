@@ -3,7 +3,7 @@ import { useEffect, useMemo, useRef, useState } from 'react';
 import ForceGraph2D from 'react-force-graph-2d';
 import { axisGeometry, DEFAULT_AXIS_ANGLE } from './axis.js';
 import { deriveEdges, yearPositions } from './graphModel.js';
-import { routeLinks } from './linkRouting.js';
+import { layoutLinks } from './linkRouting.js';
 import { iconPath2D } from './sourceTypes.js';
 
 // Node radius = NODE_MIN_RADIUS + NODE_GROWTH * sqrt(in-graph citations). The minimum keeps
@@ -37,6 +37,27 @@ const ANCHOR_LINK_WIDTH = 2.5;
 const LINK_SELECTED_EXTRA = 1;
 // Links bend around circles in their way, keeping at least this gap (see linkRouting.js).
 const LINK_CLEARANCE = 3;
+// Arrowhead length in graph units, plus this many line widths, so thick lines get visible heads.
+const ARROW_LENGTH = 4;
+const ARROW_PER_WIDTH = 2;
+
+/**
+ * Fills an arrowhead (force-graph's shape) with its tip `back` short of `point`, pointing along
+ * the unit vector (dx, dy).
+ */
+function paintArrow(ctx, point, dx, dy, back, length) {
+  const tipX = point.x - dx * back;
+  const tipY = point.y - dy * back;
+  const halfWidth = length / 1.6 / 2;
+  const tailX = tipX - dx * length;
+  const tailY = tipY - dy * length;
+  ctx.beginPath();
+  ctx.moveTo(tipX, tipY);
+  ctx.lineTo(tailX - dy * halfWidth, tailY + dx * halfWidth);
+  ctx.lineTo(tipX - dx * length * 0.8, tipY - dy * length * 0.8);
+  ctx.lineTo(tailX + dy * halfWidth, tailY - dx * halfWidth);
+  ctx.fill();
+}
 
 /**
  * Pulls each node toward its year's position along the time axis (node.targetU). Movement
@@ -396,10 +417,91 @@ export default function GraphView({
 
   const isLinkVisible = (link) =>
     visible.has(endId(link.source)) && visible.has(endId(link.target));
+  const linkWidth = (link) =>
+    (isAnchorLink(link) ? ANCHOR_LINK_WIDTH : LINK_WIDTH) +
+    (isActiveLink(link) ? LINK_SELECTED_EXTRA : 0);
+  const arrowLength = (width, scale) => ARROW_LENGTH + (ARROW_PER_WIDTH * width) / scale;
+
+  // A link's free part, from its start (node or junction) to its end. Trunks (paintTrunks)
+  // join bundled ends to their nodes; a selected link also redraws its own share of them, so
+  // the highlight runs node to node without implying the whole bundle is selected.
+  const paintLink = (link, ctx, scale) => {
+    const { route } = link;
+    if (!route) return;
+    const { start, controls, end, sourceBundle, targetBundle } = route;
+    const active = isActiveLink(link);
+    const width = linkWidth(link);
+    const color = active ? colors.linkActive : colors.link;
+    ctx.beginPath();
+    if (active && sourceBundle) {
+      ctx.moveTo(link.source.x, link.source.y);
+      ctx.lineTo(start.x, start.y);
+    } else ctx.moveTo(start.x, start.y);
+    if (controls.length === 2)
+      ctx.bezierCurveTo(controls[0].x, controls[0].y, controls[1].x, controls[1].y, end.x, end.y);
+    else if (controls.length === 1)
+      ctx.quadraticCurveTo(controls[0].x, controls[0].y, end.x, end.y);
+    else ctx.lineTo(end.x, end.y);
+    if (active && targetBundle) ctx.lineTo(link.target.x, link.target.y);
+    // Butt caps: the link color is translucent, and round caps overlapping at a junction
+    // would leave a dark blot.
+    ctx.lineCap = 'butt';
+    ctx.lineJoin = 'round';
+    ctx.lineWidth = width / scale;
+    ctx.strokeStyle = color;
+    ctx.stroke();
+
+    // A bundled target gets one arrowhead on its trunk instead, unless this link is selected.
+    if (targetBundle && !active) return;
+    const { target } = link;
+    // The arrow points along the line's last stretch into the target.
+    const from = targetBundle ? end : ([...controls].reverse().find((c) => c !== end) ?? start);
+    const length = Math.hypot(target.x - from.x, target.y - from.y);
+    if (length === 0) return;
+    ctx.fillStyle = color;
+    paintArrow(
+      ctx,
+      target,
+      (target.x - from.x) / length,
+      (target.y - from.y) / length,
+      radiusOf(target.val),
+      arrowLength(width, scale),
+    );
+  };
+
+  // A bundle's shared part, from its node to the junction, thicker the more links it carries.
+  const paintTrunks = (ctx, scale, bundles) => {
+    ctx.save();
+    ctx.lineCap = 'butt';
+    ctx.strokeStyle = colors.link;
+    ctx.fillStyle = colors.link;
+    for (const { node, junction, links, outgoing } of bundles) {
+      const base = Math.max(
+        ...links.map((link) => (isAnchorLink(link) ? ANCHOR_LINK_WIDTH : LINK_WIDTH)),
+      );
+      const width = base * Math.sqrt(links.length);
+      ctx.beginPath();
+      ctx.moveTo(node.x, node.y);
+      ctx.lineTo(junction.x, junction.y);
+      ctx.lineWidth = width / scale;
+      ctx.stroke();
+      if (outgoing) continue;
+      const length = Math.hypot(node.x - junction.x, node.y - junction.y);
+      paintArrow(
+        ctx,
+        node,
+        (node.x - junction.x) / length,
+        (node.y - junction.y) / length,
+        radiusOf(node.val),
+        arrowLength(width, scale),
+      );
+    }
+    ctx.restore();
+  };
 
   // Runs before each frame's links are drawn, so they follow the nodes as the layout moves.
   const paintFramePre = (ctx, scale) => {
-    routeLinks(
+    const bundles = layoutLinks(
       data.links,
       data.nodes.filter((node) => visible.has(node.id)),
       (node) => radiusOf(node.val),
@@ -407,6 +509,7 @@ export default function GraphView({
       isLinkVisible,
     );
     paintYearAxis(ctx, scale);
+    paintTrunks(ctx, scale, bundles);
   };
 
   const paintYearAxis = (ctx, scale) => {
@@ -464,16 +567,12 @@ export default function GraphView({
           }
           nodeVisibility={(node) => visible.has(node.id)}
           linkVisibility={isLinkVisible}
-          linkCurvature="curvature"
           nodeCanvasObject={paintNode}
           nodePointerAreaPaint={paintPointerArea}
-          linkColor={(link) => (isActiveLink(link) ? colors.linkActive : colors.link)}
-          linkWidth={(link) =>
-            (isAnchorLink(link) ? ANCHOR_LINK_WIDTH : LINK_WIDTH) +
-            (isActiveLink(link) ? LINK_SELECTED_EXTRA : 0)
-          }
-          linkDirectionalArrowLength={4}
-          linkDirectionalArrowRelPos={1}
+          // Links are drawn here (see linkRouting.js), and aren't interactive.
+          linkCanvasObjectMode={() => 'replace'}
+          linkCanvasObject={paintLink}
+          linkPointerAreaPaint={() => {}}
           onNodeClick={(node) => onSelect(node.id)}
           onBackgroundClick={() => onSelect(null)}
           onEngineStop={handleEngineStop}

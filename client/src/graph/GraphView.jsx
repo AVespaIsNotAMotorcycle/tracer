@@ -3,7 +3,15 @@ import { useEffect, useMemo, useRef, useState } from 'react';
 import ForceGraph2D from 'react-force-graph-2d';
 import { axisGeometry, DEFAULT_AXIS_ANGLE } from './axis.js';
 import { deriveEdges, yearPositions } from './graphModel.js';
-import { layoutLinks, placeLinks, pointOnCurve } from './linkRouting.js';
+import {
+  findCrossings,
+  joinOf,
+  layoutLinks,
+  linksAt,
+  placeLinks,
+  pointOnCurve,
+  trunkSegments,
+} from './linkRouting.js';
 import { REFERENCE_ONLY } from './sourceTypeKeys.js';
 import { iconPath2D } from './sourceTypes.js';
 import { layoutSpread } from './spacing.js';
@@ -54,12 +62,10 @@ const RAMP_PIXELS = 30;
 const RAMP_MAX_SHARE = 0.4;
 const RAMP_STEPS = 12;
 // While nodes move, links are re-planned (bundled and routed around circles) only every
-// ROUTE_EVERY frames; frames in between just move the planned routes with their nodes. A frame
-// after a pause (e.g. a hover once the layout has settled) always re-plans.
+// ROUTE_EVERY frames, without merging at crossings; frames in between just move the planned
+// routes with their nodes. Once the layout settles, one full plan merges crossings, and later
+// frames (hovers, zooms) reuse it until nodes move again.
 const ROUTE_EVERY = 4;
-const ROUTE_AFTER_PAUSE_MS = 100;
-// Frame timestamps for the per-frame canvas callback (never called during render).
-const frameClock = () => performance.now();
 // Arrowhead length in graph units, plus this many line widths, so thick lines get visible heads.
 const ARROW_LENGTH = 4;
 const ARROW_PER_WIDTH = 2;
@@ -258,7 +264,16 @@ export default function GraphView({
   // The year force runs outside React, so it reads the current geometry from a ref.
   const geometryRef = useRef(geometry);
   // Link layout plan, re-made every few frames (see paintFramePre).
-  const routing = useRef({ frame: 0, lastFrameAt: 0, data: null, visible: null, bundles: [] });
+  const routing = useRef({
+    frame: 0,
+    moving: false, // The simulation is running (set by its tick and stop events).
+    stale: true, // Nodes moved since the last plan.
+    data: null,
+    visible: null,
+    bundles: [],
+  });
+  // Bumped when the layout settles, so the canvas redraws once more with a full plan.
+  const [, setSettled] = useState(0);
 
   // force-graph stores positions on node objects, so reuse them across updates to keep the
   // layout stable as works are added.
@@ -371,6 +386,25 @@ export default function GraphView({
             Math.round(Math.hypot(link.target.x - link.source.x, link.target.y - link.source.y)),
           ),
         })),
+      // Links to the same work that cross on the way there, by kind.
+      // Time for one full plan, with crossings merged, as when the layout settles.
+      planMs: () => {
+        const start = performance.now();
+        layoutLinks(
+          data.links,
+          data.nodes.filter((node) => visible.has(node.id)),
+          (node) => radiusOf(node.val),
+          LINK_CLEARANCE,
+          (link) => visible.has(link.source.id) && visible.has(link.target.id),
+        );
+        return Math.round(performance.now() - start);
+      },
+      crossings: () => {
+        const found = findCrossings(data.links, (node) => radiusOf(node.val) + 8);
+        const kinds = {};
+        for (const { kind } of found) kinds[kind] = (kinds[kind] ?? 0) + 1;
+        return { total: found.length, ...kinds };
+      },
       nodes: () => {
         const fg = graphRef.current;
         const canvas = containerRef.current?.querySelector('canvas');
@@ -404,7 +438,15 @@ export default function GraphView({
   // Fit the view once the first layout settles after each run (a build, re-anchor, or options
   // change), identified by `fitKey`. Expansions don't change it, so they don't move the view.
   const fitted = useRef(null);
+  const handleEngineTick = () => {
+    routing.current.moving = true;
+    routing.current.stale = true;
+  };
   const handleEngineStop = () => {
+    routing.current.moving = false;
+    // force-graph stops redrawing once settled; a re-render redraws once more, with crossings
+    // merged (paintFramePre).
+    setSettled((n) => n + 1);
     // Wait for the whole build: the graph arrives in stages, and fitting to an early stage
     // (say, just the anchor) leaves the view zoomed in on a small part of the time axis.
     if (building || !graph.anchorId || fitted.current === fitKey) return;
@@ -503,19 +545,19 @@ export default function GraphView({
     (isActiveLink(link) ? LINK_SELECTED_EXTRA : 0);
   const arrowLength = (width, scale) => ARROW_LENGTH + (ARROW_PER_WIDTH * width) / scale;
 
-  const trunkWidth = (bundle) =>
+  // A trunk is as thick as the links it carries at that point: `count` of its links.
+  const trunkWidth = (bundle, count = bundle.links.length) =>
     Math.max(...bundle.links.map((link) => (isAnchorLink(link) ? ANCHOR_LINK_WIDTH : LINK_WIDTH))) *
-    Math.sqrt(bundle.links.length);
+    Math.sqrt(count);
 
-  // Widens a branch from `width` to its trunk's width as it nears the junction at its start
-  // (atStart) or end, so it doesn't step up abruptly where it joins. Links are opaque, so the
+  // Widens a branch from `width` to the trunk's width `to` (where it joins) as it nears its
+  // start (atStart) or end, so it doesn't step up abruptly. Links are opaque, so the
   // overlapping segments don't show.
-  const paintRamp = (ctx, route, atStart, width, bundle, scale) => {
+  const paintRamp = (ctx, route, atStart, width, to, scale) => {
     const { start, controls, end } = route;
     const length = Math.hypot(end.x - start.x, end.y - start.y);
     if (length === 0) return;
     const span = Math.min(RAMP_PIXELS / scale / length, RAMP_MAX_SHARE);
-    const to = trunkWidth(bundle);
     ctx.save();
     ctx.lineCap = 'round';
     ctx.strokeStyle = colors.link;
@@ -548,8 +590,9 @@ export default function GraphView({
     const color = active ? colors.linkActive : colors.link;
     // Ramps use the trunk's look; a selected link is drawn over them.
     const plainWidth = isAnchorLink(link) ? ANCHOR_LINK_WIDTH : LINK_WIDTH;
-    if (sourceBundle) paintRamp(ctx, route, true, plainWidth, sourceBundle, scale);
-    if (targetBundle) paintRamp(ctx, route, false, plainWidth, targetBundle, scale);
+    const joinedWidth = (bundle) => trunkWidth(bundle, linksAt(bundle, joinOf(bundle, link)));
+    if (sourceBundle) paintRamp(ctx, route, true, plainWidth, joinedWidth(sourceBundle), scale);
+    if (targetBundle) paintRamp(ctx, route, false, plainWidth, joinedWidth(targetBundle), scale);
     ctx.beginPath();
     if (active && sourceBundle) {
       ctx.moveTo(link.source.x, link.source.y);
@@ -592,13 +635,16 @@ export default function GraphView({
     ctx.strokeStyle = colors.link;
     ctx.fillStyle = colors.link;
     for (const bundle of bundles) {
-      const { node, junction, outgoing } = bundle;
+      const { node, junction, outgoing, direction } = bundle;
+      // Thinner past each point where a link merged in partway (see mergeCrossings).
+      for (const { from, to, count } of trunkSegments(bundle)) {
+        ctx.beginPath();
+        ctx.moveTo(node.x + direction.x * from, node.y + direction.y * from);
+        ctx.lineTo(node.x + direction.x * to, node.y + direction.y * to);
+        ctx.lineWidth = trunkWidth(bundle, count) / scale;
+        ctx.stroke();
+      }
       const width = trunkWidth(bundle);
-      ctx.beginPath();
-      ctx.moveTo(node.x, node.y);
-      ctx.lineTo(junction.x, junction.y);
-      ctx.lineWidth = width / scale;
-      ctx.stroke();
       if (outgoing) continue;
       const length = Math.hypot(node.x - junction.x, node.y - junction.y);
       paintArrow(
@@ -614,16 +660,12 @@ export default function GraphView({
   };
 
   // Runs before each frame's links are drawn, so they follow the nodes as the layout moves.
-  // Planning is the expensive part, so it's skipped on most frames (see ROUTE_EVERY), but never
-  // when the works or the visible set have changed.
+  // Planning is the expensive part (see ROUTE_EVERY): while nodes move it runs every few frames,
+  // and once they settle, once more with crossings merged; frames after that only place.
   const paintFramePre = (ctx, scale) => {
     const state = routing.current;
-    const now = frameClock();
-    const replan =
-      state.data !== data ||
-      state.visible !== visible ||
-      state.frame % ROUTE_EVERY === 0 ||
-      now - state.lastFrameAt > ROUTE_AFTER_PAUSE_MS;
+    const changed = state.data !== data || state.visible !== visible;
+    const replan = changed || (state.stale && (!state.moving || state.frame % ROUTE_EVERY === 0));
     if (replan) {
       state.bundles = layoutLinks(
         data.links,
@@ -631,14 +673,15 @@ export default function GraphView({
         (node) => radiusOf(node.val),
         LINK_CLEARANCE,
         isLinkVisible,
+        { mergeCrossings: !state.moving },
       );
       state.data = data;
       state.visible = visible;
+      if (!state.moving) state.stale = false;
     } else {
       placeLinks(data.links, state.bundles);
     }
     state.frame++;
-    state.lastFrameAt = now;
     paintYearAxis(ctx, scale);
     paintTrunks(ctx, scale, state.bundles);
   };
@@ -706,6 +749,7 @@ export default function GraphView({
           linkPointerAreaPaint={() => {}}
           onNodeClick={(node) => onSelect(node.id)}
           onBackgroundClick={() => onSelect(null)}
+          onEngineTick={handleEngineTick}
           onEngineStop={handleEngineStop}
           onRenderFramePre={paintFramePre}
           cooldownTicks={150}

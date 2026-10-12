@@ -1,11 +1,15 @@
 import { describe, expect, it } from 'vitest';
 import {
   controlPoint,
+  findCrossings,
   layoutLinks,
+  linksAt,
+  mergeAtCrossings,
   MAX_CURVATURE,
   placeLinks,
   pointOnCurve,
   routeLink,
+  trunkSegments,
 } from './linkRouting.js';
 
 /** Smallest distance from (x, y) to force-graph's curve for a link with this curvature. */
@@ -333,5 +337,111 @@ describe('layoutLinks', () => {
     const far = node('far', 45, 0);
     const [bundle] = layoutLinks(links, [hub, p, q, far], radius, 2);
     expect(bundle.junction.x).toBeCloseTo(45 - 7);
+  });
+});
+
+describe('merging at crossings', () => {
+  const node = (id, x, y) => ({ id, x, y });
+  const radius = () => 5;
+  // A routed link into `target` along a quadratic curve through `control`.
+  const curved = (source, target, control) => ({
+    source,
+    target,
+    route: {
+      start: source,
+      end: target,
+      controls: [control],
+      curvature: 0.1,
+      tangent: false,
+      sourceBundle: null,
+      targetBundle: null,
+    },
+  });
+  const trunkBundle = (hub, links, reach) => {
+    const bundle = {
+      node: hub,
+      outgoing: false,
+      reach,
+      direction: { x: 1, y: 0 },
+      turn: 0,
+      junction: { x: hub.x + reach, y: hub.y },
+      links: [...links],
+    };
+    for (const link of links) link.route.targetBundle = bundle;
+    return bundle;
+  };
+
+  it('finds links that cross on their way to the same node', () => {
+    const hub = node('hub', 0, 0);
+    // a comes in from above but swings below; b from below but swings above: they cross.
+    const a = curved(node('a', 200, -100), hub, { x: 100, y: 120 });
+    const b = curved(node('b', 200, 100), hub, { x: 100, y: -120 });
+    const [crossing] = findCrossings([a, b], () => 13);
+    expect(crossing).toMatchObject({ node: hub, outgoing: false, kind: 'loose' });
+    expect(crossing.point.x).toBeGreaterThan(13);
+    expect(Math.abs(crossing.point.y)).toBeLessThan(15);
+  });
+
+  it('bundles two loose links from where they cross', () => {
+    const hub = node('hub', 0, 0);
+    const a = curved(node('a', 200, -100), hub, { x: 100, y: 120 });
+    const b = curved(node('b', 200, 100), hub, { x: 100, y: -120 });
+    const [crossing] = findCrossings([a, b], () => 13);
+    const bundles = [];
+    mergeAtCrossings([a, b], bundles, [hub, a.source, b.source], radius, 2);
+
+    expect(bundles).toHaveLength(1);
+    expect(bundles[0].junction.x).toBeCloseTo(crossing.point.x);
+    expect(bundles[0].junction.y).toBeCloseTo(crossing.point.y);
+    expect(a.route.targetBundle).toBe(bundles[0]);
+    expect(b.route.targetBundle).toBe(bundles[0]);
+  });
+
+  it('joins a link to a trunk where it crosses it', () => {
+    const hub = node('hub', 0, 0);
+    const p = curved(node('p', 300, -5), hub, { x: 150, y: -3 });
+    const q = curved(node('q', 300, 5), hub, { x: 150, y: 3 });
+    const bundle = trunkBundle(hub, [p, q], 120);
+    // Comes in from above and swings across the trunk at about x = 60.
+    const loose = curved(node('l', 40, -150), hub, { x: 80, y: 150 });
+    const bundles = [bundle];
+    mergeAtCrossings([p, q, loose], bundles, [hub, p.source, q.source, loose.source], radius, 2);
+
+    expect(loose.route.targetBundle).toBe(bundle);
+    const join = bundle.joins.get(loose);
+    expect(join).toBeGreaterThan(13);
+    expect(join).toBeLessThan(120);
+    // The trunk carries three links up to the join, two beyond it.
+    expect(trunkSegments(bundle)).toEqual([
+      { from: 0, to: join, count: 3 },
+      { from: join, to: 120, count: 2 },
+    ]);
+    expect(linksAt(bundle, join)).toBe(3);
+    // The link now ends where it joins.
+    expect(loose.route.end.x).toBeCloseTo(join);
+  });
+
+  it('joins a whole bundle to another it meets', () => {
+    const hub = node('hub', 0, 0);
+    // A short trunk, and a longer one whose branch the first bundle's link swings across.
+    const p = curved(node('p', 300, -150), hub, { x: 150, y: 150 });
+    const q = curved(node('q', 300, -170), hub, { x: 150, y: -90 });
+    const small = trunkBundle(hub, [p, q], 20);
+    small.direction = { x: Math.cos(-0.5), y: Math.sin(-0.5) };
+    small.junction = { x: 20 * small.direction.x, y: 20 * small.direction.y };
+    const r = curved(node('r', 300, 150), hub, { x: 150, y: 0 });
+    const s = curved(node('s', 300, 170), hub, { x: 150, y: 10 });
+    const big = trunkBundle(hub, [r, s], 100);
+    big.direction = { x: Math.cos(0.5), y: Math.sin(0.5) };
+    big.junction = { x: 100 * big.direction.x, y: 100 * big.direction.y };
+    const bundles = [small, big];
+    const links = [p, q, r, s];
+    mergeAtCrossings(links, bundles, [hub, ...links.map((l) => l.source)], radius, 2);
+
+    // p's branch crossed the longer bundle's: p's whole bundle joins it, and is gone.
+    expect(p.route.targetBundle).toBe(big);
+    expect(q.route.targetBundle).toBe(big);
+    expect(big.links).toEqual(expect.arrayContaining([p, q, r, s]));
+    expect(bundles).toEqual([big]);
   });
 });

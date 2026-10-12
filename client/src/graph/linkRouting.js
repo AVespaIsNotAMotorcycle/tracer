@@ -312,14 +312,55 @@ function placeBundle(bundle) {
 }
 
 /**
+ * How far along `bundle`'s trunk `link` joins it: at the junction unless it merged in earlier,
+ * where it crossed the trunk (see mergeCrossings).
+ */
+export function joinOf(bundle, link) {
+  return bundle.joins?.get(link) ?? bundle.reach;
+}
+
+/** The point `distance` along a bundle's trunk; its junction at the full reach. */
+function pointAlong(bundle, distance) {
+  if (distance >= bundle.reach) return bundle.junction;
+  return {
+    x: bundle.node.x + bundle.direction.x * distance,
+    y: bundle.node.y + bundle.direction.y * distance,
+  };
+}
+
+/** How many of a bundle's links run along its trunk at `distance` from its node. */
+export function linksAt(bundle, distance) {
+  return bundle.links.filter((link) => joinOf(bundle, link) >= distance - 1e-9).length;
+}
+
+/**
+ * A bundle's trunk as segments from its node outward, each with the number of links it
+ * carries: every link up to the first join point, fewer beyond each one.
+ *
+ * @returns {{ from: number, to: number, count: number }[]}
+ */
+export function trunkSegments(bundle) {
+  const joins = [...new Set(bundle.links.map((link) => joinOf(bundle, link)))].sort(
+    (a, b) => a - b,
+  );
+  const segments = [];
+  let from = 0;
+  for (const to of joins) {
+    segments.push({ from, to, count: linksAt(bundle, to) });
+    from = to;
+  }
+  return segments;
+}
+
+/**
  * Sets a link's route geometry from its plan and the current positions: start and end (a
  * junction, or the node), and the control points of its curve.
  */
 function placeRoute(link) {
   const { route, source, target } = link;
   const { sourceBundle, targetBundle } = route;
-  route.start = sourceBundle?.junction ?? source;
-  route.end = targetBundle?.junction ?? target;
+  route.start = sourceBundle ? pointAlong(sourceBundle, joinOf(sourceBundle, link)) : source;
+  route.end = targetBundle ? pointAlong(targetBundle, joinOf(targetBundle, link)) : target;
   if (route.tangent) {
     const length = Math.hypot(route.end.x - route.start.x, route.end.y - route.start.y);
     const along = (bundle, end) =>
@@ -353,15 +394,25 @@ export function placeLinks(links, bundles) {
  * BUNDLE_ANGLE), then bends each link's free part around the circles in `nodes`.
  *
  * Sets `link.route = { start, controls, end, sourceBundle, targetBundle }` on each visible
- * link: the free part is a Bézier curve from `start` to `end` (a bundle's junction, or the
+ * link: the free part is a Bézier curve from `start` to `end` (where it joins a trunk, or the
  * node itself) through `controls` (none for a straight line, one for quadratic, two for
- * cubic), and the bundles' trunks join it to the nodes. The plan behind it is kept on the
- * route too (`tangent`, or a `curvature`), so placeLinks can follow moving nodes cheaply. A branch leaves its junction along
- * the trunk when that curve is clear; otherwise it bends around circles like any other link.
+ * cubic), and the bundles' trunks join it to the nodes. A branch leaves its trunk smoothly
+ * when that curve is clear; otherwise it bends around circles like any other link. The plan
+ * behind it is kept on the route too (`tangent`, or a `curvature`), so placeLinks can follow
+ * moving nodes cheaply. Links crossing on their way to the same node are merged there
+ * (mergeCrossings) unless `mergeCrossings` is false.
+ *
  * Returns the bundles. `radius(node)` gives a node's radius; `clearance` is the gap kept around
  * each circle.
  */
-export function layoutLinks(links, nodes, radius, clearance, isVisible = () => true) {
+export function layoutLinks(
+  links,
+  nodes,
+  radius,
+  clearance,
+  isVisible = () => true,
+  { mergeCrossings: merge = true } = {},
+) {
   const placed = nodes.filter((node) => node.x != null);
   const grid = createGrid(placed, radius, clearance);
   const visible = [];
@@ -403,24 +454,328 @@ export function layoutLinks(links, nodes, radius, clearance, isVisible = () => t
     }
   }
 
-  for (const link of visible) {
-    const { route, source, target } = link;
-    const { sourceBundle, targetBundle } = route;
-    route.tangent = false;
-    route.curvature = 0;
-    const start = sourceBundle?.junction ?? source;
-    const end = targetBundle?.junction ?? target;
-    const obstacles = obstaclesNear(start, end, grid, [source, target], radius, clearance);
-    if (sourceBundle || targetBundle) {
-      route.tangent = true;
-      placeRoute(link);
-      if (curveClear(route.start, route.controls, route.end, obstacles)) continue;
-      route.tangent = false;
-    }
-    route.curvature = routeLink(start, end, obstacles);
-    placeRoute(link);
-  }
+  for (const link of visible) routeFree(link, grid, radius, clearance);
+  // Merging at crossings is the costly part; callers skip it while nodes are moving.
+  if (merge) mergeCrossings(visible, bundles, grid, radius, clearance);
   return bundles;
+}
+
+// Segments per curve when looking for crossings between links, and the hash cell size used to
+// find segments that might cross.
+const CROSSING_SAMPLES = 12;
+const CROSSING_CELL = 40;
+// Packing for the crossing hash: room for a path's segments (a trunk plus CROSSING_SAMPLES),
+// and for cell coordinates in one numeric key.
+const SEGMENT_SLOTS = 16;
+const CELL_KEY_SPAN = 1 << 20;
+
+/**
+ * The path a link takes away from one of its ends, `node` (its source if `outgoing`), as a
+ * polyline: along its trunk if it's bundled there, then along its curve to the far end.
+ */
+function pathFrom(link, outgoing) {
+  const { route } = link;
+  const points = [];
+  for (let i = 0; i <= CROSSING_SAMPLES; i++) {
+    const t = i / CROSSING_SAMPLES;
+    points.push(pointOnCurve(route.start, route.controls, route.end, outgoing ? t : 1 - t));
+  }
+  const bundle = outgoing ? route.sourceBundle : route.targetBundle;
+  if (bundle) points.unshift({ x: bundle.node.x, y: bundle.node.y });
+  return points;
+}
+
+/** Where segments p1-p2 and q1-q2 cross, or null. */
+function segmentCrossing(p1, p2, q1, q2) {
+  const rx = p2.x - p1.x;
+  const ry = p2.y - p1.y;
+  const sx = q2.x - q1.x;
+  const sy = q2.y - q1.y;
+  const denom = rx * sy - ry * sx;
+  if (denom === 0) return null;
+  const t = ((q1.x - p1.x) * sy - (q1.y - p1.y) * sx) / denom;
+  const u = ((q1.x - p1.x) * ry - (q1.y - p1.y) * rx) / denom;
+  if (t <= 0 || t >= 1 || u <= 0 || u >= 1) return null;
+  return { x: p1.x + t * rx, y: p1.y + t * ry };
+}
+
+/**
+ * Pairs of links that share an end node, in the same citation direction, and cross on their
+ * way to it (after layoutLinks has routed them). Straight links to one node can only meet at
+ * the node, so these come from curves: links bent around circles, branches, other trunks.
+ * Ignores crossings within `margin` of the node itself and between links of the same bundle.
+ * Each pair is reported once, at the crossing furthest from the node. With `onlyAt`, a set of
+ * nodes, only links meeting at those are checked.
+ */
+export function findCrossings(links, margin, onlyAt = null) {
+  const groups = new Map();
+  for (const link of links) {
+    if (!link.route?.controls) continue;
+    for (const outgoing of [true, false]) {
+      const node = outgoing ? link.source : link.target;
+      if (onlyAt && !onlyAt.has(node)) continue;
+      const key = `${outgoing ? 'out' : 'in'}:${node.id}`;
+      if (!groups.has(key)) groups.set(key, { node, outgoing, paths: [] });
+      groups.get(key).paths.push({ link, points: pathFrom(link, outgoing) });
+    }
+  }
+  const crossings = [];
+  for (const { node, outgoing, paths } of groups.values()) {
+    if (paths.length < 2) continue;
+    const reach = margin(node);
+    // Hash each path's segments by grid cell, so only segments sharing a cell are compared.
+    // An entry is path * SEGMENT_SLOTS + segment; its first cell is kept to check each pair of
+    // segments only once, in the first cell their boxes share.
+    const cells = new Map();
+    const firstCellX = [];
+    const firstCellY = [];
+    paths.forEach(({ points }, path) => {
+      for (let segment = 1; segment < points.length; segment++) {
+        const p = points[segment - 1];
+        const q = points[segment];
+        // Meetings this close to the node don't count, and every link converges here.
+        if (
+          Math.hypot(p.x - node.x, p.y - node.y) < reach &&
+          Math.hypot(q.x - node.x, q.y - node.y) < reach
+        )
+          continue;
+        const x0 = Math.floor(Math.min(p.x, q.x) / CROSSING_CELL);
+        const x1 = Math.floor(Math.max(p.x, q.x) / CROSSING_CELL);
+        const y0 = Math.floor(Math.min(p.y, q.y) / CROSSING_CELL);
+        const y1 = Math.floor(Math.max(p.y, q.y) / CROSSING_CELL);
+        const entry = path * SEGMENT_SLOTS + segment;
+        firstCellX[entry] = x0;
+        firstCellY[entry] = y0;
+        for (let cx = x0; cx <= x1; cx++)
+          for (let cy = y0; cy <= y1; cy++) {
+            const key = cx * CELL_KEY_SPAN + cy;
+            const list = cells.get(key);
+            if (list) list.push(entry);
+            else cells.set(key, [entry]);
+          }
+      }
+    });
+    const side = outgoing ? 'sourceBundle' : 'targetBundle';
+    // Furthest crossing from the node per pair of paths.
+    const furthest = new Map();
+    for (const [key, entries] of cells) {
+      const cx = Math.round(key / CELL_KEY_SPAN);
+      const cy = key - cx * CELL_KEY_SPAN;
+      for (let i = 0; i < entries.length; i++) {
+        for (let j = i + 1; j < entries.length; j++) {
+          let ei = entries[i];
+          let ej = entries[j];
+          // Shared by more cells than this one: check it only in the first.
+          if (
+            Math.max(firstCellX[ei], firstCellX[ej]) !== cx ||
+            Math.max(firstCellY[ei], firstCellY[ej]) !== cy
+          )
+            continue;
+          if (ei > ej) [ei, ej] = [ej, ei];
+          const pi = Math.floor(ei / SEGMENT_SLOTS);
+          const pj = Math.floor(ej / SEGMENT_SLOTS);
+          if (pi === pj) continue;
+          const si = ei - pi * SEGMENT_SLOTS;
+          const sj = ej - pj * SEGMENT_SLOTS;
+          const a = paths[pi];
+          const b = paths[pj];
+          const bundleA = a.link.route[side];
+          if (bundleA && bundleA === b.link.route[side]) continue;
+          const p1 = a.points[si - 1];
+          const p2 = a.points[si];
+          const q1 = b.points[sj - 1];
+          const q2 = b.points[sj];
+          // Cheap rejection: their boxes don't overlap.
+          if (
+            Math.max(p1.x, p2.x) < Math.min(q1.x, q2.x) ||
+            Math.max(q1.x, q2.x) < Math.min(p1.x, p2.x) ||
+            Math.max(p1.y, p2.y) < Math.min(q1.y, q2.y) ||
+            Math.max(q1.y, q2.y) < Math.min(p1.y, p2.y)
+          )
+            continue;
+          const point = segmentCrossing(p1, p2, q1, q2);
+          if (!point) continue;
+          const distance = Math.hypot(point.x - node.x, point.y - node.y);
+          if (distance <= reach) continue;
+          const pairKey = pi * paths.length + pj;
+          const known = furthest.get(pairKey);
+          if (!known || known.distance < distance)
+            furthest.set(pairKey, { a: a.link, b: b.link, point, distance });
+        }
+      }
+    }
+    for (const { a, b, point } of furthest.values()) {
+      const bundleA = a.route[side];
+      const bundleB = b.route[side];
+      const kind =
+        bundleA && bundleB ? 'between-bundles' : bundleA || bundleB ? 'joins-bundle' : 'loose';
+      crossings.push({ node, outgoing, a, b, point, kind });
+    }
+  }
+  return crossings;
+}
+
+/**
+ * Routes a link's free part (between its ends or their trunks): smoothly along its trunks when
+ * that's clear, otherwise bent around the circles in its way.
+ */
+function routeFree(link, grid, radius, clearance) {
+  const { route, source, target } = link;
+  const { sourceBundle, targetBundle } = route;
+  route.tangent = false;
+  route.curvature = 0;
+  const start = sourceBundle ? pointAlong(sourceBundle, joinOf(sourceBundle, link)) : source;
+  const end = targetBundle ? pointAlong(targetBundle, joinOf(targetBundle, link)) : target;
+  const obstacles = obstaclesNear(start, end, grid, [source, target], radius, clearance);
+  if (sourceBundle || targetBundle) {
+    route.tangent = true;
+    placeRoute(link);
+    if (curveClear(route.start, route.controls, route.end, obstacles)) return;
+    route.tangent = false;
+  }
+  route.curvature = routeLink(start, end, obstacles);
+  placeRoute(link);
+}
+
+// Crossings this close to a node, or to a trunk's line, count as at it.
+const CROSSING_TOLERANCE = 6;
+// Passes of merging at crossings; re-routing merged links can create new crossings.
+const CROSSING_PASSES = 4;
+
+/**
+ * Merges links that cross on their way to the same node, so they run as one line from the
+ * crossing to the node (see findCrossings):
+ * - Meeting on a bundle's trunk: the other link joins that trunk there.
+ * - Meeting beyond a junction (on branches): the other link joins that bundle at its
+ *   junction, just before the meeting. Between two bundles, the longer trunk takes it.
+ * - When the other link is itself bundled, its whole bundle joins, not just that link.
+ * - Two links in no bundle: they become a bundle whose junction is the crossing, if a straight
+ *   trunk to it is clear of circles.
+ * Bundles left with one link are dissolved. Affected links are re-routed.
+ */
+function mergeCrossings(links, bundles, grid, radius, clearance) {
+  const margin = (node) => radius(node) + MIN_TRUNK;
+  // After the first pass, only nodes where a link moved can have new meetings.
+  let onlyAt = null;
+  for (let pass = 0; pass < CROSSING_PASSES; pass++) {
+    const crossings = findCrossings(links, margin, onlyAt);
+    if (crossings.length === 0) return;
+    const moved = new Set();
+    const touched = new Set();
+    for (const { node, outgoing, a, b, point } of crossings) {
+      if (moved.has(a) || moved.has(b)) continue;
+      const side = outgoing ? 'sourceBundle' : 'targetBundle';
+      const bundleA = a.route[side];
+      const bundleB = b.route[side];
+      const distance = Math.hypot(point.x - node.x, point.y - node.y);
+      const onTrunk = (bundle) => {
+        if (!bundle) return false;
+        const along =
+          (point.x - node.x) * bundle.direction.x + (point.y - node.y) * bundle.direction.y;
+        const across =
+          (point.x - node.x) * bundle.direction.y - (point.y - node.y) * bundle.direction.x;
+        return along <= bundle.reach + CROSSING_TOLERANCE && Math.abs(across) < CROSSING_TOLERANCE;
+      };
+      const join = (link, bundle, at) => {
+        const from = link.route[side];
+        if (from === bundle) return;
+        if (from) {
+          from.links = from.links.filter((other) => other !== link);
+          from.joins?.delete(link);
+          touched.add(from);
+        }
+        bundle.links.push(link);
+        link.route[side] = bundle;
+        bundle.joins ??= new Map();
+        if (at < bundle.reach) bundle.joins.set(link, at);
+        touched.add(bundle);
+        moved.add(link);
+      };
+      if (bundleA || bundleB) {
+        // The trunk they meet on takes the other link, at the meeting point; meeting on
+        // branches, the longer trunk takes it at its junction.
+        let host;
+        let at;
+        if (onTrunk(bundleA) || onTrunk(bundleB)) {
+          host = onTrunk(bundleA) ? bundleA : bundleB;
+          at = Math.min(distance, host.reach);
+        } else {
+          host = bundleA && (!bundleB || bundleA.reach >= bundleB.reach) ? bundleA : bundleB;
+          at = host.reach;
+        }
+        const other = host === bundleA ? b : a;
+        // A bundle meeting another joins it whole, rather than one link per pass.
+        const joining = other.route[side] ? [...other.route[side].links] : [other];
+        for (const link of joining) join(link, host, at);
+      } else {
+        const bundle = bundleAt(node, outgoing, [a, b], point, grid, radius, clearance);
+        if (!bundle) continue;
+        bundles.push(bundle);
+        for (const link of [a, b]) {
+          link.route[side] = bundle;
+          moved.add(link);
+        }
+        touched.add(bundle);
+      }
+    }
+    // A bundle needs two links; a lone one runs on its own again.
+    for (const bundle of touched) {
+      if (bundle.links.length >= 2) continue;
+      const side = bundle.outgoing ? 'sourceBundle' : 'targetBundle';
+      for (const link of bundle.links) {
+        link.route[side] = null;
+        moved.add(link);
+      }
+      bundles.splice(bundles.indexOf(bundle), 1);
+    }
+    for (const bundle of touched) for (const link of bundle.links) moved.add(link);
+    for (const link of moved) routeFree(link, grid, radius, clearance);
+    onlyAt = new Set([...moved].flatMap((link) => [link.source, link.target]));
+  }
+}
+
+/**
+ * mergeCrossings for links already routed (exported for tests): merges, re-routes, and
+ * updates `bundles` in place.
+ */
+export function mergeAtCrossings(links, bundles, nodes, radius, clearance) {
+  const placed = nodes.filter((node) => node.x != null);
+  mergeCrossings(links, bundles, createGrid(placed, radius, clearance), radius, clearance);
+}
+
+/**
+ * A bundle of `links` at `node` whose trunk runs straight to `point`, or null if that trunk
+ * would be too short or cross a circle.
+ */
+function bundleAt(node, outgoing, links, point, grid, radius, clearance) {
+  const reach = Math.hypot(point.x - node.x, point.y - node.y);
+  if (reach < radius(node) + MIN_TRUNK) return null;
+  const ux = (point.x - node.x) / reach;
+  const uy = (point.y - node.y) / reach;
+  const nearby = grid.near(
+    Math.min(node.x, point.x),
+    Math.min(node.y, point.y),
+    Math.max(node.x, point.x),
+    Math.max(node.y, point.y),
+  );
+  for (const other of nearby) {
+    if (other === node) continue;
+    const r = radius(other) + clearance;
+    const along = (other.x - node.x) * ux + (other.y - node.y) * uy;
+    const across = (other.x - node.x) * uy - (other.y - node.y) * ux;
+    if (along > 0 && along - r < reach && Math.abs(across) < r) return null;
+  }
+  const angle = Math.atan2(uy, ux);
+  return {
+    node,
+    outgoing,
+    reach,
+    limitedBy: 'crossing',
+    direction: { x: ux, y: uy },
+    turn: angle - Math.atan2(...meanDirection(node, links, outgoing).reverse()),
+    junction: { x: point.x, y: point.y },
+    links: [...links],
+  };
 }
 
 /** A point on the Bézier curve from start through controls to end, at t in [0, 1]. */

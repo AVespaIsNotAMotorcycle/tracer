@@ -49,6 +49,15 @@ const squash = (text) =>
     .replace(/[^\p{L}\p{N}]+/gu, '');
 
 /**
+ * Swallows duplicate-key errors from a bulk insert or upsert: another request created the same
+ * Source first, which is fine. Rethrows anything else.
+ */
+function ignoreDuplicates(err) {
+  const errors = err.writeErrors ?? (err.code != null ? [err] : null);
+  if (!errors?.length || !errors.every((e) => (e.code ?? e.err?.code) === 11000)) throw err;
+}
+
+/**
  * A key identifying the work a reference names, so references to the same work from different
  * reference lists share one Source: its DOI; else first author, year and title; else the
  * printed citation. Null when the reference has none of these.
@@ -128,21 +137,25 @@ export function createWorkService({
     });
     await Source.bulkWrite(workOps, { ordered: false });
 
+    // Stubs for referenced works, so every reference has a Tracer ID. A batch of works can
+    // reference tens of thousands, and one upsert each is slow (about 5 ms apiece), so find
+    // the ones that exist with one query and insert the rest together.
     const workIds = new Set(works.map((work) => work.providerId));
     const referencedIds = unique(works.flatMap((work) => work.referencedIds)).filter(
       (id) => !workIds.has(id),
     );
     if (referencedIds.length > 0) {
-      await Source.bulkWrite(
-        referencedIds.map((id) => ({
-          updateOne: {
-            filter: { [idField]: id },
-            update: { $setOnInsert: { createdAt: fetchedAt } },
-            upsert: true,
-          },
-        })),
-        { ordered: false },
-      );
+      const existing = await Source.find({ [idField]: { $in: referencedIds } }, { [idField]: 1 })
+        .lean()
+        .exec();
+      const known = new Set(existing.map((s) => s.externalIds[providerName]));
+      const missing = referencedIds.filter((id) => !known.has(id));
+      if (missing.length > 0) {
+        await Source.insertMany(
+          missing.map((id) => ({ externalIds: { [providerName]: id }, createdAt: fetchedAt })),
+          { ordered: false },
+        ).catch(ignoreDuplicates);
+      }
     }
   }
 
@@ -261,10 +274,7 @@ export function createWorkService({
           },
         })),
         { ordered: false },
-      ).catch((err) => {
-        // Another list resolving at the same time created the same work first; that's fine.
-        if (!err.writeErrors?.every((e) => e.code === 11000) && err.code !== 11000) throw err;
-      });
+      ).catch(ignoreDuplicates);
     }
     const keys = [...unmatched.keys()];
     const created = keys.length

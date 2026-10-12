@@ -4,11 +4,21 @@ Tracer maps citation networks for academic work, with a focus on the humanities 
 
 Start from an article and Tracer builds a graph of the works it cites and the works that cite it, out to a depth you choose. Edges also connect any of those works that cite each other, so you can see how a body of scholarship fits together, not just how it relates to your starting point.
 
-No single citation database covers the humanities well. Tracer aims to combine several, starting with OpenAlex and Semantic Scholar, so that each fills gaps in the others.
+No single citation database covers the humanities well. Tracer combines several (see [Data sources](#data-sources)), so that each fills gaps in the others.
 
 - **Explore:** click a node to pull in its own citing and cited works and grow the graph from there.
 - **Gauge influence:** each source is drawn as a circle sized by its citation count.
 - **Inspect:** select a node to see details about the source, with external links.
+
+## Data sources
+
+| Provider                                   | What Tracer uses it for                                                                                                                                                                                                     | License | Configuration                              |
+| ------------------------------------------ | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | ------- | ------------------------------------------ |
+| [OpenAlex](https://openalex.org)           | The main source: search, work records (titles, authors, years, types, abstracts, citation counts), citing works and reference lists.                                                                                        | CC0     | `OPENALEX_API_KEY` (optional, recommended) |
+| [Crossref](https://www.crossref.org)       | Reference lists deposited by publishers. References OpenAlex has but didn't link become ordinary works; the rest (archival sources, older books) appear as grey "Not on OpenAlex" nodes. Coverage depends on the publisher. | Open    | `CROSSREF_MAILTO` (optional)               |
+| [OpenCitations](https://opencitations.net) | Open citation links in both directions, recovering some citations between works that OpenAlex has but doesn't link.                                                                                                         | CC0     | `OPENCITATIONS_ACCESS_TOKEN` (optional)    |
+
+Everything works without the optional settings. The OpenAlex key raises its daily request budget tenfold, and the Crossref address moves requests to Crossref's faster pool. Set them in `server/.env` locally, or as Heroku config vars in production. Responses are cached in MongoDB, so repeat lookups don't call the providers again.
 
 ## Stack
 

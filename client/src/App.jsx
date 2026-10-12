@@ -3,8 +3,16 @@ import './App.css';
 import DetailsPanel from './components/DetailsPanel.jsx';
 import FiltersPanel from './components/FiltersPanel.jsx';
 import SearchPanel from './components/SearchPanel.jsx';
+import ViewPanel from './components/ViewPanel.jsx';
+import { DEFAULT_AXIS_ANGLE } from './graph/axis.js';
 import GraphView from './graph/GraphView.jsx';
-import { deriveEdges, inGraphCitationCounts, NO_FILTERS, visibleIds } from './graph/graphModel.js';
+import {
+  deriveEdges,
+  inGraphCitationCounts,
+  layoutYears,
+  NO_FILTERS,
+  visibleIds,
+} from './graph/graphModel.js';
 import { useCitationGraph } from './graph/useCitationGraph.js';
 
 // Conservative defaults: each level multiplies requests, and the keyless OpenAlex budget is
@@ -18,8 +26,10 @@ export default function App() {
   const [options, setOptions] = useState(DEFAULT_OPTIONS);
   const [filters, setFilters] = useState(NO_FILTERS);
   const [selectedId, setSelectedId] = useState(null);
+  const [axisAngle, setAxisAngle] = useState(DEFAULT_AXIS_ANGLE);
 
   const counts = useMemo(() => inGraphCitationCounts(graph.works), [graph.works]);
+  const years = useMemo(() => layoutYears(graph), [graph]);
   const outgoing = useMemo(() => {
     const result = new Map();
     for (const { source } of deriveEdges(graph.works))
@@ -32,10 +42,10 @@ export default function App() {
   );
   const maxCount = useMemo(() => Math.max(0, ...counts.values()), [counts]);
 
-  const handleBuild = (rootId) => {
+  const handleBuild = (anchorId) => {
     setSelectedId(null);
     setFilters(NO_FILTERS);
-    build(rootId, options);
+    build(anchorId, options);
   };
 
   const selected = selectedId ? graph.works.get(selectedId) : null;
@@ -64,16 +74,20 @@ export default function App() {
             totalCount={graph.works.size}
           />
         )}
+        {hasGraph && <ViewPanel axisAngle={axisAngle} onAxisAngleChange={setAxisAngle} />}
         {hasGraph && (
           <section className="panel legend" aria-label="Legend">
             <span>
-              <i className="swatch root" /> Starting work
+              <i className="swatch anchor" /> Anchor
             </span>
             <span>
               <i className="swatch citing" /> Citing works
             </span>
             <span>
               <i className="swatch cited" /> Cited works
+            </span>
+            <span className="muted small">
+              Older works toward the top left, newer toward the bottom right
             </span>
             <span className="muted small">Circle size: times cited by works on this graph</span>
           </section>
@@ -96,9 +110,12 @@ export default function App() {
           <GraphView
             graph={graph}
             counts={counts}
+            years={years}
             visible={visible}
             selectedId={selectedId}
             onSelect={setSelectedId}
+            building={status === 'loading'}
+            axisAngle={axisAngle}
           />
         ) : (
           status !== 'loading' && (

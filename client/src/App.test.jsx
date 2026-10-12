@@ -5,8 +5,8 @@ import App from './App.jsx';
 
 // jsdom has no canvas, so render visible nodes as buttons instead.
 vi.mock('./graph/GraphView.jsx', () => ({
-  default: ({ graph, visible, onSelect }) => (
-    <ul aria-label="Graph">
+  default: ({ graph, visible, onSelect, axisAngle }) => (
+    <ul aria-label="Graph" data-axis-angle={axisAngle}>
       {[...graph.works.values()]
         .filter((work) => visible.has(work.id))
         .map((work) => (
@@ -47,19 +47,19 @@ const work = (id, { references = [], year = 1971, ...rest } = {}) => ({
   ...rest,
 });
 
-// root cites ref; citer cites root and ref.
-const root = work('root', { references: ['ref'] });
+// anchor cites ref; citer cites anchor and ref.
+const anchor = work('anchor', { references: ['ref'] });
 const ref = work('ref', { year: 1930 });
-const citer = work('citer', { references: ['root', 'ref'], year: 1995 });
+const citer = work('citer', { references: ['anchor', 'ref'], year: 1995 });
 const more = work('more', { references: ['ref'], year: 2010 });
 
 const graph = () => screen.getByRole('list', { name: 'Graph' });
 
 beforeEach(() => {
-  vi.mocked(api.searchWorks).mockResolvedValue([root]);
-  vi.mocked(api.getWork).mockResolvedValue(root);
-  vi.mocked(api.getCiting).mockImplementation(async (id) => (id === 'root' ? [citer] : [more]));
-  vi.mocked(api.getCited).mockImplementation(async (id) => (id === 'root' ? [ref] : []));
+  vi.mocked(api.searchWorks).mockResolvedValue([anchor]);
+  vi.mocked(api.getWork).mockResolvedValue(anchor);
+  vi.mocked(api.getCiting).mockImplementation(async (id) => (id === 'anchor' ? [citer] : [more]));
+  vi.mocked(api.getCited).mockImplementation(async (id) => (id === 'anchor' ? [ref] : []));
 });
 
 async function buildFromSearch() {
@@ -69,7 +69,7 @@ async function buildFromSearch() {
   });
   fireEvent.click(screen.getByRole('button', { name: 'Go' }));
   const results = await screen.findByRole('list', { name: 'Search results' });
-  fireEvent.click(within(results).getByRole('button', { name: /Title root/ }));
+  fireEvent.click(within(results).getByRole('button', { name: /Title anchor/ }));
   await waitFor(() => expect(within(graph()).getAllByRole('button')).toHaveLength(3));
 }
 
@@ -83,8 +83,8 @@ describe('App', () => {
     await buildFromSearch();
 
     expect(api.searchWorks).toHaveBeenCalledWith('moral economy');
-    expect(api.getWork).toHaveBeenCalledWith('root', expect.anything());
-    for (const title of ['Title root', 'Title ref', 'Title citer']) {
+    expect(api.getWork).toHaveBeenCalledWith('anchor', expect.anything());
+    for (const title of ['Title anchor', 'Title ref', 'Title citer']) {
       expect(within(graph()).getByRole('button', { name: title })).toBeInTheDocument();
     }
   });
@@ -115,7 +115,7 @@ describe('App', () => {
     fireEvent.click(screen.getByRole('button', { name: 'Go' }));
 
     await waitFor(() =>
-      expect(api.getCiting).toHaveBeenCalledWith('root', expect.objectContaining({ limit: 5 })),
+      expect(api.getCiting).toHaveBeenCalledWith('anchor', expect.objectContaining({ limit: 5 })),
     );
     expect(api.getCited).not.toHaveBeenCalled();
   });
@@ -127,7 +127,7 @@ describe('App', () => {
 
     const details = screen.getByRole('complementary', { name: 'Title ref' });
     expect(within(details).getByText('Found as a cited work')).toBeInTheDocument();
-    // Cited by root and citer on the graph.
+    // Cited by anchor and citer on the graph.
     expect(within(details).getByText('Cited by on graph').nextSibling).toHaveTextContent('2');
     expect(within(details).getByRole('link', { name: 'DOI' })).toHaveAttribute(
       'href',
@@ -150,15 +150,15 @@ describe('App', () => {
     expect(screen.getByRole('button', { name: 'Expanded' })).toBeDisabled();
   });
 
-  it('marks the root as already expanded', async () => {
+  it('marks the anchor as already expanded', async () => {
     await buildFromSearch();
 
-    fireEvent.click(within(graph()).getByRole('button', { name: 'Title root' }));
+    fireEvent.click(within(graph()).getByRole('button', { name: 'Title anchor' }));
 
     expect(screen.getByRole('button', { name: 'Expanded' })).toBeDisabled();
   });
 
-  it('hides works outside the year filter but keeps the root', async () => {
+  it('hides works outside the year filter but keeps the anchor', async () => {
     await buildFromSearch();
 
     fireEvent.change(screen.getByLabelText('From year'), { target: { value: '1990' } });
@@ -166,8 +166,22 @@ describe('App', () => {
     const titles = within(graph())
       .getAllByRole('button')
       .map((button) => button.textContent);
-    expect(titles.sort()).toEqual(['Title citer', 'Title root']);
+    expect(titles.sort()).toEqual(['Title anchor', 'Title citer']);
     expect(screen.getByText('Showing 2 of 3')).toBeInTheDocument();
+  });
+
+  it('draws the time axis at 30 degrees by default and lets the user rotate it', async () => {
+    await buildFromSearch();
+    expect(graph()).toHaveAttribute('data-axis-angle', '30');
+
+    fireEvent.change(screen.getByLabelText(/Time axis angle/), { target: { value: '60' } });
+    expect(graph()).toHaveAttribute('data-axis-angle', '60');
+    expect(screen.getByText('Time axis angle: 60°')).toBeInTheDocument();
+
+    fireEvent.click(
+      within(screen.getByRole('region', { name: 'View' })).getByRole('button', { name: 'Reset' }),
+    );
+    expect(graph()).toHaveAttribute('data-axis-angle', '30');
   });
 
   it('shows API errors', async () => {

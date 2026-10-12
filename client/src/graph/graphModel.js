@@ -8,16 +8,16 @@
 
 /**
  * @typedef {object} Graph
- * @property {string | null} rootId
+ * @property {string | null} anchorId
  * @property {Map<string, object>} works          Work objects from the API, by Tracer ID.
- * @property {Map<string, 'root' | Direction>} relations
- *   How each work joined the graph: the root, found as a citing work, or found as a cited work.
+ * @property {Map<string, 'anchor' | Direction>} relations
+ *   How each work joined the graph: the anchor, found as a citing work, or found as a cited work.
  * @property {Map<string, Set<Direction>>} expanded  Directions already fetched for each work.
  */
 
 /** @returns {Graph} */
 export function emptyGraph() {
-  return { rootId: null, works: new Map(), relations: new Map(), expanded: new Map() };
+  return { anchorId: null, works: new Map(), relations: new Map(), expanded: new Map() };
 }
 
 /**
@@ -26,7 +26,7 @@ export function emptyGraph() {
  *
  * @param {Graph} graph
  * @param {object[]} works
- * @param {'root' | Direction} relation
+ * @param {'anchor' | Direction} relation
  */
 export function addWorks(graph, works, relation) {
   const nextWorks = new Map(graph.works);
@@ -88,7 +88,7 @@ export function inGraphCitationCounts(works) {
 export const NO_FILTERS = { minYear: null, maxYear: null, minCitations: 0 };
 
 /**
- * IDs of works that pass the filters. The root and any `alwaysShow` IDs (e.g. the selection)
+ * IDs of works that pass the filters. The anchor and any `alwaysShow` IDs (e.g. the selection)
  * stay visible regardless.
  *
  * @param {Graph} graph
@@ -98,7 +98,7 @@ export const NO_FILTERS = { minYear: null, maxYear: null, minCitations: 0 };
  * @returns {Set<string>}
  */
 export function visibleIds(graph, filters, counts, alwaysShow = []) {
-  const keep = new Set([graph.rootId, ...alwaysShow].filter(Boolean));
+  const keep = new Set([graph.anchorId, ...alwaysShow].filter(Boolean));
   const visible = new Set();
   for (const work of graph.works.values()) {
     const passes =
@@ -121,8 +121,8 @@ async function forEachLimited(items, concurrency, task) {
 
 /**
  * @typedef {object} BuildOptions
- * @property {number} citingDepth  Levels of citing works to follow from the root.
- * @property {number} citedDepth   Levels of cited works to follow from the root.
+ * @property {number} citingDepth  Levels of citing works to follow from the anchor.
+ * @property {number} citedDepth   Levels of cited works to follow from the anchor.
  * @property {number} limit        Max works fetched per node per direction.
  * @property {number} maxNodes     Stop adding works once the graph has this many.
  * @property {number} [concurrency]
@@ -138,24 +138,24 @@ async function forEachLimited(items, concurrency, task) {
 const fetchers = { citing: 'getCiting', cited: 'getCited' };
 
 /**
- * Builds a graph breadth-first from a root work. Each direction follows only its own
+ * Builds a graph breadth-first from an anchor work. Each direction follows only its own
  * direction (citing works of citing works, cited works of cited works), to its own depth.
  * Levels alternate between directions so maxNodes doesn't starve one of them.
  *
- * @param {string} rootId  Any ID the API accepts (Tracer ID, DOI, OpenAlex ID).
+ * @param {string} anchorId  Any ID the API accepts (Tracer ID, DOI, OpenAlex ID).
  * @param {BuildOptions} options
  * @param {GraphApi} api
  * @param {(graph: Graph) => void} [onProgress]  Called with each intermediate graph.
  * @returns {Promise<{ graph: Graph, truncated: boolean }>}
  */
-export async function buildGraph(rootId, options, api, onProgress = () => {}) {
+export async function buildGraph(anchorId, options, api, onProgress = () => {}) {
   const { citingDepth, citedDepth, limit, maxNodes, concurrency = 4 } = options;
-  const root = await api.getWork(rootId);
-  let graph = addWorks({ ...emptyGraph(), rootId: root.id }, [root], 'root');
+  const anchor = await api.getWork(anchorId);
+  let graph = addWorks({ ...emptyGraph(), anchorId: anchor.id }, [anchor], 'anchor');
   onProgress(graph);
 
   let truncated = false;
-  const frontiers = { citing: [root.id], cited: [root.id] };
+  const frontiers = { citing: [anchor.id], cited: [anchor.id] };
   const depths = { citing: citingDepth, cited: citedDepth };
 
   for (let level = 1; level <= Math.max(citingDepth, citedDepth); level++) {
@@ -206,4 +206,106 @@ export async function expandWork(graph, id, { limit }, api) {
       (acc, { direction, works }) => markExpanded(addWorks(acc, works, direction), id, direction),
       latest,
     );
+}
+
+/**
+ * @typedef {object} LayoutYear
+ * @property {number | null} year  Year used for layout; null if nothing can be inferred.
+ * @property {boolean} inferred   True when the work has no publication year of its own.
+ */
+
+/**
+ * The year each work is placed at in the layout.
+ *
+ * Works with a publication year use it. For undated works:
+ * 1. Infer from dated neighbors on the graph: a work is older than any work that cites it and
+ *    newer than any work it cites. With both bounds, use the midpoint; with one, place it a
+ *    year beyond.
+ * 2. Guarantee the anchor rule: a work the anchor cites is older than the anchor, and a work
+ *    citing the anchor is newer.
+ * 3. Otherwise fall back on how the work joined the graph: cited works (found by following
+ *    references back from the anchor) are older, citing works newer.
+ *
+ * @param {Graph} graph
+ * @returns {Map<string, LayoutYear>}
+ */
+export function layoutYears(graph) {
+  const citedBy = new Map();
+  const cites = new Map();
+  for (const { source, target } of deriveEdges(graph.works)) {
+    if (!citedBy.has(target)) citedBy.set(target, []);
+    if (!cites.has(source)) cites.set(source, []);
+    citedBy.get(target).push(source);
+    cites.get(source).push(target);
+  }
+  const yearOf = (id) => graph.works.get(id)?.year ?? null;
+
+  const fromNeighbors = (id) => {
+    const citerYears = (citedBy.get(id) ?? []).map(yearOf).filter((y) => y != null);
+    const citedYears = (cites.get(id) ?? []).map(yearOf).filter((y) => y != null);
+    const upper = citerYears.length ? Math.min(...citerYears) : null;
+    const lower = citedYears.length ? Math.max(...citedYears) : null;
+    if (upper != null && lower != null) return (upper + lower) / 2;
+    if (upper != null) return upper - 1;
+    if (lower != null) return lower + 1;
+    return null;
+  };
+
+  const anchor = graph.works.get(graph.anchorId);
+  const anchorYear = anchor ? (anchor.year ?? fromNeighbors(anchor.id)) : null;
+  const anchorCites = new Set(anchor?.references ?? []);
+
+  const result = new Map();
+  for (const work of graph.works.values()) {
+    if (work.year != null) {
+      result.set(work.id, { year: work.year, inferred: false });
+      continue;
+    }
+    if (work.id === graph.anchorId) {
+      result.set(work.id, { year: anchorYear, inferred: true });
+      continue;
+    }
+
+    let year = fromNeighbors(work.id);
+    if (anchorYear != null) {
+      const citedByAnchor = anchorCites.has(work.id);
+      const citesAnchor = work.references.includes(graph.anchorId);
+      if (citedByAnchor && !citesAnchor) year = Math.min(year ?? anchorYear - 1, anchorYear - 1);
+      else if (citesAnchor && !citedByAnchor)
+        year = Math.max(year ?? anchorYear + 1, anchorYear + 1);
+      else if (year == null) {
+        const relation = graph.relations.get(work.id);
+        year =
+          relation === 'cited'
+            ? anchorYear - 1
+            : relation === 'citing'
+              ? anchorYear + 1
+              : anchorYear;
+      }
+    }
+    result.set(work.id, { year, inferred: true });
+  }
+  return result;
+}
+
+/**
+ * Positions along the time axis for a set of years, centered on 0. Distinct years are spaced
+ * in order; larger gaps get logarithmically more room, so a long gap is visible without
+ * squeezing densely published decades together.
+ *
+ * @param {Iterable<number>} years
+ * @param {number} [spacing]  Distance between consecutive years.
+ * @returns {Map<number, number>}
+ */
+export function yearPositions(years, spacing = 15) {
+  const sorted = [...new Set(years)].sort((a, b) => a - b);
+  const positions = new Map();
+  let position = 0;
+  sorted.forEach((year, i) => {
+    if (i > 0) position += spacing * (1 + Math.log2(Math.max(1, year - sorted[i - 1])));
+    positions.set(year, position);
+  });
+  const offset = position / 2;
+  for (const [year, p] of positions) positions.set(year, p - offset);
+  return positions;
 }

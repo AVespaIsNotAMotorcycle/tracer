@@ -4,7 +4,7 @@ import { looksLikeWorkId, searchWorks } from '../api.js';
 const DEPTHS = [0, 1, 2, 3];
 
 /**
- * Finds a root work (by search, or directly by DOI / OpenAlex ID) and sets build options.
+ * Finds an anchor work (by search, or directly by DOI / OpenAlex ID) and sets build options.
  */
 export default function SearchPanel({
   options,

@@ -9,12 +9,13 @@
   --accent: #8a4b2a;
   --accent-text: #ffffff;
   --error: #b42318;
-  --node-root: #8a4b2a;
+  --node-anchor: #8a4b2a;
   --node-citing: #2f6f8f;
   --node-cited: #7a8f3a;
   --node-selected: #1f1d1a;
   --graph-link: rgba(60, 55, 48, 0.25);
   --graph-link-active: rgba(138, 75, 42, 0.9);
+  --graph-axis: rgba(60, 55, 48, 0.12);
   font-family:
     system-ui,
     -apple-system,
@@ -34,12 +35,13 @@
     --accent: #d08a5f;
     --accent-text: #171614;
     --error: #f97066;
-    --node-root: #e09a6c;
+    --node-anchor: #e09a6c;
     --node-citing: #6fb3d4;
     --node-cited: #b3c76a;
     --node-selected: #ffffff;
     --graph-link: rgba(236, 232, 225, 0.2);
     --graph-link-active: rgba(224, 154, 108, 0.95);
+    --graph-axis: rgba(236, 232, 225, 0.1);
   }
 }
 
@@ -321,8 +323,8 @@ button.primary,
   vertical-align: middle;
 }
 
-.swatch.root {
-  background: var(--node-root);
+.swatch.anchor {
+  background: var(--node-anchor);
 }
 
 .swatch.citing {

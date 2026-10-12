@@ -6,7 +6,7 @@ const LINK_LABELS = {
 };
 
 const RELATION_LABELS = {
-  root: 'Starting work',
+  anchor: 'Anchor',
   citing: 'Found as a citing work',
   cited: 'Found as a cited work',
 };
@@ -23,7 +23,7 @@ export default function DetailsPanel({
   onClose,
 }) {
   const fullyExpanded = expanded.has('citing') && expanded.has('cited');
-  const byline = [work.year, work.venue, work.type].filter(Boolean).join(' · ');
+  const byline = [work.year ?? 'Year unknown', work.venue, work.type].filter(Boolean).join(' · ');
 
   return (
     <aside className="details" aria-labelledby="details-title">

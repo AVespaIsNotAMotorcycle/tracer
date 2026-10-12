@@ -9,9 +9,11 @@ Tracer builds interactive citation graphs for academic sources, focused on the h
 Core model:
 
 - **Node:** a source (article). It is drawn as a circle whose radius scales with its **in-graph** citation count: how many works on the current graph cite it, not its global total. That count changes as the graph grows, so derive it from the edges instead of storing it. This choice may be revisited, so keep the sizing metric easy to swap.
-- **Edge:** a directed citation (A cites B). Every known citation between any two nodes on the graph is drawn, not only those involving the root.
-- **Graph build:** from a root article, fetch citing works (incoming edges) and cited works (outgoing edges), breadth-first. The two directions have **separate depths**, e.g. citing depth 1 and cited depth 3.
+- **Edge:** a directed citation (A cites B). Every known citation between any two nodes on the graph is drawn, not only those involving the anchor.
+- **Anchor:** the work the user searched for, which the graph is built around. Use this term in code and UI (not "root").
+- **Graph build:** from the anchor, fetch citing works (incoming edges) and cited works (outgoing edges), breadth-first. The two directions have **separate depths**, e.g. citing depth 1 and cited depth 3.
 - **Expansion:** clicking a node fetches its citing and cited works and merges them into the existing graph.
+- **Layout by year:** time runs along an axis tilted 30° below horizontal by default, with older works up and to the left and newer works down and to the right. Users can rotate the axis from 0° (horizontal) to 90° (vertical). For undated works, a work the anchor cites is treated as older than the anchor, and a work citing the anchor as newer. Beyond that, a work is placed older than its dated citers and newer than the dated works it cites (`layoutYears`).
 - **Filters:** filters hide nodes from the view. They don't remove nodes from the graph or stop them being fetched. Keep the graph data separate from what is visible.
 
 ## Data sources
@@ -97,8 +99,8 @@ Tooling layout: Vitest, ESLint and Prettier are installed at the root. The root 
 - **Works tests** (`works.test.js`) use `mongodb-memory-server` (a real `mongod`, downloaded to `~/.cache` on first run) and a fake provider backed by an in-memory catalog. They assert on provider call counts to verify caching, and inject `now` to test expiry.
 - **Client** (`client/src/`):
   - **`graph/graphModel.js`:** pure graph logic, independent of React.
-    - The graph is `{ rootId, works: Map, relations: Map, expanded: Map }`.
-    - `relations` records how each work joined: `root`, `citing` or `cited`.
+    - The graph is `{ anchorId, works: Map, relations: Map, expanded: Map }`.
+    - `relations` records how each work joined: `anchor`, `citing` or `cited`.
     - `expanded` records which directions have been fetched for each work.
     - Edges (`deriveEdges`) and node sizes (`inGraphCitationCounts`) are always calculated from `works`, never stored.
     - `buildGraph` runs breadth-first with a separate depth per direction. Levels alternate between directions so `maxNodes` doesn't starve one of them, and requests run with limited concurrency. `expandWork` returns an updater to apply to the latest state.
@@ -109,7 +111,12 @@ Tooling layout: Vitest, ESLint and Prettier are installed at the root. The root 
     - Circle area is proportional to in-graph citations, via `nodeVal`. It must stay `nodeVal`-based so arrowheads land on circle edges.
     - Colors come from CSS custom properties in `App.css`; the canvas re-reads them when the theme changes.
     - Tooltip HTML is escaped, because titles come from external data.
-  - **Interaction:** clicking a node selects it and opens `DetailsPanel`; expanding is a button there. The root and the selected node always stay visible regardless of filters.
+    - **Year layout:** `graph/axis.js` (`axisGeometry(angle)`) converts between screen x/y and axis coordinates: u along the time axis, v across it. A custom `yearForce` pulls each node to its year's u, with only a weak pull across the axis, so works from the same period spread out. `yearPositions` spaces distinct years in order, giving larger gaps logarithmically more room. Faint lines across the axis label the years (`onRenderFramePre`).
+    - **Rotation:** the angle lives in `App` state (`ViewPanel` slider). On change, `GraphView` moves every node straight to its rotated position (keeping its u and v), instead of letting the simulation drag nodes there, and refits the view. The force reads the current geometry through a ref, so it never needs replacing.
+    - **Tuning:** layout constants sit at the top of `GraphView.jsx`. Years are packed fairly close (`YEAR_SPACING` 15), and repulsion (`CHARGE`) spreads works across the axis. `YEAR_PULL` keeps that repulsion from moving works along it. Measured on a 41-work graph: median distance from a work's year is about 0.4 years, and no works end up out of chronological order.
+    - **Forces:** d3's `center` force is removed. It shifts all nodes to keep their average at the origin, which pulls them off their year positions. Links are weak (strength 0.02), because citations always span years and would fight the time axis. Charge has `distanceMax`, so a crowd on one side can't push a node off its year. `forceCollide` stops large circles from overlapping.
+    - The view fits once, after the build finishes and the layout settles. Fitting to a partial graph leaves the view zoomed in on one small part of the time axis.
+  - **Interaction:** clicking a node selects it and opens `DetailsPanel`; expanding is a button there. The anchor and the selected node always stay visible regardless of filters.
   - **Defaults** (`DEFAULT_OPTIONS` in `App.jsx`): depth 1 each way, 20 works per node, 300 max works. Each extra level multiplies requests, which costs OpenAlex credits.
   - **Client tests** mock `GraphView` (jsdom has no canvas) and `api.js`. To check the real canvas, run the app and drive it in a browser.
 - **Heroku build:** `npm install`, then `heroku-postbuild` (client build), then the `Procfile` `web: npm start`. The server reads `PORT` from the environment.

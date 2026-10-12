@@ -23,7 +23,7 @@ export function useCitationGraph(api = defaultApi) {
   }, [graph]);
 
   const build = useCallback(
-    async (rootId, /** @type {BuildOptions} */ options) => {
+    async (anchorId, /** @type {BuildOptions} */ options) => {
       controller.current?.abort();
       const current = new AbortController();
       controller.current = current;
@@ -40,7 +40,7 @@ export function useCitationGraph(api = defaultApi) {
       setTruncated(false);
       setExpanding(new Set());
       try {
-        const result = await buildGraph(rootId, options, scoped, (g) => {
+        const result = await buildGraph(anchorId, options, scoped, (g) => {
           if (!signal.aborted) setGraph(g);
         });
         if (signal.aborted) return;

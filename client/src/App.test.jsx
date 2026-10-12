@@ -155,6 +155,14 @@ describe('App', () => {
     );
     // The book cites the anchor once, through its chapters.
     expect(screen.getByText('Cites on graph').nextSibling).toHaveTextContent('1');
+
+    // Expanding the book expands its chapters too.
+    fireEvent.click(screen.getByRole('button', { name: 'Expand citing and cited works' }));
+    expect(await screen.findByRole('button', { name: 'Expanded' })).toBeDisabled();
+    for (const id of ['book', 'ch1', 'ch2']) {
+      expect(api.getCiting).toHaveBeenCalledWith(id, { limit: 20 });
+      expect(api.getCited).toHaveBeenCalledWith(id, { limit: 20 });
+    }
   });
 
   it('builds directly from a DOI without searching', async () => {

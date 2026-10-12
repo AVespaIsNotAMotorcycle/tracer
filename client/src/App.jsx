@@ -20,6 +20,13 @@ import { readUrlState, writeUrlState } from './urlState.js';
 
 const EMPTY_SET = new Set();
 
+/** Directions fetched for every one of `ids` (a book and its chapters count as one node). */
+function expandedDirections(graph, ids) {
+  const sets = ids.map((id) => graph.expanded.get(id) ?? EMPTY_SET);
+  if (sets.length === 1) return sets[0];
+  return new Set(['citing', 'cited'].filter((d) => sets.every((set) => set.has(d))));
+}
+
 /** How many works on the graph each work cites. */
 function outgoingCounts(works) {
   const result = new Map();
@@ -222,10 +229,15 @@ export default function App() {
           citedByOnGraph={counts.get(selected.id) ?? 0}
           citesOnGraph={outgoing.get(selected.id) ?? 0}
           parts={parts}
-          expanded={graph.expanded.get(selected.id) ?? EMPTY_SET}
+          expanded={expandedDirections(graph, [selected.id, ...parts.map((p) => p.work.id)])}
           expanding={expanding.has(selected.id)}
           busy={busy}
-          onExpand={() => expand(selected.id, { limit: options.limit })}
+          onExpand={() =>
+            expand(selected.id, {
+              limit: options.limit,
+              parts: parts.map((part) => part.work.id),
+            })
+          }
           onMakeAnchor={() => handleReanchor(selected.id)}
           onClose={() => setSelectedId(null)}
         />

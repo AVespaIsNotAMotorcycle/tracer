@@ -6,6 +6,7 @@ import {
   deriveEdges,
   emptyGraph,
   expandWork,
+  expandWorks,
   foldBookParts,
   inGraphCitationCounts,
   layoutYears,
@@ -225,6 +226,27 @@ describe('buildGraph', () => {
     );
 
     expect(graph.anchorId).toBe('R');
+  });
+});
+
+describe('expandWorks', () => {
+  it('expands every work, merging the results in one update, and makes each sticky', async () => {
+    const network = { R: ['A'], A: ['B'], B: [], C: ['A'], D: ['B'] };
+    const api = fakeApi(network);
+    const graph = {
+      ...addWorks(emptyGraph(), [work('R', ['A']), work('A', ['B']), work('B')], 'cited'),
+      anchorId: 'R',
+    };
+
+    const apply = await expandWorks(graph, ['A', 'B'], { limit: 10 }, api);
+    const next = apply(graph);
+
+    expect([...next.works.keys()].sort()).toEqual(['A', 'B', 'C', 'D', 'R']);
+    for (const id of ['A', 'B']) {
+      expect(next.expanded.get(id)).toEqual(new Set(['citing', 'cited']));
+      expect(next.sticky.has(id)).toBe(true);
+    }
+    expect(api.getCiting).toHaveBeenCalledTimes(2);
   });
 });
 

@@ -1,6 +1,6 @@
 import { useCallback, useEffect, useRef, useState } from 'react';
 import * as defaultApi from '../api.js';
-import { buildGraph, emptyGraph, expandWork, reanchorGraph } from './graphModel.js';
+import { buildGraph, emptyGraph, expandWorks, reanchorGraph } from './graphModel.js';
 import { createProgressTracker } from './progress.js';
 
 /** @typedef {import('./graphModel.js').BuildOptions} BuildOptions */
@@ -135,15 +135,23 @@ export function useCitationGraph(api = defaultApi) {
     untrack('run');
   }, [untrack]);
 
+  // Expands `id`, along with any `parts` (a book's chapters, which aren't nodes of their own).
   const expand = useCallback(
-    async (id, { limit }) => {
+    async (id, { limit, parts = [] }) => {
       setExpanding((prev) => new Set(prev).add(id));
       const title = graphRef.current.works.get(id)?.title ?? 'work';
       const short = title.length > 40 ? `${title.slice(0, 39)}…` : title;
-      const progress = track(`expand:${id}`, `Expanding “${short}”`, undefined, 2);
-      progress.plan(2); // Citing and cited.
+      const ids = [id, ...parts];
+      // Up to two works at once, each fetching both directions.
+      const progress = track(
+        `expand:${id}`,
+        `Expanding “${short}”`,
+        undefined,
+        Math.min(4, 2 * ids.length),
+      );
+      progress.plan(2 * ids.length); // Citing and cited, per work.
       try {
-        const apply = await expandWork(graphRef.current, id, { limit }, api, progress);
+        const apply = await expandWorks(graphRef.current, ids, { limit }, api, progress);
         setGraph((latest) => (latest.works.has(id) ? apply(latest) : latest));
       } catch (err) {
         setError(err.message);

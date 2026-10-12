@@ -376,6 +376,29 @@ export async function expandWork(graph, id, { limit }, api, progress = noProgres
   };
 }
 
+// Works expanded at once by expandWorks; each fetches both directions in parallel.
+const EXPAND_CONCURRENCY = 2;
+
+/**
+ * Expands several works together (e.g. a book and its chapters; see foldBookParts), as
+ * expandWork does for one, and merges the results in a single update.
+ *
+ * @param {Graph} graph
+ * @param {string[]} ids
+ * @param {{ limit: number }} options
+ * @param {GraphApi} api
+ * @param {ReturnType<typeof import('./progress.js').createProgressTracker>} [progress]
+ *   The caller plans 2 per work.
+ * @returns {Promise<(graph: Graph) => Graph>}  An updater to apply to the latest graph.
+ */
+export async function expandWorks(graph, ids, options, api, progress = noProgress) {
+  const updaters = [];
+  await forEachLimited(ids, EXPAND_CONCURRENCY, async (id) => {
+    updaters.push(await expandWork(graph, id, options, api, progress));
+  });
+  return (latest) => updaters.reduce((acc, apply) => apply(acc), latest);
+}
+
 /**
  * Relation for a kept work relative to a new anchor, when it wasn't reached by the new build:
  * direct citations decide it, otherwise publication order.

@@ -32,8 +32,7 @@
  * @property {string | null} venue    Journal, book series, or other container.
  * @property {string | null} abstract
  * @property {number | null} citedByCount
- *   Global citation count reported by the provider. Not used for node sizing, which counts
- *   in-graph citations only.
+ *   Global citation count reported by the provider. Drives node size on the client.
  * @property {string[]} referencedIds
  *   Provider IDs of the works this one cites. Used to draw edges between any two works on
  *   the graph, not only edges to the root.

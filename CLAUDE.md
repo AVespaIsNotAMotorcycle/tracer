@@ -8,7 +8,7 @@ Tracer builds interactive citation graphs for academic sources, focused on the h
 
 Core model:
 
-- **Node:** a source (article). It is drawn as a circle whose radius scales with its **in-graph** citation count: how many works on the current graph cite it, not its global total. That count changes as the graph grows, so derive it from the edges instead of storing it. This choice may be revisited, so keep the sizing metric easy to swap.
+- **Node:** a source (article). It is drawn as a circle whose radius scales with its **total** citation count: how many works cite it according to the provider (`citedByCount`), not only those on the graph. A folded book adds its chapters' counts; works with no count (reference-only) get the minimum size. The sizing metric is one function (`totalCitationCounts` in `graphModel.js`), so it stays easy to swap. The in-graph cited-by count (`inGraphCitationCounts`) is still derived from the edges and shown in the details panel.
 - **Edge:** a directed citation (A cites B). Every known citation between any two nodes on the graph is drawn, not only those involving the anchor.
 - **Anchor:** the work the user searched for, which the graph is built around. Use this term in code and UI (not "root").
 - **Graph build:** from the anchor, fetch citing works (incoming edges) and cited works (outgoing edges), breadth-first. The two directions have **separate depths**, e.g. citing depth 1 and cited depth 3.
@@ -118,7 +118,7 @@ Tooling layout: Vitest, ESLint and Prettier are installed at the root. The root 
     - `expanded` records which directions have been fetched for each work.
     - `sticky` holds works that keep their neighbors across re-anchoring. `expandWork` (user expansion) adds to it, and `reanchorGraph` adds the outgoing anchor. Build traversal never makes a work sticky; if it did, re-anchoring could never drop anything.
     - `reanchorGraph` reuses the anchor's data (no `getWork`), runs `buildGraph`, then re-expands each sticky work. Neighbor lists are fetched again rather than tracked, which is cheap because the server caches them. A sticky work the new build didn't reach is recolored relative to the new anchor (`relationTo`).
-    - Edges (`deriveEdges`) and node sizes (`inGraphCitationCounts`) are always calculated from `works`, never stored.
+    - Edges (`deriveEdges`), in-graph counts and node sizes (`totalCitationCounts`) are always calculated from `works`, never stored.
     - `buildGraph` runs breadth-first with a separate depth per direction. Levels alternate between directions so `maxNodes` doesn't starve one of them, and requests run with limited concurrency. `expandWork` returns an updater to apply to the latest state.
   - **`graph/useCitationGraph.js`:** holds graph state. A new build or re-anchor aborts the one in progress (`AbortController`). A re-anchor keeps the old graph on screen and swaps in the result once (status `reanchoring`, with `progressCount` for the status line), so kept nodes hold their positions. If it fails, the old graph stays.
   - **Loading progress** (`graph/progress.js`, `components/LoadingProgress.jsx`): builds, re-anchors and expansions each report to a tracker, which counts work in API requests.
@@ -130,7 +130,7 @@ Tooling layout: Vitest, ESLint and Prettier are installed at the root. The root 
   - **`graph/GraphView.jsx`** renders with `react-force-graph-2d` (canvas).
     - Node objects are reused across updates, because force-graph stores positions on them.
     - Filtered-out works stay in the simulation and are hidden through `nodeVisibility`/`linkVisibility`, so filtering doesn't reshuffle the layout.
-    - **Node size:** radius = `NODE_MIN_RADIUS` (9) + `NODE_GROWTH` (3) × √(in-graph citations). The minimum keeps every circle big enough for its source-type icon. It's passed as `nodeVal` = radius² with `nodeRelSize` 1, so arrowheads and hit areas stay on the circle's edge.
+    - **Node size:** radius = `NODE_MIN_RADIUS` (9) + `NODE_GROWTH` (6) × log₁₀(1 + total citations). Totals run from 0 to thousands, so the log keeps a classic from dwarfing everything: 10 citations give a radius of about 15, 100 about 21, 1,000 about 27. The minimum keeps every circle big enough for its source-type icon. It's passed as `nodeVal` = radius² with `nodeRelSize` 1, so arrowheads and hit areas stay on the circle's edge.
     - Colors come from CSS custom properties in `App.css`. The canvas resolves them through a hidden probe element and normalizes them to `rgba()` with a 1x1 canvas, because derived tokens compute to `oklab()`/`color()` strings. It re-reads them when the theme changes.
     - Tooltip HTML is escaped, because titles come from external data.
     - **Year layout:** `graph/axis.js` (`axisGeometry(angle)`) converts between screen x/y and axis coordinates: u along the time axis, v across it. A custom `yearForce` pulls each node to its year's u, with only a weak pull across the axis, so works from the same period spread out. `yearPositions` spaces distinct years in order, giving larger gaps logarithmically more room. Faint lines across the axis label the years (`onRenderFramePre`).

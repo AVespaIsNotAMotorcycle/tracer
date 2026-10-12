@@ -13,6 +13,7 @@ import {
   inGraphConnectionCounts,
   layoutYears,
   reanchorGraph,
+  totalCitationCounts,
   NO_FILTERS,
   visibleIds,
   yearPositions,
@@ -65,6 +66,22 @@ describe('inGraphCitationCounts', () => {
     );
 
     expect(Object.fromEntries(counts)).toEqual({ A: 0, B: 0, C: 2 });
+  });
+});
+
+describe('totalCitationCounts', () => {
+  it('uses each work’s total, adding a book’s chapters, and 0 when unknown', () => {
+    const works = worksMap(
+      { ...work('A'), citedByCount: 4693 },
+      { ...work('Book'), citedByCount: 12 },
+      { ...work('U'), citedByCount: null },
+    );
+    const partsOf = new Map([['Book', [{ citedByCount: 3 }, { citedByCount: null }]]]);
+    expect(Object.fromEntries(totalCitationCounts(works, partsOf))).toEqual({
+      A: 4693,
+      Book: 15,
+      U: 0,
+    });
   });
 });
 

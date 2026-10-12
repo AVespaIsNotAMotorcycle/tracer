@@ -7,10 +7,11 @@ import { layoutLinks, pointOnCurve } from './linkRouting.js';
 import { REFERENCE_ONLY } from './sourceTypeKeys.js';
 import { iconPath2D } from './sourceTypes.js';
 
-// Node radius = NODE_MIN_RADIUS + NODE_GROWTH * sqrt(in-graph citations). The minimum keeps
-// every circle big enough to hold its source-type icon; size still grows with citations.
+// Node radius = NODE_MIN_RADIUS + NODE_GROWTH * log10(1 + total citations). Totals run from 0
+// to thousands, so the log keeps a classic from dwarfing the graph: 10 citations give about
+// 15, 100 about 21, 1,000 about 27. The minimum keeps every circle big enough for its icon.
 const NODE_MIN_RADIUS = 9;
-const NODE_GROWTH = 3;
+const NODE_GROWTH = 6;
 
 // Source-type icons are drawn inside circles at least this many screen pixels in radius;
 // smaller ones would be illegible clutter.
@@ -20,7 +21,7 @@ const ICON_FILL = 0.6;
 
 // force-graph sizes nodes as sqrt(val) * nodeRelSize. With nodeRelSize 1, val = radius², which
 // keeps arrowheads and hit areas on the circle's edge.
-const nodeVal = (count) => (NODE_MIN_RADIUS + NODE_GROWTH * Math.sqrt(count)) ** 2;
+const nodeVal = (count) => (NODE_MIN_RADIUS + NODE_GROWTH * Math.log10(1 + count)) ** 2;
 const radiusOf = (val) => Math.sqrt(val);
 
 // Layout tuning. Years sit close together along the time axis; works spread out across it.
@@ -222,7 +223,7 @@ const escapeHtml = (text) =>
  */
 export default function GraphView({
   graph,
-  counts,
+  sizes,
   years,
   visible,
   selectedId,
@@ -263,12 +264,12 @@ export default function GraphView({
       }
       node.work = work;
       node.relation = graph.relations.get(work.id);
-      node.val = nodeVal(counts.get(work.id) ?? 0);
+      node.val = nodeVal(sizes.get(work.id) ?? 0);
       node.targetU = targetU;
       return node;
     });
     return { nodes, links: deriveEdges(graph.works) };
-  }, [graph, counts, years, positions, nodeCache, geometry]);
+  }, [graph, sizes, years, positions, nodeCache, geometry]);
 
   // Year ticks: whole publication years only, not inferred midpoints.
   const ticks = useMemo(

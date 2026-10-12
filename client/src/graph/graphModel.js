@@ -104,8 +104,7 @@ export function deriveEdges(works) {
 }
 
 /**
- * How many works on the graph cite each work. This drives node size; swap this function to
- * change the sizing metric.
+ * How many works on the graph cite each work (shown in the details panel).
  *
  * @param {Map<string, object>} works
  * @returns {Map<string, number>}
@@ -179,6 +178,26 @@ export function foldBookParts(graph) {
     works.set(work.id, { ...work, references: [...new Set(references)] });
   }
   return { graph: { ...graph, works }, partsOf, bookOf };
+}
+
+/**
+ * How many works cite each work in total, as the provider reports it (`citedByCount`), for node
+ * size. A book's count includes its folded chapters' (see foldBookParts), since citations of
+ * them count as the book's; works citing both are counted twice. Works with no count (e.g.
+ * reference-only works) get 0. Swap this function to change the sizing metric.
+ *
+ * @param {Map<string, object>} works
+ * @param {Map<string, object[]>} [partsOf]
+ * @returns {Map<string, number>}
+ */
+export function totalCitationCounts(works, partsOf = new Map()) {
+  const total = (work) => work.citedByCount ?? 0;
+  return new Map(
+    [...works.values()].map((work) => [
+      work.id,
+      total(work) + (partsOf.get(work.id) ?? []).reduce((sum, part) => sum + total(part), 0),
+    ]),
+  );
 }
 
 /**

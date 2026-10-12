@@ -12,6 +12,7 @@ import {
   foldBookParts,
   inGraphCitationCounts,
   inGraphConnectionCounts,
+  totalCitationCounts,
   layoutYears,
   NO_FILTERS,
   visibleIds,
@@ -58,6 +59,7 @@ export default function App() {
   const shownId = selectedId ? (bookOf.get(selectedId) ?? selectedId) : null;
   const counts = useMemo(() => inGraphCitationCounts(view.works), [view.works]);
   const connections = useMemo(() => inGraphConnectionCounts(view.works), [view.works]);
+  const sizes = useMemo(() => totalCitationCounts(view.works, partsOf), [view.works, partsOf]);
   const years = useMemo(() => layoutYears(view), [view]);
   const outgoing = useMemo(() => outgoingCounts(view.works), [view.works]);
   const visible = useMemo(
@@ -198,7 +200,7 @@ export default function App() {
             <span className="muted small">
               Older works toward the top left, newer toward the bottom right
             </span>
-            <span className="muted small">Circle size: times cited by works on this graph</span>
+            <span className="muted small">Circle size: total times cited</span>
           </section>
         )}
       </aside>
@@ -224,7 +226,7 @@ export default function App() {
         {hasGraph ? (
           <GraphView
             graph={view}
-            counts={counts}
+            sizes={sizes}
             years={years}
             visible={visible}
             selectedId={shownId}

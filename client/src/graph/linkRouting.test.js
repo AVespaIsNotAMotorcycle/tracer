@@ -5,6 +5,7 @@ import {
   layoutLinks,
   linksAt,
   mergeAtCrossings,
+  movesAway,
   MAX_CURVATURE,
   placeLinks,
   pointOnCurve,
@@ -447,6 +448,53 @@ describe('merging at crossings', () => {
     expect(linksAt(bundle, join)).toBe(3);
     // The link now ends where it joins.
     expect(loose.route.end.x).toBeCloseTo(join);
+  });
+
+  it('tells whether a route heads back away from its node', () => {
+    const hub = node('hub', 0, 0);
+    expect(movesAway(curved(node('s', 200, 0), hub, { x: 100, y: 0 }), false)).toBe(false);
+    // Swings out past its own start before coming in.
+    expect(movesAway(curved(node('s', 40, 0), hub, { x: 200, y: 0 }), false)).toBe(true);
+    // Running parallel (around the node at a steady distance) is fine: a quarter circle in.
+    const arc = curved(node('s', 0, -100), hub, { x: 0, y: 0 });
+    arc.route.start = { x: 100, y: 0 };
+    arc.route.controls = [
+      { x: 100, y: 55.2 },
+      { x: 55.2, y: 100 },
+    ];
+    arc.route.end = { x: 0, y: 100 };
+    arc.target = { id: 'hub', x: 0, y: 0 };
+    expect(movesAway(arc, false)).toBe(false);
+  });
+
+  it('does not merge a link where it would have to head back away from the node', () => {
+    const hub = node('hub', 0, 0);
+    const p = curved(node('p', 300, -5), hub, { x: 150, y: -3 });
+    const q = curved(node('q', 300, 5), hub, { x: 150, y: 3 });
+    const bundle = trunkBundle(hub, [p, q], 120);
+    // Starts 45 from the hub but crosses the trunk about 66 out: joining there means going back.
+    const loose = curved(node('l', 20, -40), hub, { x: 150, y: 60 });
+    const bundles = [bundle];
+    mergeAtCrossings([p, q, loose], bundles, [hub, p.source, q.source, loose.source], radius, 2);
+
+    expect(loose.route.targetBundle).toBeNull();
+    expect(bundle.links).toEqual([p, q]);
+  });
+
+  it('keeps a trunk pointing the same way after a link joins it', () => {
+    const hub = node('hub', 0, 0);
+    const p = curved(node('p', 300, -5), hub, { x: 150, y: -3 });
+    const q = curved(node('q', 300, 5), hub, { x: 150, y: 3 });
+    const bundle = trunkBundle(hub, [p, q], 120);
+    const loose = curved(node('l', 40, -150), hub, { x: 80, y: 150 });
+    const bundles = [bundle];
+    mergeAtCrossings([p, q, loose], bundles, [hub, p.source, q.source, loose.source], radius, 2);
+    expect(loose.route.targetBundle).toBe(bundle);
+
+    // The new member pulls the links' mean direction upward; the trunk mustn't follow it.
+    placeLinks([p, q, loose], bundles);
+    expect(bundle.direction.x).toBeCloseTo(1);
+    expect(bundle.direction.y).toBeCloseTo(0);
   });
 
   it('joins a whole bundle to another it meets', () => {

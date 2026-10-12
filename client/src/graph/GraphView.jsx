@@ -6,6 +6,7 @@ import { deriveEdges, yearPositions } from './graphModel.js';
 import {
   findCrossings,
   joinOf,
+  movesAway,
   layoutLinks,
   linksAt,
   placeLinks,
@@ -389,6 +390,14 @@ export default function GraphView({
           ),
         })),
       // Links to the same work that cross on the way there, by kind.
+      // Merged links whose route heads back away from the node they merge at (should be 0).
+      backwards: () =>
+        routing.current.bundles.reduce(
+          (n, bundle) =>
+            n +
+            bundle.links.filter((link) => link.route && movesAway(link, bundle.outgoing)).length,
+          0,
+        ),
       // Time for one full plan, with crossings merged, as when the layout settles.
       planMs: () => {
         const start = performance.now();

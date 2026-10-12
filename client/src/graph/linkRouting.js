@@ -297,6 +297,16 @@ function meanDirection(node, entries, outgoing) {
 }
 
 /**
+ * Keeps a bundle's trunk pointing where it does after its links change: its turn is relative
+ * to its links' mean direction (placeBundle), which a link joining or leaving shifts.
+ */
+function keepDirection(bundle) {
+  if (bundle.links.length === 0) return;
+  const [mx, my] = meanDirection(bundle.node, bundle.links, bundle.outgoing);
+  bundle.turn = Math.atan2(bundle.direction.y, bundle.direction.x) - Math.atan2(my, mx);
+}
+
+/**
  * Moves a bundle's trunk to where its node and links are now, keeping its planned reach and its
  * turn from the links' mean direction.
  */
@@ -456,8 +466,15 @@ export function layoutLinks(
   }
 
   for (const link of visible) routeFree(link, grid, radius, clearance);
+  // A link merged into a trunk mustn't head back away from its node to get there.
+  releaseBackward(bundles, grid, radius, clearance);
   // Merging at crossings is the costly part; callers skip it while nodes are moving.
-  if (merge) mergeCrossings(visible, bundles, grid, radius, clearance, mergeDistance);
+  if (merge) {
+    mergeCrossings(visible, bundles, grid, radius, clearance, mergeDistance);
+    // Each merge was checked when made, but a link's route can change after: its other end
+    // merging, or a bundle it was in dissolving.
+    releaseBackward(bundles, grid, radius, clearance);
+  }
   return bundles;
 }
 
@@ -677,6 +694,64 @@ function routeFree(link, grid, radius, clearance) {
   placeRoute(link);
 }
 
+// Rounds of releasing links that head backwards (releaseBackward); usually one or two.
+const RELEASE_ROUNDS = 4;
+// How far a merged link may drift back away from its node (sampling noise), in graph units.
+// Running parallel is fine; heading back the way it came isn't.
+const BACKTRACK_TOLERANCE = 0.5;
+
+/**
+ * Whether a link, followed from its far end in to `outgoing ? source : target` (along its
+ * curve, then its trunk there), at any point moves away from that node. A merge that makes a
+ * link do that is undone (mergeCrossings, releaseBackward).
+ */
+export function movesAway(link, outgoing) {
+  const node = outgoing ? link.source : link.target;
+  // pathFrom runs from the node outward, so distances must never shrink along it.
+  let previous = 0;
+  for (const p of pathFrom(link, outgoing)) {
+    const distance = Math.hypot(p.x - node.x, p.y - node.y);
+    if (distance < previous - BACKTRACK_TOLERANCE) return true;
+    previous = distance;
+  }
+  return false;
+}
+
+/**
+ * Releases bundle members whose route would move away from the bundle's node (see movesAway),
+ * re-routing them on their own; bundles left with one link dissolve. Repeats until none do:
+ * re-routing a released link can make it head backwards at a bundle at its other end.
+ */
+function releaseBackward(bundles, grid, radius, clearance) {
+  for (let round = 0; round < RELEASE_ROUNDS; round++) {
+    if (!releaseOnce(bundles, grid, radius, clearance)) return;
+  }
+}
+
+/** One round of releaseBackward; whether anything was released. */
+function releaseOnce(bundles, grid, radius, clearance) {
+  let released = false;
+  for (const bundle of [...bundles]) {
+    const side = bundle.outgoing ? 'sourceBundle' : 'targetBundle';
+    for (const link of [...bundle.links]) {
+      if (!movesAway(link, bundle.outgoing)) continue;
+      bundle.links = bundle.links.filter((other) => other !== link);
+      bundle.joins?.delete(link);
+      keepDirection(bundle);
+      link.route[side] = null;
+      routeFree(link, grid, radius, clearance);
+      released = true;
+    }
+    if (bundle.links.length >= 2) continue;
+    for (const link of bundle.links) {
+      link.route[side] = null;
+      routeFree(link, grid, radius, clearance);
+    }
+    bundles.splice(bundles.indexOf(bundle), 1);
+  }
+  return released;
+}
+
 // Crossings this close to a node, or to a trunk's line, count as at it.
 const CROSSING_TOLERANCE = 6;
 // Passes of merging at crossings; re-routing merged links can create new crossings.
@@ -689,6 +764,8 @@ const CROSSING_PASSES = 4;
  * - Meeting beyond a junction (on branches): the other link joins that bundle at its
  *   junction, just before the meeting. Between two bundles, the longer trunk takes it.
  * - When the other link is itself bundled, its whole bundle joins, not just that link.
+ * A merge that would make a link move away from the node anywhere along its route (movesAway)
+ * isn't made; running parallel is fine.
  * - Two links in no bundle: they become a bundle whose junction is the crossing, if a straight
  *   trunk to it is clear of circles.
  * Bundles left with one link are dissolved. Affected links are re-routed.
@@ -699,6 +776,13 @@ function mergeCrossings(links, bundles, grid, radius, clearance, near = 0) {
   const tolerance = Math.max(CROSSING_TOLERANCE, near);
   // After the first pass, only nodes where a link moved can have new meetings.
   let onlyAt = null;
+  // Joins already refused for heading backwards, so later passes don't retry them.
+  const refused = new Map();
+  const wasRefused = (link, bundle) => refused.get(link)?.has(bundle);
+  const refuse = (link, bundle) => {
+    if (!refused.has(link)) refused.set(link, new Set());
+    refused.get(link).add(bundle);
+  };
   for (let pass = 0; pass < CROSSING_PASSES; pass++) {
     const crossings = findCrossings(links, margin, near, onlyAt);
     if (crossings.length === 0) return;
@@ -718,18 +802,49 @@ function mergeCrossings(links, bundles, grid, radius, clearance, near = 0) {
           (point.x - node.x) * bundle.direction.y - (point.y - node.y) * bundle.direction.x;
         return along <= bundle.reach + tolerance && Math.abs(across) < tolerance;
       };
+      // Joins `link` to `bundle` at `at`, unless its new route would then move away from the
+      // node somewhere (movesAway): then it's left as it was.
       const join = (link, bundle, at) => {
         const from = link.route[side];
-        if (from === bundle) return;
+        if (from === bundle || wasRefused(link, bundle)) return;
+        // Joining at or beyond the link's own far end means heading back: refuse without
+        // routing it.
+        const far = outgoing ? link.target : link.source;
+        if (at >= Math.hypot(far.x - node.x, far.y - node.y)) {
+          refuse(link, bundle);
+          return;
+        }
+        const fromJoin = from?.joins?.get(link);
+        const { tangent, curvature } = link.route;
         if (from) {
           from.links = from.links.filter((other) => other !== link);
           from.joins?.delete(link);
-          touched.add(from);
+          keepDirection(from);
         }
         bundle.links.push(link);
+        keepDirection(bundle);
         link.route[side] = bundle;
         bundle.joins ??= new Map();
         if (at < bundle.reach) bundle.joins.set(link, at);
+        routeFree(link, grid, radius, clearance);
+        if (movesAway(link, outgoing)) {
+          refuse(link, bundle);
+          bundle.links = bundle.links.filter((other) => other !== link);
+          bundle.joins.delete(link);
+          keepDirection(bundle);
+          link.route[side] = from ?? null;
+          if (from) {
+            from.links.push(link);
+            if (fromJoin != null) (from.joins ??= new Map()).set(link, fromJoin);
+            keepDirection(from);
+          }
+          // Back to the route it had (its plan didn't change), without routing it again.
+          link.route.tangent = tangent;
+          link.route.curvature = curvature;
+          placeRoute(link);
+          return;
+        }
+        if (from) touched.add(from);
         touched.add(bundle);
         moved.add(link);
       };
@@ -752,11 +867,20 @@ function mergeCrossings(links, bundles, grid, radius, clearance, near = 0) {
       } else {
         const bundle = bundleAt(node, outgoing, [a, b], point, grid, radius, clearance);
         if (!bundle) continue;
-        bundles.push(bundle);
         for (const link of [a, b]) {
           link.route[side] = bundle;
-          moved.add(link);
+          routeFree(link, grid, radius, clearance);
         }
+        // Not if either would then head back away from the node.
+        if (movesAway(a, outgoing) || movesAway(b, outgoing)) {
+          for (const link of [a, b]) {
+            link.route[side] = null;
+            routeFree(link, grid, radius, clearance);
+          }
+          continue;
+        }
+        bundles.push(bundle);
+        for (const link of [a, b]) moved.add(link);
         touched.add(bundle);
       }
     }

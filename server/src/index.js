@@ -3,6 +3,7 @@ import { createApp } from './app.js';
 import { connectWithRetry } from './db.js';
 import { createCrossrefProvider } from './providers/crossref.js';
 import { createOpenAlexProvider } from './providers/openalex.js';
+import { createOpenCitationsProvider } from './providers/opencitations.js';
 import { createWorkService } from './works/workService.js';
 
 const port = process.env.PORT || 5000;
@@ -18,7 +19,13 @@ const provider = createOpenAlexProvider({ apiKey: process.env.OPENALEX_API_KEY }
 // Crossref supplies the reference lists publishers deposited, including references OpenAlex
 // couldn't match. A contact address moves requests to Crossref's faster polite pool.
 const referenceProvider = createCrossrefProvider({ mailto: process.env.CROSSREF_MAILTO });
-const app = createApp({ workService: createWorkService({ provider, referenceProvider }) });
+// OpenCitations supplies open citation links, recovering some that OpenAlex doesn't have.
+const linkProvider = createOpenCitationsProvider({
+  accessToken: process.env.OPENCITATIONS_ACCESS_TOKEN,
+});
+const app = createApp({
+  workService: createWorkService({ provider, referenceProvider, linkProvider }),
+});
 
 // Listen first so the API is reachable while MongoDB connects (or is down).
 app.listen(port, () => console.log(`Server listening on port ${port}`));

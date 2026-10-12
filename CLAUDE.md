@@ -37,7 +37,9 @@ Combining several citation databases to fill each other's coverage gaps is the a
   - **Coverage gaps seen:** reference lists are often empty for older humanities articles (e.g. Thompson 1971 has 4,693 citing works but 0 references). Some abstracts are only author and title glued together. OpenAlex's `referenced_works` lists only references it matched to its own works; unmatched ones are dropped from the API entirely.
   - **Crossref** (`crossref.js`) is the second adapter. It only reads reference lists (`getReferences(doi)` → `ProviderReference[]`), which publishers deposit there, including entries OpenAlex couldn't match. Coverage depends on the publisher: Cambridge and Taylor & Francis deposit them; OUP, Duke, Wiley and Project MUSE often don't. Entries are structured (author surname, year, title) or printed text only (`unstructured`; the year is taken from the text). The public pool allows one request at a time, so the adapter queues them. `CROSSREF_MAILTO` moves them to the faster polite pool.
 - **Merging:** when providers disagree or one is missing data, merge records and citation edges rather than picking one provider wholesale. Keep track of which provider each piece of data came from.
+  - **OpenCitations** (`opencitations.js`) is the third adapter. It supplies open (CC0) citation links, not records: `getCitingIds(doi)` and `getCitedIds(doi)` return the other end's IDs (`LinkedIds`: OpenAlex ID and DOI). Responses for much-cited works take several seconds (about 7 s for Thompson's 3,078 links), so requests time out after 20 s and run at most two at once. `OPENCITATIONS_ACCESS_TOKEN` is optional. Measured gains are modest but real: 4 citing works OpenAlex doesn't link for one Taylor & Francis article, none for others.
   - **Reference lists** are merged: `getCitedWorks` also resolves the work's Crossref reference list (`resolveReferences`, cached on the Source for 30 days). References with a DOI OpenAlex has (looked up in batches with `getWorksByDoi`) become ordinary works, recovering citations OpenAlex didn't link. The rest become reference-only Sources. A Crossref failure is logged, and the OpenAlex references are still returned.
+  - **Citation links** are merged too (`linkedExtras`): links OpenCitations has between a work and works OpenAlex has but doesn't link are resolved to OpenAlex records (by OpenAlex ID, else DOI). At most `MAX_LINKS` (300) per work and direction are checked, about 3 OpenAlex credits. Extra citing works join OpenAlex's list most-cited first, within `limit`; extra cited works join the Crossref-found extras. Each recovered link is stored on the citing work's Source, so its edge draws wherever that work appears. Links to works OpenAlex doesn't have are dropped (OpenCitations gives no metadata; its Meta API could). A failure or timeout falls back to OpenAlex alone.
   - **Otherwise not yet implemented.** OpenAlex is the only source of work records. `toWorks()` in `server/src/works/workService.js` is where records will be merged. Duplicate `Source`s (e.g. two OpenAlex works with one DOI) are not merged yet either.
 
 ## MongoDB roles
@@ -50,11 +52,11 @@ Models are in `server/src/models/`:
 
 - **`Source`:** one per work. Its `_id` is the Tracer ID. It holds `externalIds` (`openalex` is unique; `doi` is indexed but not unique) and `records.<provider> = { data: ProviderWork, fetchedAt }`. A Source with no records is a **stub**. Saving a work upserts a stub for every work it references, so references get Tracer IDs immediately. That keeps edges intact when A is fetched before B, and keeps a Tracer ID stable when a stub is later filled in.
   - A **reference-only** Source has no records. It holds `citation` (the `ProviderReference`) and `externalIds.citation`, a unique key from `citationKey()`: DOI, else first author, year and title, else the printed text, all case-, accent- and punctuation-insensitive. Works citing the same thing share one Source. A DOI is kept in `citation`, not `externalIds.doi`, so DOI lookups find OpenAlex records first.
-  - `records.crossref.data = { tracerIds, referenceOnly }` on a citing Source is its resolved reference list. `toWorks` appends it to the work's `references`.
+  - `records.crossref.data = { tracerIds, referenceOnly }` on a citing Source is its resolved reference list, and `records.opencitations.data.tracerIds` holds works it cites according to OpenCitations. `toWorks` appends every non-OpenAlex record's `data.tracerIds` to the work's `references`.
   - Stubs are created in bulk: `saveWorks` finds which referenced works already have Sources in one query and `insertMany`s the rest, ignoring duplicate-key errors from concurrent saves. One upsert each took about 5 ms apiece, which made a 200-work citing list take nearly two minutes.
 - **`CacheEntry`:** cached list results (citing works, searches) stored as ordered provider IDs under keys like `openalex:citing:W1:50`. A TTL index on `expiresAt` deletes old entries, and reads also check `expiresAt`. Cited lists aren't cached, because a work's own record already has its references.
 
-Refresh intervals (`DEFAULT_TTLS` in `workService.js`): work records 30 days, Crossref reference lists 30 days, citing lists 7 days, searches 1 day. If a refresh finds nothing, stale data is served.
+Refresh intervals (`DEFAULT_TTLS` in `workService.js`): work records 30 days, Crossref reference lists and OpenCitations cited links 30 days, citing lists (including OpenCitations citing links, cached as `opencitations:citing:<doi>`) 7 days, searches 1 day. If a refresh finds nothing, stale data is served.
 
 Tech stack: Tracer is a MERN app managed as npm workspaces: React 19 + Vite in `client/`, Express 5 + Mongoose in `server/`. It deploys to Heroku as a single dyno. Both packages are ES modules (`"type": "module"`), and Node 24.x is required.
 
@@ -65,7 +67,7 @@ Run from the repo root:
 ```sh
 npm install                          # installs all workspaces
 docker run -d -p 27017:27017 --name tracer-mongo mongo:8.2   # local MongoDB (first time; then: docker start tracer-mongo)
-cp server/.env.example server/.env   # sets PORT, MONGODB_URI, OPENALEX_API_KEY, CROSSREF_MAILTO
+cp server/.env.example server/.env   # sets PORT, MONGODB_URI, OPENALEX_API_KEY, CROSSREF_MAILTO, OPENCITATIONS_ACCESS_TOKEN
 npm run dev                          # server (:5000, node --watch) + Vite (:5173) via concurrently
 npm run build                        # builds client to client/dist
 npm start                            # production server (what Heroku runs)

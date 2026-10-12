@@ -373,6 +373,87 @@ describe('cited works from deposited reference lists', () => {
   });
 });
 
+describe('citation links from OpenCitations', () => {
+  // OpenAlex has W8, W9 and W10 but doesn't link them to W1: W8 and W9 cite W1, W1 cites W10.
+  // OpenCitations knows those links, plus W4 → W1 and W1 → W2, which OpenAlex already has.
+  const unlinked = [
+    providerWork('W8', { citedByCount: 7 }),
+    providerWork('W9', { doi: '10.1234/w9', citedByCount: 1 }),
+    providerWork('W10'),
+  ];
+  let linkProvider;
+
+  beforeEach(() => {
+    const getWorks = provider.getWorks.getMockImplementation();
+    provider.getWorks = vi.fn(async (ids) => [
+      ...(await getWorks(ids)),
+      ...unlinked.filter((w) => ids.includes(w.providerId)),
+    ]);
+    provider.getWorksByDoi = vi.fn(async (dois) =>
+      unlinked.filter((w) => dois.includes(w.externalIds.doi)),
+    );
+    linkProvider = {
+      name: 'opencitations',
+      getCitingIds: vi.fn(async () => [
+        { openalex: 'W8', doi: null },
+        { openalex: null, doi: '10.1234/w9' },
+        { openalex: 'W4', doi: null },
+      ]),
+      getCitedIds: vi.fn(async () => [
+        { openalex: 'W2', doi: null },
+        { openalex: 'W10', doi: null },
+      ]),
+    };
+    const workService = createWorkService({ provider, linkProvider, now: () => clock });
+    api = request(createApp({ workService }));
+  });
+
+  it('adds citing works OpenAlex has but does not link, most-cited first', async () => {
+    const res = await api.get('/api/works/W1/citing');
+
+    expect(res.status).toBe(200);
+    expect(res.body.works.map((w) => w.externalIds.openalex)).toEqual(['W5', 'W8', 'W4', 'W9']);
+    // The recovered links draw: W8 and W9 now list W1 among their references.
+    const w1 = await tracerIdOf('W1');
+    for (const work of res.body.works) expect(work.references).toContain(w1);
+    expect(linkProvider.getCitingIds).toHaveBeenCalledWith('10.1234/root');
+  });
+
+  it('keeps the limit across both sources', async () => {
+    const res = await api.get('/api/works/W1/citing?limit=2');
+    expect(res.body.works.map((w) => w.externalIds.openalex)).toEqual(['W5', 'W8']);
+  });
+
+  it('adds cited works OpenAlex has but does not link', async () => {
+    const res = await api.get('/api/works/W1/cited');
+    expect(res.body.works.map((w) => w.externalIds.openalex)).toEqual(['W2', 'W10']);
+
+    const { work } = (await api.get('/api/works/W1')).body;
+    expect(work.references).toContain(await tracerIdOf('W10'));
+    expect(work.providers).toEqual(['openalex', 'opencitations']);
+  });
+
+  it('caches the links it found', async () => {
+    await api.get('/api/works/W1/citing');
+    await api.get('/api/works/W1/citing?limit=10');
+    expect(linkProvider.getCitingIds).toHaveBeenCalledTimes(1);
+
+    advance(DEFAULT_TTLS.citing + 1);
+    await api.get('/api/works/W1/citing');
+    expect(linkProvider.getCitingIds).toHaveBeenCalledTimes(2);
+  });
+
+  it('falls back to OpenAlex alone when OpenCitations fails', async () => {
+    linkProvider.getCitingIds.mockRejectedValue(new ProviderError('opencitations', 'timed out'));
+    vi.spyOn(console, 'error').mockImplementation(() => {});
+
+    const res = await api.get('/api/works/W1/citing');
+
+    expect(res.status).toBe(200);
+    expect(res.body.works.map((w) => w.externalIds.openalex)).toEqual(['W5', 'W4']);
+  });
+});
+
 describe('citationKey', () => {
   it('ignores case, punctuation and accents, preferring DOI, then title, then the citation', () => {
     const base = { doi: null, authors: [{ name: 'Zebrowski' }], year: 1983, unstructured: null };

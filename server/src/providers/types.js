@@ -53,6 +53,15 @@
  */
 
 /**
+ * The IDs of the work at one end of a citation link (see opencitations.js). Either may be
+ * missing.
+ *
+ * @typedef {object} LinkedIds
+ * @property {string | null} doi       Normalized with normalizeDoi().
+ * @property {string | null} openalex  Short OpenAlex ID, e.g. "W123".
+ */
+
+/**
  * @typedef {object} ListOptions
  * @property {number} [limit]  Maximum number of works to return.
  */

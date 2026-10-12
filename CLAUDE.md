@@ -15,6 +15,10 @@ Core model:
 - **Expansion:** clicking a node fetches its citing and cited works and merges them into the existing graph.
 - **Layout by year:** time runs along an axis tilted 30° below horizontal by default, with older works up and to the left and newer works down and to the right. Users can rotate the axis from 0° (horizontal) to 90° (vertical). For undated works, a work the anchor cites is treated as older than the anchor, and a work citing the anchor as newer. Beyond that, a work is placed older than its dated citers and newer than the dated works it cites (`layoutYears`).
 - **Re-anchoring:** any selected work can become the anchor. The graph is rebuilt from it at the configured depths, so depth is always measured from the current anchor. **Sticky** works keep their neighbors as if still expanded: the previous anchor(s) and works the user expanded with the button. Works the old build reached only through traversal are dropped unless the new build reaches them.
+- **Shareable URLs:** the anchor is in the query string, e.g. `?anchor=10.1093%2Fpast%2F50.1.76&cited=2`. A query parameter was chosen over a route because it needs no router and works with the Express SPA fallback.
+  - The anchor is written as its DOI, falling back to the OpenAlex ID, then the Tracer ID (`shareableId`). Tracer IDs only mean something within one database.
+  - Build options are written only when they differ from the defaults (`citing`, `cited`, `perNode`, `max`).
+  - Manual expansions, sticky works, filters and the axis angle are _not_ in the URL.
 - **Filters:** filters hide nodes from the view. They don't remove nodes from the graph or stop them being fetched. Keep the graph data separate from what is visible.
 
 ## Data sources
@@ -125,7 +129,13 @@ Tooling layout: Vitest, ESLint and Prettier are installed at the root. The root 
     - **Forces:** d3's `center` force is removed. It shifts all nodes to keep their average at the origin, which pulls them off their year positions. Links are weak (strength 0.02), because citations always span years and would fight the time axis. Charge has `distanceMax`, so a crowd on one side can't push a node off its year. `forceCollide` stops large circles from overlapping.
     - The view fits once, after the build finishes and the layout settles. Fitting to a partial graph leaves the view zoomed in on one small part of the time axis.
   - **Interaction:** clicking a node selects it and opens `DetailsPanel`; expanding is a button there. The anchor and the selected node always stay visible regardless of filters.
-  - **Defaults** (`DEFAULT_OPTIONS` in `App.jsx`): depth 1 each way, 20 works per node, 300 max works. Each extra level multiplies requests, which costs OpenAlex credits.
+  - **Defaults** (`DEFAULT_OPTIONS` in `urlState.js`): depth 1 each way, 20 works per node, 300 max works. Each extra level multiplies requests, which costs OpenAlex credits.
+  - **URL sync** (`urlState.js`, plus effects in `App.jsx`): reading and writing the URL are pure functions. `App` sets `pendingUrl` when a run starts.
+    - It **pushes** a history entry for user actions (search or re-anchor), so Back returns to the previous anchor.
+    - It **replaces** the entry for runs started from the URL (page load, popstate), so history doesn't fill with duplicates. A URL using an OpenAlex ID is rewritten to the DOI this way.
+    - The URL is written only after a run reaches `done`. `idle` means the run hasn't started; on page load the URL effect runs in the same pass that starts the build.
+    - Failed builds leave the URL alone.
+    - App tests reset `window.location` in `beforeEach`, because jsdom shares it across tests.
   - **Source-type icons** (`graph/sourceTypes.js`): each OpenAlex `type` maps to a label and a lucide icon in two forms.
     - The lucide-react component is used in the DOM: the "Source types" legend and the details panel.
     - The vanilla `lucide` element data is converted to a path string (`iconPathData`) and cached as a `Path2D`, then stroked inside canvas nodes. Icons appear once a circle's on-screen radius is at least `ICON_MIN_SCREEN_RADIUS`.

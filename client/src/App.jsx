@@ -1,4 +1,4 @@
-import { useMemo, useState } from 'react';
+import { useEffect, useMemo, useRef, useState } from 'react';
 import './App.css';
 import DetailsPanel from './components/DetailsPanel.jsx';
 import FiltersPanel from './components/FiltersPanel.jsx';
@@ -16,18 +16,16 @@ import {
   visibleIds,
 } from './graph/graphModel.js';
 import { useCitationGraph } from './graph/useCitationGraph.js';
-
-// Conservative defaults: each level multiplies requests, and the keyless OpenAlex budget is
-// small.
-const DEFAULT_OPTIONS = { citingDepth: 1, citedDepth: 1, limit: 20, maxNodes: 300 };
+import { readUrlState, writeUrlState } from './urlState.js';
 
 const EMPTY_SET = new Set();
 
 export default function App() {
-  const { graph, status, tasks, error, truncated, expanding, build, reanchor, expand } =
+  const { graph, status, tasks, error, truncated, expanding, build, reanchor, expand, reset } =
     useCitationGraph();
   const busy = status === 'loading' || status === 'reanchoring';
-  const [options, setOptions] = useState(DEFAULT_OPTIONS);
+  // Build options start from the URL (or the defaults), so a shared link reproduces the graph.
+  const [options, setOptions] = useState(() => readUrlState(window.location.search).options);
   const [filters, setFilters] = useState(NO_FILTERS);
   const [selectedId, setSelectedId] = useState(null);
   const [axisAngle, setAxisAngle] = useState(DEFAULT_AXIS_ANGLE);
@@ -46,11 +44,68 @@ export default function App() {
   );
   const maxCount = useMemo(() => Math.max(0, ...counts.values()), [counts]);
 
+  // How the next completed build or re-anchor updates the URL: 'push' a history entry when the
+  // user started it (so Back returns to the previous anchor), 'replace' when it came from the
+  // URL itself (page load, Back/Forward), so history isn't duplicated. `options` are the ones
+  // that build used, not whatever the form shows by the time it finishes.
+  const pendingUrl = useRef(null);
+
   const handleBuild = (anchorId) => {
     setSelectedId(null);
     setFilters(NO_FILTERS);
+    pendingUrl.current = { mode: 'push', options };
     build(anchorId, options);
   };
+
+  const handleReanchor = (anchorId) => {
+    pendingUrl.current = { mode: 'push', options };
+    reanchor(anchorId, options);
+  };
+
+  // Open the graph a shared URL points to.
+  useEffect(() => {
+    const { anchor, options: urlOptions } = readUrlState(window.location.search);
+    if (!anchor) return;
+    pendingUrl.current = { mode: 'replace', options: urlOptions };
+    build(anchor, urlOptions);
+  }, [build]);
+
+  // Back/Forward: rebuild whatever graph the URL now describes.
+  useEffect(() => {
+    const handlePopState = () => {
+      const { anchor, options: urlOptions } = readUrlState(window.location.search);
+      setOptions(urlOptions);
+      setSelectedId(null);
+      setFilters(NO_FILTERS);
+      if (anchor) {
+        pendingUrl.current = { mode: 'replace', options: urlOptions };
+        build(anchor, urlOptions);
+      } else {
+        pendingUrl.current = null;
+        reset();
+      }
+    };
+    window.addEventListener('popstate', handlePopState);
+    return () => window.removeEventListener('popstate', handlePopState);
+  }, [build, reset]);
+
+  // Once a build or re-anchor finishes, write its anchor and options to the URL. A failed build
+  // leaves the URL alone; a failed re-anchor keeps the old anchor, which the URL already shows.
+  useEffect(() => {
+    const pending = pendingUrl.current;
+    // Wait for the run to finish. 'idle' means it hasn't started yet: on page load this effect
+    // runs in the same pass that starts the build, before its status changes.
+    if (!pending || busy || status === 'idle') return;
+    pendingUrl.current = null;
+    const anchorWork = graph.works.get(graph.anchorId);
+    if (status !== 'done' || !anchorWork) return;
+    const { pathname, search, hash } = window.location;
+    const next = writeUrlState(search, anchorWork, pending.options);
+    if (next === search) return;
+    const url = `${pathname}${next}${hash}`;
+    if (pending.mode === 'push') window.history.pushState(null, '', url);
+    else window.history.replaceState(null, '', url);
+  }, [busy, status, graph]);
 
   const selected = selectedId ? graph.works.get(selectedId) : null;
   const hasGraph = graph.works.size > 0;
@@ -147,7 +202,7 @@ export default function App() {
           expanding={expanding.has(selected.id)}
           busy={busy}
           onExpand={() => expand(selected.id, { limit: options.limit })}
-          onMakeAnchor={() => reanchor(selected.id, options)}
+          onMakeAnchor={() => handleReanchor(selected.id)}
           onClose={() => setSelectedId(null)}
         />
       )}

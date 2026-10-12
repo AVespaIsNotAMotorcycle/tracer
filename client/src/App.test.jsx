@@ -56,6 +56,8 @@ const more = work('more', { references: ['ref'], year: 2010 });
 const graph = () => screen.getByRole('list', { name: 'Graph' });
 
 beforeEach(() => {
+  // The URL carries the anchor, and jsdom shares one location across tests.
+  window.history.replaceState(null, '', '/');
   vi.mocked(api.searchWorks).mockResolvedValue([anchor]);
   vi.mocked(api.getWork).mockResolvedValue(anchor);
   vi.mocked(api.getCiting).mockImplementation(async (id) => (id === 'anchor' ? [citer] : [more]));
@@ -275,6 +277,87 @@ describe('App', () => {
 
     const details = screen.getByRole('complementary', { name: 'Title ref' });
     expect(within(details).getByText(/Article · 1930 · Past & Present/)).toBeInTheDocument();
+  });
+
+  describe('URL', () => {
+    const anchorParam = () => new URLSearchParams(window.location.search).get('anchor');
+
+    it('puts the anchor in the URL after a build', async () => {
+      const lengthBefore = window.history.length;
+      await buildFromSearch();
+
+      await waitFor(() => expect(anchorParam()).toBe('Wanchor'));
+      expect(window.history.length).toBe(lengthBefore + 1);
+    });
+
+    it('prefers the DOI and records non-default options', async () => {
+      vi.mocked(api.getWork).mockResolvedValue({
+        ...anchor,
+        externalIds: { openalex: 'Wanchor', doi: '10.1093/past/50.1.76' },
+      });
+      render(<App />);
+      fireEvent.change(screen.getByLabelText('Cited depth'), { target: { value: '0' } });
+      fireEvent.change(screen.getByLabelText('Title, DOI, or OpenAlex ID'), {
+        target: { value: 'W1' },
+      });
+      fireEvent.click(screen.getByRole('button', { name: 'Go' }));
+
+      await waitFor(() =>
+        expect(window.location.search).toBe('?anchor=10.1093%2Fpast%2F50.1.76&cited=0'),
+      );
+    });
+
+    it('opens the graph a shared URL describes, with its options', async () => {
+      window.history.replaceState(null, '', '/?anchor=Wanchor&cited=0&perNode=5');
+      const lengthBefore = window.history.length;
+      render(<App />);
+
+      await waitFor(() => expect(within(graph()).getAllByRole('button')).toHaveLength(2));
+      expect(api.getWork).toHaveBeenCalledWith('Wanchor', expect.anything());
+      expect(api.getCiting).toHaveBeenCalledWith('anchor', expect.objectContaining({ limit: 5 }));
+      expect(api.getCited).not.toHaveBeenCalled();
+      expect(screen.getByLabelText('Cited depth')).toHaveValue('0');
+      expect(window.history.length).toBe(lengthBefore);
+    });
+
+    it('rewrites a shared OpenAlex ID to the DOI without adding history', async () => {
+      vi.mocked(api.getWork).mockResolvedValue({
+        ...anchor,
+        externalIds: { openalex: 'Wanchor', doi: '10.1/x' },
+      });
+      window.history.replaceState(null, '', '/?anchor=Wanchor');
+      const lengthBefore = window.history.length;
+      render(<App />);
+
+      await waitFor(() => expect(anchorParam()).toBe('10.1/x'));
+      expect(window.history.length).toBe(lengthBefore);
+    });
+
+    it('pushes re-anchors to history, and Back restores the previous anchor', async () => {
+      await buildFromSearch();
+      await waitFor(() => expect(anchorParam()).toBe('Wanchor'));
+      fireEvent.click(within(graph()).getByRole('button', { name: 'Title ref' }));
+      fireEvent.click(screen.getByRole('button', { name: 'Make this the anchor' }));
+      await waitFor(() => expect(anchorParam()).toBe('Wref'));
+      vi.mocked(api.getWork).mockClear();
+
+      window.history.back();
+
+      await waitFor(() => expect(anchorParam()).toBe('Wanchor'));
+      await waitFor(() => expect(api.getWork).toHaveBeenCalledWith('Wanchor', expect.anything()));
+    });
+
+    it('leaves the URL alone when a build fails', async () => {
+      vi.mocked(api.getWork).mockRejectedValue(new Error('Work not found: W1'));
+      render(<App />);
+      fireEvent.change(screen.getByLabelText('Title, DOI, or OpenAlex ID'), {
+        target: { value: 'W1' },
+      });
+      fireEvent.click(screen.getByRole('button', { name: 'Go' }));
+
+      await screen.findByRole('alert');
+      expect(window.location.search).toBe('');
+    });
   });
 
   it('shows API errors', async () => {

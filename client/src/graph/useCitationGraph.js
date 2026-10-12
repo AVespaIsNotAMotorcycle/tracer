@@ -124,6 +124,17 @@ export function useCitationGraph(api = defaultApi) {
     [startRun, track, untrack],
   );
 
+  /** Cancels any run in progress and clears the graph. */
+  const reset = useCallback(() => {
+    controller.current?.abort();
+    setGraph(emptyGraph());
+    setStatus('idle');
+    setError(null);
+    setTruncated(false);
+    setExpanding(new Set());
+    untrack('run');
+  }, [untrack]);
+
   const expand = useCallback(
     async (id, { limit }) => {
       setExpanding((prev) => new Set(prev).add(id));
@@ -158,5 +169,6 @@ export function useCitationGraph(api = defaultApi) {
     build,
     reanchor,
     expand,
+    reset,
   };
 }

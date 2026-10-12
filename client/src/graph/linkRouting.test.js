@@ -397,6 +397,34 @@ describe('merging at crossings', () => {
     expect(b.route.targetBundle).toBe(bundles[0]);
   });
 
+  it('merges links that come within the merge distance without crossing', () => {
+    const hub = node('hub', 0, 0);
+    // Straight links into one node never cross before it, but these converge: about 20°
+    // apart, they come within 18 about 40 out from the hub.
+    const straight = (source) => ({
+      source,
+      target: hub,
+      route: { start: source, end: hub, controls: [], sourceBundle: null, targetBundle: null },
+    });
+    const pair = () => [straight(node('a', 200, -150)), straight(node('b', 200, -60))];
+    const [a, b] = pair();
+    expect(findCrossings([a, b], () => 13)).toEqual([]);
+    const [near] = findCrossings([a, b], () => 13, 18);
+    expect(Math.hypot(near.point.x, near.point.y)).toBeGreaterThan(30); // Well past the hub.
+
+    const bundles = [];
+    mergeAtCrossings([a, b], bundles, [hub, a.source, b.source], radius, 2, 18);
+    expect(bundles).toHaveLength(1);
+    expect(bundles[0].junction.x).toBeCloseTo(near.point.x);
+    expect(bundles[0].junction.y).toBeCloseTo(near.point.y);
+
+    // Without a merge distance, they stay apart.
+    const [c, d] = pair();
+    const none = [];
+    mergeAtCrossings([c, d], none, [hub, c.source, d.source], radius, 2);
+    expect(none).toEqual([]);
+  });
+
   it('joins a link to a trunk where it crosses it', () => {
     const hub = node('hub', 0, 0);
     const p = curved(node('p', 300, -5), hub, { x: 150, y: -3 });

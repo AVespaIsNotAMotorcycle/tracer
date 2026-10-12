@@ -399,8 +399,9 @@ export function placeLinks(links, bundles) {
  * cubic), and the bundles' trunks join it to the nodes. A branch leaves its trunk smoothly
  * when that curve is clear; otherwise it bends around circles like any other link. The plan
  * behind it is kept on the route too (`tangent`, or a `curvature`), so placeLinks can follow
- * moving nodes cheaply. Links crossing on their way to the same node are merged there
- * (mergeCrossings) unless `mergeCrossings` is false.
+ * moving nodes cheaply. Links that cross, or come within `mergeDistance` of each other, on
+ * their way to the same node are merged there (mergeCrossings), unless `mergeCrossings` is
+ * false.
  *
  * Returns the bundles. `radius(node)` gives a node's radius; `clearance` is the gap kept around
  * each circle.
@@ -411,7 +412,7 @@ export function layoutLinks(
   radius,
   clearance,
   isVisible = () => true,
-  { mergeCrossings: merge = true } = {},
+  { mergeCrossings: merge = true, mergeDistance = 0 } = {},
 ) {
   const placed = nodes.filter((node) => node.x != null);
   const grid = createGrid(placed, radius, clearance);
@@ -456,7 +457,7 @@ export function layoutLinks(
 
   for (const link of visible) routeFree(link, grid, radius, clearance);
   // Merging at crossings is the costly part; callers skip it while nodes are moving.
-  if (merge) mergeCrossings(visible, bundles, grid, radius, clearance);
+  if (merge) mergeCrossings(visible, bundles, grid, radius, clearance, mergeDistance);
   return bundles;
 }
 
@@ -485,6 +486,39 @@ function pathFrom(link, outgoing) {
   return points;
 }
 
+/** The point on segment a-b closest to p. */
+function closestOnSegment(p, a, b) {
+  const dx = b.x - a.x;
+  const dy = b.y - a.y;
+  const lengthSq = dx * dx + dy * dy;
+  const t = lengthSq
+    ? Math.max(0, Math.min(1, ((p.x - a.x) * dx + (p.y - a.y) * dy) / lengthSq))
+    : 0;
+  return { x: a.x + t * dx, y: a.y + t * dy };
+}
+
+/**
+ * How close segments p1-p2 and q1-q2 come, and where: the crossing if they cross, otherwise the
+ * midpoint between their closest points.
+ */
+function closestApproach(p1, p2, q1, q2) {
+  const crossing = segmentCrossing(p1, p2, q1, q2);
+  if (crossing) return { distance: 0, point: crossing };
+  let best = null;
+  for (const [p, a, b] of [
+    [p1, q1, q2],
+    [p2, q1, q2],
+    [q1, p1, p2],
+    [q2, p1, p2],
+  ]) {
+    const c = closestOnSegment(p, a, b);
+    const distance = Math.hypot(p.x - c.x, p.y - c.y);
+    if (!best || distance < best.distance)
+      best = { distance, point: { x: (p.x + c.x) / 2, y: (p.y + c.y) / 2 } };
+  }
+  return best;
+}
+
 /** Where segments p1-p2 and q1-q2 cross, or null. */
 function segmentCrossing(p1, p2, q1, q2) {
   const rx = p2.x - p1.x;
@@ -500,14 +534,18 @@ function segmentCrossing(p1, p2, q1, q2) {
 }
 
 /**
- * Pairs of links that share an end node, in the same citation direction, and cross on their
- * way to it (after layoutLinks has routed them). Straight links to one node can only meet at
- * the node, so these come from curves: links bent around circles, branches, other trunks.
- * Ignores crossings within `margin` of the node itself and between links of the same bundle.
- * Each pair is reported once, at the crossing furthest from the node. With `onlyAt`, a set of
- * nodes, only links meeting at those are checked.
+ * Pairs of links that share an end node, in the same citation direction, and cross or come
+ * within `near` of each other on their way to it (after layoutLinks has routed them). Straight
+ * links to one node only cross at the node, so crossings come from curves: links bent around
+ * circles, branches, other trunks. Ignores meetings within `margin` of the node itself and
+ * between links of the same bundle. Each pair is reported once, where it first meets on the
+ * way in: the meeting furthest from the node (a crossing, or the midpoint of the closest
+ * approach). With `onlyAt`, a set of nodes, only links meeting at those are checked.
+ *
+ * @returns {{ node: object, outgoing: boolean, a: object, b: object, point: {x, y},
+ *   kind: 'loose' | 'joins-bundle' | 'between-bundles' }[]}
  */
-export function findCrossings(links, margin, onlyAt = null) {
+export function findCrossings(links, margin, near = 0, onlyAt = null) {
   const groups = new Map();
   for (const link of links) {
     if (!link.route?.controls) continue;
@@ -525,10 +563,11 @@ export function findCrossings(links, margin, onlyAt = null) {
     const reach = margin(node);
     // Hash each path's segments by grid cell, so only segments sharing a cell are compared.
     // An entry is path * SEGMENT_SLOTS + segment; its first cell is kept to check each pair of
-    // segments only once, in the first cell their boxes share.
+    // segments only once, in the first cell their padded boxes share.
     const cells = new Map();
     const firstCellX = [];
     const firstCellY = [];
+    const pad = near / 2; // So segments within `near` share a cell.
     paths.forEach(({ points }, path) => {
       for (let segment = 1; segment < points.length; segment++) {
         const p = points[segment - 1];
@@ -539,10 +578,10 @@ export function findCrossings(links, margin, onlyAt = null) {
           Math.hypot(q.x - node.x, q.y - node.y) < reach
         )
           continue;
-        const x0 = Math.floor(Math.min(p.x, q.x) / CROSSING_CELL);
-        const x1 = Math.floor(Math.max(p.x, q.x) / CROSSING_CELL);
-        const y0 = Math.floor(Math.min(p.y, q.y) / CROSSING_CELL);
-        const y1 = Math.floor(Math.max(p.y, q.y) / CROSSING_CELL);
+        const x0 = Math.floor((Math.min(p.x, q.x) - pad) / CROSSING_CELL);
+        const x1 = Math.floor((Math.max(p.x, q.x) + pad) / CROSSING_CELL);
+        const y0 = Math.floor((Math.min(p.y, q.y) - pad) / CROSSING_CELL);
+        const y1 = Math.floor((Math.max(p.y, q.y) + pad) / CROSSING_CELL);
         const entry = path * SEGMENT_SLOTS + segment;
         firstCellX[entry] = x0;
         firstCellY[entry] = y0;
@@ -585,16 +624,17 @@ export function findCrossings(links, margin, onlyAt = null) {
           const p2 = a.points[si];
           const q1 = b.points[sj - 1];
           const q2 = b.points[sj];
-          // Cheap rejection: their boxes don't overlap.
+          // Cheap rejection: their boxes, padded by `near`, don't overlap.
           if (
-            Math.max(p1.x, p2.x) < Math.min(q1.x, q2.x) ||
-            Math.max(q1.x, q2.x) < Math.min(p1.x, p2.x) ||
-            Math.max(p1.y, p2.y) < Math.min(q1.y, q2.y) ||
-            Math.max(q1.y, q2.y) < Math.min(p1.y, p2.y)
+            Math.max(p1.x, p2.x) + near < Math.min(q1.x, q2.x) ||
+            Math.max(q1.x, q2.x) + near < Math.min(p1.x, p2.x) ||
+            Math.max(p1.y, p2.y) + near < Math.min(q1.y, q2.y) ||
+            Math.max(q1.y, q2.y) + near < Math.min(p1.y, p2.y)
           )
             continue;
-          const point = segmentCrossing(p1, p2, q1, q2);
-          if (!point) continue;
+          const approach = closestApproach(p1, p2, q1, q2);
+          if (approach.distance > near) continue;
+          const { point } = approach;
           const distance = Math.hypot(point.x - node.x, point.y - node.y);
           if (distance <= reach) continue;
           const pairKey = pi * paths.length + pj;
@@ -643,8 +683,8 @@ const CROSSING_TOLERANCE = 6;
 const CROSSING_PASSES = 4;
 
 /**
- * Merges links that cross on their way to the same node, so they run as one line from the
- * crossing to the node (see findCrossings):
+ * Merges links that cross, or come within `near` of each other, on their way to the same node,
+ * so they run as one line from there to the node (see findCrossings):
  * - Meeting on a bundle's trunk: the other link joins that trunk there.
  * - Meeting beyond a junction (on branches): the other link joins that bundle at its
  *   junction, just before the meeting. Between two bundles, the longer trunk takes it.
@@ -653,12 +693,14 @@ const CROSSING_PASSES = 4;
  *   trunk to it is clear of circles.
  * Bundles left with one link are dissolved. Affected links are re-routed.
  */
-function mergeCrossings(links, bundles, grid, radius, clearance) {
+function mergeCrossings(links, bundles, grid, radius, clearance, near = 0) {
   const margin = (node) => radius(node) + MIN_TRUNK;
+  // A meeting this close to a trunk's line counts as on the trunk.
+  const tolerance = Math.max(CROSSING_TOLERANCE, near);
   // After the first pass, only nodes where a link moved can have new meetings.
   let onlyAt = null;
   for (let pass = 0; pass < CROSSING_PASSES; pass++) {
-    const crossings = findCrossings(links, margin, onlyAt);
+    const crossings = findCrossings(links, margin, near, onlyAt);
     if (crossings.length === 0) return;
     const moved = new Set();
     const touched = new Set();
@@ -674,7 +716,7 @@ function mergeCrossings(links, bundles, grid, radius, clearance) {
           (point.x - node.x) * bundle.direction.x + (point.y - node.y) * bundle.direction.y;
         const across =
           (point.x - node.x) * bundle.direction.y - (point.y - node.y) * bundle.direction.x;
-        return along <= bundle.reach + CROSSING_TOLERANCE && Math.abs(across) < CROSSING_TOLERANCE;
+        return along <= bundle.reach + tolerance && Math.abs(across) < tolerance;
       };
       const join = (link, bundle, at) => {
         const from = link.route[side];
@@ -738,9 +780,9 @@ function mergeCrossings(links, bundles, grid, radius, clearance) {
  * mergeCrossings for links already routed (exported for tests): merges, re-routes, and
  * updates `bundles` in place.
  */
-export function mergeAtCrossings(links, bundles, nodes, radius, clearance) {
+export function mergeAtCrossings(links, bundles, nodes, radius, clearance, near = 0) {
   const placed = nodes.filter((node) => node.x != null);
-  mergeCrossings(links, bundles, createGrid(placed, radius, clearance), radius, clearance);
+  mergeCrossings(links, bundles, createGrid(placed, radius, clearance), radius, clearance, near);
 }
 
 /**

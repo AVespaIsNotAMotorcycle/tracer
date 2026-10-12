@@ -56,6 +56,8 @@ const ANCHOR_LINK_WIDTH = 2.5;
 const LINK_SELECTED_EXTRA = 1;
 // Links bend around circles in their way, keeping at least this gap (see linkRouting.js).
 const LINK_CLEARANCE = 3;
+// Links to the same work merge as soon as they come this close: a small circle's diameter.
+const LINK_MERGE_DISTANCE = 2 * NODE_MIN_RADIUS;
 // Branches widen to their trunk's width over this many screen pixels before a junction (at
 // most RAMP_MAX_SHARE of the branch), drawn as RAMP_STEPS segments of growing width.
 const RAMP_PIXELS = 30;
@@ -396,11 +398,16 @@ export default function GraphView({
           (node) => radiusOf(node.val),
           LINK_CLEARANCE,
           (link) => visible.has(link.source.id) && visible.has(link.target.id),
+          { mergeDistance: LINK_MERGE_DISTANCE },
         );
         return Math.round(performance.now() - start);
       },
       crossings: () => {
-        const found = findCrossings(data.links, (node) => radiusOf(node.val) + 8);
+        const found = findCrossings(
+          data.links,
+          (node) => radiusOf(node.val) + 8,
+          LINK_MERGE_DISTANCE,
+        );
         const kinds = {};
         for (const { kind } of found) kinds[kind] = (kinds[kind] ?? 0) + 1;
         return { total: found.length, ...kinds };
@@ -673,7 +680,7 @@ export default function GraphView({
         (node) => radiusOf(node.val),
         LINK_CLEARANCE,
         isLinkVisible,
-        { mergeCrossings: !state.moving },
+        { mergeCrossings: !state.moving, mergeDistance: LINK_MERGE_DISTANCE },
       );
       state.data = data;
       state.visible = visible;

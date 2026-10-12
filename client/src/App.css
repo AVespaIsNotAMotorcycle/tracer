@@ -2,17 +2,18 @@
   color-scheme: light dark;
 
   /*
-   * Palette: the color scheme, and the only place colors are defined. Swap these four to
+   * Palette: the color scheme, and the only place colors are defined. Swap these five to
    * re-theme the app; every color below is derived from them.
-   * Current scheme: https://colorhunt.co/palette/7d9c65b93636ff9c4cfff2a0
+   * Current scheme: https://coolors.co/588157-ffede1-363537-3185fc-d05353
    */
-  --palette-1: #7d9c65; /* Sage: cited works, neutral tints */
-  --palette-2: #b93636; /* Crimson: anchor, primary actions */
-  --palette-3: #ff9c4c; /* Orange: citing works, focus, dark-mode accent */
-  --palette-4: #fff2a0; /* Cream: backgrounds, dark-mode text */
+  --palette-1: #588157; /* Fern: cited works, borders */
+  --palette-2: #3185fc; /* Azure: anchor, primary actions */
+  --palette-3: #d05353; /* Lobster pink: citing works, errors, dark-mode accent */
+  --palette-4: #ffede1; /* Linen: backgrounds, dark-mode text */
+  --palette-5: #363537; /* Jet: text, dark-mode backgrounds */
 
-  /* Neutrals, tinted by the palette so they belong with it. */
-  --ink: color-mix(in oklab, var(--palette-1) 22%, black);
+  /* Neutrals. */
+  --ink: var(--palette-5);
   --paper: color-mix(in oklab, var(--palette-4) 10%, white);
 
   /* Roles. Components use only these. */
@@ -21,18 +22,20 @@
   --surface-2: color-mix(in oklab, var(--palette-4) 50%, white);
   --border: color-mix(in oklab, var(--palette-1) 40%, white);
   --text: var(--ink);
-  --muted: color-mix(in oklab, var(--ink) 58%, white);
-  --accent: var(--palette-2);
+  --muted: color-mix(in oklab, var(--ink) 78%, white);
+  /* Azure darkened so white button text on it meets 4.5:1. */
+  --accent: color-mix(in oklab, var(--palette-2) 78%, black);
   --accent-text: var(--paper);
-  --focus: var(--palette-2);
-  --error: var(--palette-2);
+  --focus: var(--accent);
+  /* Lobster pink darkened for 4.5:1 text. */
+  --error: color-mix(in oklab, var(--palette-3) 80%, black);
   --node-anchor: var(--palette-2);
   --node-citing: var(--palette-3);
   --node-cited: var(--palette-1);
   --node-outline: color-mix(in srgb, var(--ink) 60%, transparent);
   --node-icon-on-anchor: var(--paper);
-  --node-icon-on-citing: var(--ink);
-  --node-icon-on-cited: var(--ink);
+  --node-icon-on-citing: var(--paper);
+  --node-icon-on-cited: var(--paper);
   --node-selected: var(--ink);
   --graph-link: color-mix(in srgb, var(--ink) 22%, transparent);
   --graph-link-active: var(--palette-2);
@@ -48,20 +51,22 @@
 
 @media (prefers-color-scheme: dark) {
   :root {
-    --ink: color-mix(in oklab, var(--palette-1) 14%, black);
+    --ink: color-mix(in oklab, var(--palette-5) 55%, black);
     --paper: color-mix(in oklab, var(--palette-4) 85%, white);
 
     --bg: var(--ink);
-    --surface: color-mix(in oklab, var(--palette-1) 20%, black);
-    --surface-2: color-mix(in oklab, var(--palette-1) 30%, black);
-    --border: color-mix(in oklab, var(--palette-1) 38%, black);
+    --surface: color-mix(in oklab, var(--palette-5) 80%, black);
+    --surface-2: var(--palette-5);
+    --border: color-mix(in oklab, var(--palette-5) 75%, white);
     --text: var(--paper);
     --muted: color-mix(in oklab, var(--paper) 68%, black);
-    --accent: var(--palette-3);
-    --focus: var(--palette-3);
+    /* Lobster pink lightened for 4.5:1 text on dark surfaces. */
+    --accent: color-mix(in oklab, var(--palette-3) 75%, white);
+    --focus: var(--accent);
     --accent-text: var(--ink);
-    --error: color-mix(in oklab, var(--palette-2) 55%, white);
-    --node-anchor: color-mix(in oklab, var(--palette-2) 75%, white);
+    --error: var(--accent);
+    --node-citing: var(--accent);
+    --node-anchor: color-mix(in oklab, var(--palette-2) 85%, white);
     --node-cited: color-mix(in oklab, var(--palette-1) 80%, white);
     --node-outline: color-mix(in srgb, black 45%, transparent);
     --node-icon-on-anchor: var(--ink);
@@ -69,7 +74,7 @@
     --node-icon-on-cited: var(--ink);
     --node-selected: var(--palette-4);
     --graph-link: color-mix(in srgb, var(--paper) 18%, transparent);
-    --graph-link-active: var(--palette-3);
+    --graph-link-active: var(--accent);
     --graph-axis: color-mix(in srgb, var(--paper) 10%, transparent);
   }
 }

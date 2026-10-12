@@ -156,11 +156,11 @@ Tooling layout: Vitest, ESLint and Prettier are installed at the root. The root 
     - Icon colors are the `--node-icon-on-*` tokens.
   - **Automation hook:** with `?automation` in the URL, `GraphView` sets `window.__tracerAutomation.nodes()`, returning visible nodes' screen positions, for browser drivers (`/run-tracer`). It's off by default.
   - **Theming** (`App.css`): three layers.
-    1. Four `--palette-*` slots are the only place colors are defined. Swapping them re-themes everything.
-    2. `--ink` and `--paper` are neutrals derived from the palette.
+    1. Five `--palette-*` slots are the only place colors are defined. Swapping them re-themes everything. The current scheme is [coolors.co/588157-ffede1-363537-3185fc-d05353](https://coolors.co/588157-ffede1-363537-3185fc-d05353): fern (cited works), azure (anchor, primary actions), lobster pink (citing works, errors, dark-mode accent), linen (backgrounds) and jet (text, dark-mode backgrounds).
+    2. `--ink` (jet) and `--paper` (a linen tint) are the neutrals.
     3. Role tokens (`--bg`, `--accent`, `--node-anchor`, `--graph-link`, …) are derived with `color-mix()`, separately for light and dark.
 
-    Components and canvas code use only role tokens; never put a literal color anywhere else. `accent-color` themes native controls. Light-mode node fills (orange and sage on cream) are below 3:1, so nodes get a `--node-outline` that meets 3:1 on its own. Re-check contrast when changing the palette.
+    Components and canvas code use only role tokens; never put a literal color anywhere else. `accent-color` themes native controls. Nodes get a `--node-outline` that meets 3:1 on its own, so no fill has to. Light-mode `--accent` is azure darkened so white button text meets 4.5:1, and `--error` is lobster pink darkened; in dark mode lobster pink is lightened to serve as the accent. Re-check contrast when changing the palette: resolve the tokens in a browser (they're `color-mix()` values) and compare text pairs against 4.5:1 and node and icon pairs against 3:1.
 
   - **Client tests** mock `GraphView` (jsdom has no canvas) and `api.js`. To check the real canvas, use the `/run-tracer` skill (`.claude/skills/run-tracer/`). It runs an isolated server on :5099 and a headless-browser driver that can select nodes by color and take screenshots.
 - **Heroku build:** `npm install`, then `heroku-postbuild` (client build), then the `Procfile` `web: npm start`. The server reads `PORT` from the environment.

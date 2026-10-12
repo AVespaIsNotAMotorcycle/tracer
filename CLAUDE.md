@@ -93,6 +93,23 @@ Tooling layout: Vitest, ESLint and Prettier are installed at the root. The root 
     | 503    | Provider rate limit, or no database connection |
 
 - **Works tests** (`works.test.js`) use `mongodb-memory-server` (a real `mongod`, downloaded to `~/.cache` on first run) and a fake provider backed by an in-memory catalog. They assert on provider call counts to verify caching, and inject `now` to test expiry.
+- **Client** (`client/src/`):
+  - **`graph/graphModel.js`:** pure graph logic, independent of React.
+    - The graph is `{ rootId, works: Map, relations: Map, expanded: Map }`.
+    - `relations` records how each work joined: `root`, `citing` or `cited`.
+    - `expanded` records which directions have been fetched for each work.
+    - Edges (`deriveEdges`) and node sizes (`inGraphCitationCounts`) are always calculated from `works`, never stored.
+    - `buildGraph` runs breadth-first with a separate depth per direction. Levels alternate between directions so `maxNodes` doesn't starve one of them, and requests run with limited concurrency. `expandWork` returns an updater to apply to the latest state.
+  - **`graph/useCitationGraph.js`:** holds graph state. A new build aborts the one in progress (`AbortController`).
+  - **`graph/GraphView.jsx`** renders with `react-force-graph-2d` (canvas).
+    - Node objects are reused across updates, because force-graph stores positions on them.
+    - Filtered-out works stay in the simulation and are hidden through `nodeVisibility`/`linkVisibility`, so filtering doesn't reshuffle the layout.
+    - Circle area is proportional to in-graph citations, via `nodeVal`. It must stay `nodeVal`-based so arrowheads land on circle edges.
+    - Colors come from CSS custom properties in `App.css`; the canvas re-reads them when the theme changes.
+    - Tooltip HTML is escaped, because titles come from external data.
+  - **Interaction:** clicking a node selects it and opens `DetailsPanel`; expanding is a button there. The root and the selected node always stay visible regardless of filters.
+  - **Defaults** (`DEFAULT_OPTIONS` in `App.jsx`): depth 1 each way, 20 works per node, 300 max works. Each extra level multiplies requests, which costs OpenAlex credits.
+  - **Client tests** mock `GraphView` (jsdom has no canvas) and `api.js`. To check the real canvas, run the app and drive it in a browser.
 - **Heroku build:** `npm install`, then `heroku-postbuild` (client build), then the `Procfile` `web: npm start`. The server reads `PORT` from the environment.
 - **Database:** the connection is optional. If `MONGODB_URI` is unset or the connection fails, the server still starts and logs a warning, and `/api/works` returns 503. `bufferCommands` is off, so queries fail fast instead of hanging. `/api/health` reports `db: connected|disconnected`. The dev script loads `server/.env` with `--env-file-if-exists`; there is no dotenv dependency.
 - **Express 5:** path syntax differs from Express 4, e.g. the SPA fallback uses a regex rather than `*`. Async route handlers that reject are forwarded to error middleware automatically.

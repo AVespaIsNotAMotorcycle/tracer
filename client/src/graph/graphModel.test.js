@@ -1,6 +1,7 @@
 import { describe, expect, it, vi } from 'vitest';
 import { createProgressTracker } from './progress.js';
 import {
+  addFoundWorks,
   addWorks,
   buildGraph,
   deriveEdges,
@@ -118,6 +119,39 @@ describe('visibleIds', () => {
   it('filters by in-graph citations but always keeps the anchor and pinned IDs', () => {
     const filters = { ...NO_FILTERS, minCitations: 2 };
     expect(visibleIds(graph, filters, counts, ['C'])).toEqual(new Set(['R', 'A', 'C']));
+  });
+});
+
+describe('works not on OpenAlex', () => {
+  const unlisted = (id) => ({ ...work(id), type: 'reference-only' });
+
+  it('adds found cited works to the citing work’s references', () => {
+    const graph = addWorks(emptyGraph(), [work('R', ['A']), work('A')], 'anchor');
+    const next = addFoundWorks(graph, 'R', [work('A'), unlisted('U')], 'cited');
+    expect(next.works.get('R').references).toEqual(['A', 'U']);
+    expect(deriveEdges(next.works)).toContainEqual({ source: 'R', target: 'U' });
+    // Citing works already list what they cite.
+    const citing = addFoundWorks(graph, 'R', [work('C')], 'citing');
+    expect(citing.works.get('R').references).toEqual(['A']);
+  });
+
+  it('does not fetch neighbors of reference-only works', async () => {
+    const api = fakeApi({ R: [] });
+    api.getCited.mockImplementation(async (id) => (id === 'R' ? [unlisted('U')] : []));
+
+    const { graph } = await buildGraph(
+      'R',
+      { citingDepth: 2, citedDepth: 2, limit: 10, maxNodes: 100 },
+      api,
+    );
+
+    expect(graph.works.get('R').references).toEqual(['U']);
+    expect(api.getCited).toHaveBeenCalledTimes(1);
+    expect(api.getCiting).not.toHaveBeenCalledWith('U', expect.anything());
+
+    const apply = await expandWork(graph, 'U', { limit: 10 }, api);
+    expect(apply(graph)).toBe(graph);
+    expect(api.getCited).toHaveBeenCalledTimes(1);
   });
 });
 

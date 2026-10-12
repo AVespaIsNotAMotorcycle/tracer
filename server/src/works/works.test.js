@@ -7,7 +7,7 @@ import { CacheEntry } from '../models/CacheEntry.js';
 import { Source } from '../models/Source.js';
 import { ProviderError } from '../providers/errors.js';
 import { normalizeDoi } from '../providers/ids.js';
-import { createWorkService, DEFAULT_TTLS } from './workService.js';
+import { citationKey, createWorkService, DEFAULT_TTLS, REFERENCE_ONLY } from './workService.js';
 
 /** @returns {import('../providers/types.js').ProviderWork} */
 const providerWork = (id, { doi, referencedIds = [], citedByCount = 0 } = {}) => ({
@@ -246,6 +246,143 @@ describe('GET /api/works/:id/cited', () => {
     await api.get('/api/works/W1/cited?limit=1');
 
     expect(provider.getWorks).toHaveBeenCalledWith(['W2']);
+  });
+});
+
+describe('cited works from deposited reference lists', () => {
+  // W1's publisher deposited its reference list with Crossref. OpenAlex matched W2 and W3,
+  // missed W6 (which it has, by DOI), and has nothing for the rest.
+  const linked = providerWork('W6', { doi: '10.1234/linked' });
+  const deccani = { title: 'Deccani Painting', authors: [{ name: 'Zebrowski' }], year: 1983 };
+  const deposited = {
+    '10.1234/root': [
+      { doi: '10.1234/linked' },
+      { ...deccani },
+      // The same book, formatted differently.
+      { title: 'Deccani painting.', authors: [{ name: 'ZEBROWSKI' }], year: 1983 },
+      { unstructured: 'Africa Watch. Evil Days. New York, 1991.' },
+      { doi: '10.9999/gone', title: 'Gone' },
+      {}, // Nothing to identify it by.
+    ],
+  };
+  const reference = (fields) => ({
+    doi: null,
+    title: null,
+    authors: [],
+    year: null,
+    venue: null,
+    unstructured: null,
+    ...fields,
+  });
+  let referenceProvider;
+
+  beforeEach(() => {
+    provider.getWorksByDoi = vi.fn(async (dois) =>
+      [linked].filter((w) => dois.includes(w.externalIds.doi)),
+    );
+    const getWorks = provider.getWorks.getMockImplementation();
+    provider.getWorks = vi.fn(async (ids) => [
+      ...(await getWorks(ids)),
+      ...(ids.includes('W6') ? [linked] : []),
+    ]);
+    referenceProvider = {
+      name: 'crossref',
+      getReferences: vi.fn(async (doi) => (deposited[doi] ?? []).map(reference)),
+    };
+    const workService = createWorkService({ provider, referenceProvider, now: () => clock });
+    api = request(createApp({ workService }));
+  });
+
+  it('adds works found by DOI, then reference-only works', async () => {
+    const res = await api.get('/api/works/W1/cited');
+
+    expect(res.status).toBe(200);
+    expect(res.body.works.map((w) => [w.type, w.title])).toEqual([
+      ['article', 'Work W2'],
+      ['article', 'Work W6'],
+      [REFERENCE_ONLY, 'Deccani Painting'],
+      [REFERENCE_ONLY, 'Africa Watch. Evil Days. New York, 1991.'],
+      [REFERENCE_ONLY, 'Gone'],
+    ]);
+    const [, , painting, , gone] = res.body.works;
+    expect(painting).toMatchObject({
+      authors: [{ name: 'Zebrowski' }],
+      year: 1983,
+      references: [],
+      providers: ['crossref'],
+    });
+    expect(painting.externalIds).toEqual({});
+    expect(gone.links).toEqual([{ kind: 'doi', url: 'https://doi.org/10.9999/gone' }]);
+    expect(referenceProvider.getReferences).toHaveBeenCalledWith('10.1234/root');
+  });
+
+  it('includes them in the citing work’s references', async () => {
+    const cited = (await api.get('/api/works/W1/cited')).body.works;
+    const { work } = (await api.get('/api/works/W1')).body;
+
+    expect(work.providers).toEqual(['openalex', 'crossref']);
+    for (const { id } of cited) expect(work.references).toContain(id);
+  });
+
+  it('shares one reference-only work between reference lists', async () => {
+    deposited['10.1234/other'] = [{ ...deccani }];
+    catalog.set('W7', providerWork('W7', { doi: '10.1234/other' }));
+    try {
+      const fromW1 = (await api.get('/api/works/W1/cited')).body.works;
+      const fromW7 = (await api.get('/api/works/W7/cited')).body.works;
+      expect(fromW7.map((w) => w.id)).toEqual([fromW1[2].id]);
+    } finally {
+      catalog.delete('W7');
+      delete deposited['10.1234/other'];
+    }
+  });
+
+  it('caches the reference list until its TTL', async () => {
+    await api.get('/api/works/W1/cited');
+    await api.get('/api/works/W1/cited');
+    expect(referenceProvider.getReferences).toHaveBeenCalledTimes(1);
+    expect(provider.getWorksByDoi).toHaveBeenCalledTimes(1);
+
+    advance(DEFAULT_TTLS.references + 1);
+    await api.get('/api/works/W1/cited');
+    expect(referenceProvider.getReferences).toHaveBeenCalledTimes(2);
+  });
+
+  it('gives reference-only works their own limit', async () => {
+    const res = await api.get('/api/works/W1/cited?limit=1');
+    expect(res.body.works.map((w) => w.title)).toEqual(['Work W2', 'Deccani Painting']);
+  });
+
+  it('serves a reference-only work, with nothing to fetch around it', async () => {
+    const [, , painting] = (await api.get('/api/works/W1/cited')).body.works;
+
+    const res = await api.get(`/api/works/${painting.id}`);
+    expect(res.body.work).toMatchObject({ id: painting.id, type: REFERENCE_ONLY });
+    expect((await api.get(`/api/works/${painting.id}/citing`)).body.works).toEqual([]);
+    expect((await api.get(`/api/works/${painting.id}/cited`)).body.works).toEqual([]);
+  });
+
+  it('still returns the provider’s references when the reference list fails', async () => {
+    referenceProvider.getReferences.mockRejectedValue(new ProviderError('crossref', 'down'));
+    vi.spyOn(console, 'error').mockImplementation(() => {});
+
+    const res = await api.get('/api/works/W1/cited');
+
+    expect(res.status).toBe(200);
+    expect(res.body.works.map((w) => w.title)).toEqual(['Work W2']);
+  });
+});
+
+describe('citationKey', () => {
+  it('ignores case, punctuation and accents, preferring DOI, then title, then the citation', () => {
+    const base = { doi: null, authors: [{ name: 'Zebrowski' }], year: 1983, unstructured: null };
+    expect(citationKey({ ...base, title: 'Deccani Painting' })).toBe(
+      citationKey({ ...base, title: 'Deccani painting.', authors: [{ name: 'ZEBROWSKI' }] }),
+    );
+    expect(citationKey({ ...base, title: 'Café' })).toBe(citationKey({ ...base, title: 'Cafe' }));
+    expect(citationKey({ ...base, title: 'X', doi: '10.1234/x' })).toBe('d:10.1234/x');
+    expect(citationKey({ ...base, title: null, unstructured: 'A. B.' })).toBe('u:ab');
+    expect(citationKey({ ...base, title: null, authors: [] })).toBeNull();
   });
 });
 

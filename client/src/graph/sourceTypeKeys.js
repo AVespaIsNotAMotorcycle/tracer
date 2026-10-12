@@ -26,8 +26,15 @@ export const SOURCE_TYPE_KEYS = [
   'software-paper',
   'supplementary-materials',
   'libguides',
+  'reference-only',
   'other',
 ];
+
+/**
+ * Type of a work known only from another work's reference list, which no citation database
+ * has (e.g. an archival source). The server assigns it; such works can't be expanded.
+ */
+export const REFERENCE_ONLY = 'reference-only';
 
 const KNOWN = new Set(SOURCE_TYPE_KEYS);
 

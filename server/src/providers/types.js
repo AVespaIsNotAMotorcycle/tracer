@@ -41,6 +41,19 @@
  */
 
 /**
+ * One entry of a work's reference list as a publisher deposited it (see crossref.js). It may
+ * name a work no citation database has, such as an archival source or an older book.
+ *
+ * @typedef {object} ProviderReference
+ * @property {string | null} doi   Normalized with normalizeDoi().
+ * @property {string | null} title
+ * @property {ProviderAuthor[]} authors  Usually just the first author's surname.
+ * @property {number | null} year
+ * @property {string | null} venue  Journal, or the book a chapter appeared in.
+ * @property {string | null} unstructured  The citation as printed, when deposited.
+ */
+
+/**
  * @typedef {object} ListOptions
  * @property {number} [limit]  Maximum number of works to return.
  */
@@ -54,6 +67,8 @@
  *   Look up one work by provider ID or DOI. Resolves to null if the provider doesn't have it.
  * @property {(ids: string[]) => Promise<ProviderWork[]>} getWorks
  *   Batch lookup by provider ID. Results follow the input order; unknown IDs are omitted.
+ * @property {(dois: string[]) => Promise<ProviderWork[]>} [getWorksByDoi]
+ *   Batch lookup by DOI. Unknown DOIs are omitted; order is not guaranteed.
  * @property {(id: string, options?: ListOptions) => Promise<ProviderWork[]>} getCitingWorks
  *   Works that cite the given work.
  * @property {(id: string, options?: ListOptions) => Promise<ProviderWork[]>} getCitedWorks

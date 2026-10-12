@@ -32,10 +32,13 @@
   --node-anchor: var(--palette-2);
   --node-citing: var(--palette-3);
   --node-cited: var(--palette-1);
+  /* Works known only from a reference list (not on OpenAlex). */
+  --node-reference-only: color-mix(in oklab, var(--ink) 25%, white);
   --node-outline: color-mix(in srgb, var(--ink) 60%, transparent);
   --node-icon-on-anchor: var(--paper);
   --node-icon-on-citing: var(--paper);
   --node-icon-on-cited: var(--paper);
+  --node-icon-on-reference-only: var(--ink);
   --node-selected: var(--ink);
   --graph-link: color-mix(in srgb, var(--ink) 22%, transparent);
   --graph-link-active: var(--palette-2);
@@ -68,10 +71,12 @@
     --node-citing: var(--accent);
     --node-anchor: color-mix(in oklab, var(--palette-2) 85%, white);
     --node-cited: color-mix(in oklab, var(--palette-1) 80%, white);
+    --node-reference-only: color-mix(in oklab, var(--paper) 55%, black);
     --node-outline: color-mix(in srgb, black 45%, transparent);
     --node-icon-on-anchor: var(--ink);
     --node-icon-on-citing: var(--ink);
     --node-icon-on-cited: var(--ink);
+    --node-icon-on-reference-only: var(--ink);
     --node-selected: var(--palette-4);
     --graph-link: color-mix(in srgb, var(--paper) 18%, transparent);
     --graph-link-active: var(--accent);
@@ -591,6 +596,13 @@ button.primary,
 .links a,
 .parts a {
   color: var(--accent);
+}
+
+.citation {
+  margin: 0;
+  padding-left: 10px;
+  border-left: 2px solid var(--border);
+  font-size: 0.9em;
 }
 
 .abstract {

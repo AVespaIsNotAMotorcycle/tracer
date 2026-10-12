@@ -1,6 +1,7 @@
 import mongoose from 'mongoose';
 import { createApp } from './app.js';
 import { connectWithRetry } from './db.js';
+import { createCrossrefProvider } from './providers/crossref.js';
 import { createOpenAlexProvider } from './providers/openalex.js';
 import { createWorkService } from './works/workService.js';
 
@@ -14,7 +15,10 @@ if (!process.env.OPENALEX_API_KEY) {
 }
 
 const provider = createOpenAlexProvider({ apiKey: process.env.OPENALEX_API_KEY });
-const app = createApp({ workService: createWorkService({ provider }) });
+// Crossref supplies the reference lists publishers deposited, including references OpenAlex
+// couldn't match. A contact address moves requests to Crossref's faster polite pool.
+const referenceProvider = createCrossrefProvider({ mailto: process.env.CROSSREF_MAILTO });
+const app = createApp({ workService: createWorkService({ provider, referenceProvider }) });
 
 // Listen first so the API is reachable while MongoDB connects (or is down).
 app.listen(port, () => console.log(`Server listening on port ${port}`));

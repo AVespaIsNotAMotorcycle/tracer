@@ -1,3 +1,4 @@
+import { canExpand } from '../graph/graphModel.js';
 import { sourceType } from '../graph/sourceTypes.js';
 
 const LINK_LABELS = {
@@ -22,7 +23,8 @@ const doiLink = (work) => work.links.find((link) => link.kind === 'doi');
  * Details for the selected work, with external links and an expand action. A book lists its
  * `parts` (chapters folded into it on the graph; see foldBookParts), each as
  * `{ work, citedByOnGraph, citesOnGraph }`. A chapter's authors are shown only when they
- * differ from the book's.
+ * differ from the book's. A work not on OpenAlex (known only from a reference list) can't be
+ * expanded or made the anchor, so it shows its citation as printed instead.
  */
 export default function DetailsPanel({
   work,
@@ -40,6 +42,7 @@ export default function DetailsPanel({
   const fullyExpanded = expanded.has('citing') && expanded.has('cited');
   const byline = [work.year ?? 'Year unknown', work.venue].filter(Boolean).join(' · ');
   const { label: typeLabel, Icon: TypeIcon } = sourceType(work.type);
+  const expandable = canExpand(work);
 
   return (
     <aside className="details" aria-labelledby="details-title">
@@ -57,16 +60,29 @@ export default function DetailsPanel({
           {typeLabel} · {byline}
         </span>
       </p>
+      {!expandable && (
+        <>
+          <p className="muted small">
+            Known only from a reference list deposited with Crossref, so there are no citing or
+            cited works to fetch.
+          </p>
+          {work.citation && work.citation !== work.title && (
+            <blockquote className="citation">{work.citation}</blockquote>
+          )}
+        </>
+      )}
 
       <dl className="stats">
         <div>
           <dt>Cited by on graph</dt>
           <dd>{citedByOnGraph}</dd>
         </div>
-        <div>
-          <dt>Cites on graph</dt>
-          <dd>{citesOnGraph}</dd>
-        </div>
+        {expandable && (
+          <div>
+            <dt>Cites on graph</dt>
+            <dd>{citesOnGraph}</dd>
+          </div>
+        )}
         {work.citedByCount != null && (
           <div>
             <dt>Total citations</dt>
@@ -76,15 +92,17 @@ export default function DetailsPanel({
       </dl>
       {parts.length > 0 && <p className="muted small">On-graph counts include its chapters.</p>}
 
-      <button
-        type="button"
-        className="primary"
-        onClick={onExpand}
-        disabled={busy || expanding || fullyExpanded}
-      >
-        {expanding ? 'Expanding…' : fullyExpanded ? 'Expanded' : 'Expand citing and cited works'}
-      </button>
-      {relation !== 'anchor' && (
+      {expandable && (
+        <button
+          type="button"
+          className="primary"
+          onClick={onExpand}
+          disabled={busy || expanding || fullyExpanded}
+        >
+          {expanding ? 'Expanding…' : fullyExpanded ? 'Expanded' : 'Expand citing and cited works'}
+        </button>
+      )}
+      {expandable && relation !== 'anchor' && (
         <button type="button" onClick={onMakeAnchor} disabled={busy}>
           Make this the anchor
         </button>

@@ -6,6 +6,11 @@ import mongoose from 'mongoose';
 //
 // A source with no records is a stub: a work some other work cites, which hasn't been fetched
 // yet. Stubs exist so every reference has a Tracer ID as soon as it is seen.
+//
+// A reference-only source is a work known only from another work's reference list (as
+// deposited with Crossref) that no citation database has: an archival source, say. It has no
+// records; `citation` holds the reference as deposited, and `externalIds.citation` a key
+// built from it (citationKey), so works citing the same thing share one source.
 const sourceSchema = new mongoose.Schema(
   {
     externalIds: {
@@ -13,7 +18,9 @@ const sourceSchema = new mongoose.Schema(
       doi: String,
       pmid: String,
       mag: String,
+      citation: String,
     },
+    citation: mongoose.Schema.Types.Mixed,
     records: {
       type: Map,
       of: new mongoose.Schema(
@@ -30,6 +37,10 @@ const sourceSchema = new mongoose.Schema(
 sourceSchema.index(
   { 'externalIds.openalex': 1 },
   { unique: true, partialFilterExpression: { 'externalIds.openalex': { $type: 'string' } } },
+);
+sourceSchema.index(
+  { 'externalIds.citation': 1 },
+  { unique: true, partialFilterExpression: { 'externalIds.citation': { $type: 'string' } } },
 );
 // Not unique: OpenAlex sometimes has several works with the same DOI. Merging duplicates is
 // future work.

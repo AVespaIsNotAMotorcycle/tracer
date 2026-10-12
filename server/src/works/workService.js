@@ -6,6 +6,10 @@ import { HttpError } from './errors.js';
 
 /** @typedef {import('../providers/types.js').Provider} Provider */
 /** @typedef {import('../providers/types.js').ProviderWork} ProviderWork */
+/** @typedef {import('../providers/types.js').ProviderReference} ProviderReference */
+
+/** Work type of a reference-only work: known only from a reference list (see Source.js). */
+export const REFERENCE_ONLY = 'reference-only';
 
 const DAY_MS = 24 * 60 * 60 * 1000;
 const TRACER_ID_PATTERN = /^[0-9a-f]{24}$/i;
@@ -14,6 +18,7 @@ export const DEFAULT_TTLS = {
   work: 30 * DAY_MS,
   citing: 7 * DAY_MS,
   search: 1 * DAY_MS,
+  references: 30 * DAY_MS,
 };
 
 /**
@@ -36,8 +41,36 @@ export const DEFAULT_TTLS = {
 
 const unique = (values) => [...new Set(values)];
 
+/** Lowercase letters and digits only, so formatting differences don't matter. */
+const squash = (text) =>
+  (text ?? '')
+    .normalize('NFKD')
+    .toLowerCase()
+    .replace(/[^\p{L}\p{N}]+/gu, '');
+
+/**
+ * A key identifying the work a reference names, so references to the same work from different
+ * reference lists share one Source: its DOI; else first author, year and title; else the
+ * printed citation. Null when the reference has none of these.
+ *
+ * @param {ProviderReference} reference
+ */
+export function citationKey(reference) {
+  if (reference.doi) return `d:${reference.doi}`;
+  if (reference.title) {
+    const author = squash(reference.authors[0]?.name);
+    return `t:${author}|${reference.year ?? ''}|${squash(reference.title).slice(0, 120)}`;
+  }
+  if (reference.unstructured) return `u:${squash(reference.unstructured).slice(0, 200)}`;
+  return null;
+}
+
 /**
  * Looks up works through a provider, caching results in MongoDB and assigning Tracer IDs.
+ *
+ * With a `referenceProvider` (Crossref), a work's cited works also include the references its
+ * publisher deposited that the provider couldn't match: those with a DOI the provider has
+ * become ordinary works, and the rest become reference-only works (see Source.js).
  *
  * Only OpenAlex is wired in today, so records are keyed by `provider.name` and the provider's
  * IDs are stored as externalIds.openalex. When a second provider is added, toWork() is where
@@ -45,16 +78,26 @@ const unique = (values) => [...new Set(values)];
  *
  * @param {object} options
  * @param {Provider} options.provider
+ * @param {ReturnType<typeof import('../providers/crossref.js').createCrossrefProvider>} [options.referenceProvider]
  * @param {Partial<typeof DEFAULT_TTLS>} [options.ttls]
  * @param {() => Date} [options.now]  Injected for tests.
  */
-export function createWorkService({ provider, ttls = {}, now = () => new Date() }) {
+export function createWorkService({
+  provider,
+  referenceProvider,
+  ttls = {},
+  now = () => new Date(),
+}) {
   const ttl = { ...DEFAULT_TTLS, ...ttls };
   const providerName = provider.name;
   const idField = `externalIds.${providerName}`;
   const recordField = `records.${providerName}`;
 
   const recordOf = (source) => source?.records?.[providerName];
+  const referencesField = referenceProvider && `records.${referenceProvider.name}`;
+  const referencesOf = (source) =>
+    referenceProvider ? source?.records?.[referenceProvider.name] : null;
+  const isReferenceOnly = (source) => Boolean(source?.citation) && !recordOf(source);
   const isFresh = (source) => {
     const record = recordOf(source);
     return Boolean(record) && now() - record.fetchedAt < ttl.work;
@@ -108,7 +151,8 @@ export function createWorkService({ provider, ttls = {}, now = () => new Date() 
    * Tracer IDs.
    */
   async function toWorks(sources) {
-    const referencedIds = unique(sources.flatMap((s) => recordOf(s).data.referencedIds));
+    const listed = sources.filter((s) => recordOf(s));
+    const referencedIds = unique(listed.flatMap((s) => recordOf(s).data.referencedIds));
     const referenced = await Source.find({ [idField]: { $in: referencedIds } }, { [idField]: 1 })
       .lean()
       .exec();
@@ -117,12 +161,34 @@ export function createWorkService({ provider, ttls = {}, now = () => new Date() 
     );
 
     return sources.map((source) => {
+      const externalIds = Object.fromEntries(
+        Object.entries(source.externalIds ?? {}).filter(
+          ([key, value]) => value != null && key !== 'citation',
+        ),
+      );
+      if (isReferenceOnly(source)) {
+        const { citation } = source;
+        return {
+          id: String(source._id),
+          externalIds,
+          title: citation.title ?? citation.unstructured ?? citation.doi,
+          authors: citation.authors,
+          year: citation.year,
+          type: REFERENCE_ONLY,
+          venue: citation.venue,
+          abstract: null,
+          citedByCount: null,
+          references: [],
+          links: citation.doi ? [{ kind: 'doi', url: `https://doi.org/${citation.doi}` }] : [],
+          providers: [referenceProvider?.name ?? 'crossref'],
+          citation: citation.unstructured,
+        };
+      }
       const { data } = recordOf(source);
+      const fromReferenceList = referencesOf(source)?.data.tracerIds ?? [];
       return {
         id: String(source._id),
-        externalIds: Object.fromEntries(
-          Object.entries(source.externalIds ?? {}).filter(([, value]) => value != null),
-        ),
+        externalIds,
         title: data.title,
         authors: data.authors,
         year: data.year,
@@ -130,11 +196,99 @@ export function createWorkService({ provider, ttls = {}, now = () => new Date() 
         venue: data.venue,
         abstract: data.abstract,
         citedByCount: data.citedByCount,
-        references: data.referencedIds.map((id) => tracerIdByProviderId.get(id)).filter(Boolean),
+        references: unique([
+          ...data.referencedIds.map((id) => tracerIdByProviderId.get(id)).filter(Boolean),
+          ...fromReferenceList,
+        ]),
         links: data.links,
         providers: Object.keys(source.records ?? {}),
       };
     });
+  }
+
+  /**
+   * Resolves the reference list deposited for `source` (by its DOI) to Tracer IDs, caching the
+   * result on the source. References with a DOI the provider has become ordinary Sources;
+   * the rest become reference-only Sources. Returns { tracerIds, referenceOnly } in deposit
+   * order, or null when there's no reference provider or DOI. A failed lookup is logged and
+   * falls back to the cached result, if any: the provider's own references still work.
+   */
+  async function resolveReferences(source) {
+    const doi = source.externalIds?.doi;
+    if (!referenceProvider || !doi) return null;
+    const cached = referencesOf(source);
+    if (cached && now() - cached.fetchedAt < ttl.references) return cached.data;
+
+    let references;
+    try {
+      references = (await referenceProvider.getReferences(doi)) ?? [];
+    } catch (err) {
+      console.error(err);
+      return cached?.data ?? null;
+    }
+
+    // References with a DOI: ordinary works if the provider has them.
+    const dois = unique(references.map((r) => r.doi).filter(Boolean));
+    const findByDoi = () =>
+      Source.find({ 'externalIds.doi': { $in: dois }, [idField]: { $type: 'string' } })
+        .lean()
+        .exec();
+    let known = dois.length ? await findByDoi() : [];
+    const unknown = dois.filter((d) => !known.some((s) => s.externalIds.doi === d));
+    if (unknown.length && provider.getWorksByDoi) {
+      await saveWorks(await provider.getWorksByDoi(unknown));
+      known = await findByDoi();
+    }
+    const tracerIdByDoi = new Map();
+    for (const s of known)
+      if (!tracerIdByDoi.has(s.externalIds.doi))
+        tracerIdByDoi.set(s.externalIds.doi, String(s._id));
+
+    // Everything else: reference-only works, keyed so repeat references share one.
+    const unmatched = new Map();
+    for (const reference of references) {
+      if (reference.doi && tracerIdByDoi.has(reference.doi)) continue;
+      const key = citationKey(reference);
+      if (key && !unmatched.has(key)) unmatched.set(key, reference);
+    }
+    if (unmatched.size) {
+      await Source.bulkWrite(
+        [...unmatched].map(([key, reference]) => ({
+          updateOne: {
+            filter: { 'externalIds.citation': key },
+            update: { $set: { citation: reference }, $setOnInsert: { createdAt: now() } },
+            upsert: true,
+          },
+        })),
+        { ordered: false },
+      ).catch((err) => {
+        // Another list resolving at the same time created the same work first; that's fine.
+        if (!err.writeErrors?.every((e) => e.code === 11000) && err.code !== 11000) throw err;
+      });
+    }
+    const keys = [...unmatched.keys()];
+    const created = keys.length
+      ? await Source.find({ 'externalIds.citation': { $in: keys } }, { externalIds: 1 })
+          .lean()
+          .exec()
+      : [];
+    const tracerIdByKey = new Map(created.map((s) => [s.externalIds.citation, String(s._id)]));
+
+    const tracerIds = [];
+    const referenceOnly = [];
+    for (const reference of references) {
+      const byDoi = reference.doi && tracerIdByDoi.get(reference.doi);
+      const id = byDoi ?? tracerIdByKey.get(citationKey(reference));
+      if (!id || tracerIds.includes(id) || id === String(source._id)) continue;
+      tracerIds.push(id);
+      if (!byDoi) referenceOnly.push(id);
+    }
+    const data = { tracerIds, referenceOnly };
+    await Source.updateOne(
+      { _id: source._id },
+      { $set: { [referencesField]: { data, fetchedAt: now() } } },
+    );
+    return data;
   }
 
   /** Finds the Source an API path parameter refers to: a Tracer ID, provider ID, or DOI. */
@@ -158,7 +312,7 @@ export function createWorkService({ provider, ttls = {}, now = () => new Date() 
    */
   async function loadSource(id) {
     const source = await findSource(id);
-    if (isFresh(source)) return source;
+    if (isFresh(source) || isReferenceOnly(source)) return source;
 
     // Fetch by the stored provider ID if there is one. An unknown Tracer ID can't be fetched.
     const lookupKey = source
@@ -232,6 +386,9 @@ export function createWorkService({ provider, ttls = {}, now = () => new Date() 
     async getCitingWorks(id, { limit }) {
       // Citing lists only need the provider ID, so skip fetching the work if it's known.
       const source = (await findSource(id)) ?? (await loadSource(id));
+      // Nothing indexes what cites a reference-only work; edges to it come from the citing
+      // works' own references.
+      if (isReferenceOnly(source)) return [];
       const providerId = source.externalIds?.[providerName];
       if (!providerId) throw new HttpError(404, `Work not found: ${id}`);
       return cachedList(`${providerName}:citing:${providerId}:${limit}`, ttl.citing, () =>
@@ -239,11 +396,37 @@ export function createWorkService({ provider, ttls = {}, now = () => new Date() 
       );
     },
 
-    /** Works `id` cites, in the provider's reference order. @returns {Promise<Work[]>} */
+    /**
+     * Works `id` cites: the provider's references in its order, then any more found through
+     * the deposited reference list, up to `limit`; then up to `limit` reference-only works.
+     * Reference-only works get their own allowance, so they show up even for works with many
+     * matched references.
+     *
+     * @returns {Promise<Work[]>}
+     */
     async getCitedWorks(id, { limit }) {
-      // The work's own record lists its references, so no list cache is needed.
       const source = await loadSource(id);
-      return worksForProviderIds(recordOf(source).data.referencedIds.slice(0, limit));
+      if (isReferenceOnly(source)) return [];
+      // The work's own record lists its references, so no list cache is needed.
+      const works = await worksForProviderIds(recordOf(source).data.referencedIds.slice(0, limit));
+      const resolved = await resolveReferences(source);
+      if (!resolved) return works;
+
+      const seen = new Set(works.map((work) => work.id));
+      const referenceOnly = new Set(resolved.referenceOnly);
+      const more = resolved.tracerIds
+        .filter((tracerId) => !seen.has(tracerId) && !referenceOnly.has(tracerId))
+        .slice(0, Math.max(0, limit - works.length));
+      const extra = [...more, ...resolved.referenceOnly.slice(0, limit)];
+      if (extra.length === 0) return works;
+      const sources = await Source.find({ _id: { $in: extra } })
+        .lean()
+        .exec();
+      const byId = new Map(sources.map((s) => [String(s._id), s]));
+      const ordered = extra
+        .map((tracerId) => byId.get(tracerId))
+        .filter((s) => recordOf(s) || isReferenceOnly(s));
+      return [...works, ...(await toWorks(ordered))];
     },
 
     /** @returns {Promise<Work[]>} */

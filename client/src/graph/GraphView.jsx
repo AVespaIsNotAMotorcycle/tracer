@@ -4,6 +4,7 @@ import ForceGraph2D from 'react-force-graph-2d';
 import { axisGeometry, DEFAULT_AXIS_ANGLE } from './axis.js';
 import { deriveEdges, yearPositions } from './graphModel.js';
 import { layoutLinks, pointOnCurve } from './linkRouting.js';
+import { REFERENCE_ONLY } from './sourceTypeKeys.js';
 import { iconPath2D } from './sourceTypes.js';
 
 // Node radius = NODE_MIN_RADIUS + NODE_GROWTH * sqrt(in-graph citations). The minimum keeps
@@ -100,11 +101,13 @@ const COLOR_VARS = {
   anchor: '--node-anchor',
   citing: '--node-citing',
   cited: '--node-cited',
+  referenceOnly: '--node-reference-only',
   selected: '--node-selected',
   outline: '--node-outline',
   iconOnAnchor: '--node-icon-on-anchor',
   iconOnCiting: '--node-icon-on-citing',
   iconOnCited: '--node-icon-on-cited',
+  iconOnReferenceOnly: '--node-icon-on-reference-only',
   link: '--graph-link',
   linkActive: '--graph-link-active',
   label: '--text',
@@ -389,7 +392,9 @@ export default function GraphView({
     const isSelected = node.id === selectedId;
     ctx.beginPath();
     ctx.arc(node.x, node.y, r, 0, 2 * Math.PI);
-    ctx.fillStyle = colors[node.relation] ?? colors.cited;
+    // Works not on OpenAlex are grey whichever way they joined the graph.
+    const referenceOnly = node.work.type === REFERENCE_ONLY;
+    ctx.fillStyle = referenceOnly ? colors.referenceOnly : (colors[node.relation] ?? colors.cited);
     ctx.fill();
     ctx.lineWidth = 1 / scale;
     ctx.strokeStyle = colors.outline;
@@ -410,8 +415,9 @@ export default function GraphView({
       ctx.lineWidth = 2;
       ctx.lineCap = 'round';
       ctx.lineJoin = 'round';
-      ctx.strokeStyle =
-        node.relation === 'anchor'
+      ctx.strokeStyle = referenceOnly
+        ? colors.iconOnReferenceOnly
+        : node.relation === 'anchor'
           ? colors.iconOnAnchor
           : node.relation === 'citing'
             ? colors.iconOnCiting

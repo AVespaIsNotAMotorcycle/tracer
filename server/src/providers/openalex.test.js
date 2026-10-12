@@ -201,6 +201,14 @@ describe('createOpenAlexProvider', () => {
       expect(requestedUrl(0).searchParams.get('filter')).toBe('openalex:W1|W2|W404');
     });
 
+    it('looks up DOIs in batches, skipping ones that would break the filter', async () => {
+      const { provider, requestedUrl } = setup(listResponse([rawWork('W2')]));
+
+      await provider.getWorksByDoi(['10.1234/A', 'https://doi.org/10.1234/b', '10.1234/a,b']);
+
+      expect(requestedUrl(0).searchParams.get('filter')).toBe('doi:10.1234/a|10.1234/b');
+    });
+
     it('splits more than 100 IDs across requests', async () => {
       const ids = Array.from({ length: 150 }, (_, i) => `W${i + 1}`);
       const { provider, fetch, requestedUrl } = setup(

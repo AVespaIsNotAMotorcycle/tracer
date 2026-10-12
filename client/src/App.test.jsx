@@ -203,6 +203,36 @@ describe('App', () => {
     expect(apply).toBeDisabled();
   });
 
+  it('shows a work not on OpenAlex without expand or anchor actions', async () => {
+    const archive = work('archive', {
+      type: 'reference-only',
+      title: 'Deccani Painting',
+      authors: [{ name: 'Zebrowski' }],
+      year: 1983,
+      venue: null,
+      citedByCount: null,
+      links: [],
+      providers: ['crossref'],
+      citation: 'Zebrowski, M. Deccani Painting. London, 1983.',
+    });
+    vi.mocked(api.getCited).mockImplementation(async (id) =>
+      id === 'anchor' ? [ref, archive] : [],
+    );
+    await buildFromSearch(4);
+
+    fireEvent.click(within(graph()).getByRole('button', { name: 'Deccani Painting' }));
+    const details = screen.getByRole('complementary', { name: 'Deccani Painting' });
+    expect(within(details).getByText(/Not on OpenAlex/)).toBeInTheDocument();
+    expect(within(details).getByText(/Known only from a reference list/)).toBeInTheDocument();
+    expect(
+      within(details).getByText('Zebrowski, M. Deccani Painting. London, 1983.'),
+    ).toBeVisible();
+    expect(within(details).queryByRole('button', { name: /Expand/ })).toBeNull();
+    expect(within(details).queryByRole('button', { name: 'Make this the anchor' })).toBeNull();
+    // The source-type filter lists it under its own label.
+    expect(screen.getByRole('checkbox', { name: /Not on OpenAlex/ })).toBeChecked();
+  });
+
   it('builds directly from a DOI without searching', async () => {
     render(<App />);
     fireEvent.change(screen.getByLabelText('Title, DOI, or OpenAlex ID'), {

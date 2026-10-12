@@ -8,6 +8,7 @@ import {
   Book,
   BookA,
   BookOpenText,
+  CircleQuestionMark,
   ClipboardList,
   Code,
   Database,
@@ -35,6 +36,7 @@ import {
   Book as BookShape,
   BookA as BookAShape,
   BookOpenText as BookOpenTextShape,
+  CircleQuestionMark as CircleQuestionMarkShape,
   ClipboardList as ClipboardListShape,
   Code as CodeShape,
   Database as DatabaseShape,
@@ -90,6 +92,11 @@ export const SOURCE_TYPES = {
     shape: PaperclipShape,
   },
   libguides: { label: 'Library guide', Icon: Library, shape: LibraryShape },
+  'reference-only': {
+    label: 'Not on OpenAlex',
+    Icon: CircleQuestionMark,
+    shape: CircleQuestionMarkShape,
+  },
   other: { label: 'Other', Icon: File, shape: FileShape },
 };
 

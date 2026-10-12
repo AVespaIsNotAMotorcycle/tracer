@@ -5,7 +5,7 @@
 // Filters decide what is visible; they never remove works from the graph.
 
 import { noProgress } from './progress.js';
-import { sourceTypeKey } from './sourceTypeKeys.js';
+import { REFERENCE_ONLY, sourceTypeKey } from './sourceTypeKeys.js';
 
 /** @typedef {'citing' | 'cited'} Direction */
 
@@ -50,6 +50,32 @@ export function addWorks(graph, works, relation) {
   }
   return { ...graph, works: nextWorks, relations: nextRelations };
 }
+
+/**
+ * Returns a new graph with the works found in `direction` from work `id` added (or only
+ * `added`, a subset, e.g. when the graph is nearly full). Every found cited work is also added
+ * to `id`'s references: a work's cited list is its reference list, and it can include works
+ * its own record didn't list (e.g. reference-only works, resolved later).
+ *
+ * @param {Graph} graph
+ * @param {string} id
+ * @param {object[]} found
+ * @param {Direction} direction
+ * @param {object[]} [added]
+ */
+export function addFoundWorks(graph, id, found, direction, added = found) {
+  const next = addWorks(graph, added, direction);
+  const work = next.works.get(id);
+  if (direction !== 'cited' || !work) return next;
+  const missing = found.map((w) => w.id).filter((ref) => !work.references.includes(ref));
+  if (missing.length === 0) return next;
+  const nextWorks = new Map(next.works);
+  nextWorks.set(id, { ...work, references: [...work.references, ...missing] });
+  return { ...next, works: nextWorks };
+}
+
+/** Whether `work` has neighbors to fetch: reference-only works have none. */
+export const canExpand = (work) => work?.type !== REFERENCE_ONLY;
 
 /**
  * @param {Graph} graph
@@ -319,6 +345,10 @@ export async function buildGraph(
           finishRequest(direction);
           return;
         }
+        if (!canExpand(graph.works.get(id))) {
+          finishRequest(direction);
+          return;
+        }
         const finish = progress.begin();
         const found = await api[fetchers[direction]](id, { limit });
         const fresh = found.filter((work) => !graph.works.has(work.id));
@@ -327,7 +357,7 @@ export async function buildGraph(
         const added = fresh.slice(0, Math.max(0, room));
         stats[direction].requests++;
         stats[direction].added += added.length;
-        graph = markExpanded(addWorks(graph, added, direction), id, direction);
+        graph = markExpanded(addFoundWorks(graph, id, found, direction, added), id, direction);
         next[direction].push(...added.map((work) => work.id));
         onProgress(graph);
         finishRequest(direction, finish);
@@ -351,6 +381,10 @@ export async function buildGraph(
  * @returns {Promise<(graph: Graph) => Graph>}  An updater to apply to the latest graph.
  */
 export async function expandWork(graph, id, { limit }, api, progress = noProgress) {
+  if (!canExpand(graph.works.get(id))) {
+    progress.complete(2);
+    return (latest) => latest;
+  }
   const done = graph.expanded.get(id) ?? new Set();
   const all = /** @type {Direction[]} */ (['citing', 'cited']);
   const directions = all.filter((d) => !done.has(d));
@@ -369,7 +403,8 @@ export async function expandWork(graph, id, { limit }, api, progress = noProgres
   );
   return (latest) => {
     const expanded = results.reduce(
-      (acc, { direction, works }) => markExpanded(addWorks(acc, works, direction), id, direction),
+      (acc, { direction, works }) =>
+        markExpanded(addFoundWorks(acc, id, works, direction), id, direction),
       latest,
     );
     return { ...expanded, sticky: new Set(expanded.sticky).add(id) };

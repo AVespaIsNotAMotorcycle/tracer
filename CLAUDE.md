@@ -21,6 +21,7 @@ Core model:
   - Build options are written only when they differ from the defaults (`citing`, `cited`, `perNode`, `max`).
   - Manual expansions, sticky works, filters and the axis angle are _not_ in the URL.
 - **Book parts:** when a book is on the graph, its chapters (and front matter such as prefaces) aren't nodes of their own. They're listed in a "Chapters" section of the book's details. A work is a part of a book when its DOI is the book's DOI plus a suffix starting with `.`, `_`, `-` or `/` (Cambridge `….005`, Springer `…_5`, De Gruyter `…-005`). Only `book`-type works absorb parts, and the anchor is never folded away. Like filters, this is view-only: `foldBookParts` (in `graphModel.js`) derives a view graph in which citations to and from a part are moved onto its book. `App` passes that view to everything drawn or filtered (counts, years, visibility, `GraphView`, `FiltersPanel`), while `graph` keeps every part for fetching, expansion and re-anchoring. Per-chapter counts in the details come from the unfolded graph. Expanding a book also expands each of its chapters (`expandWorks`, two works at a time, merged in one update), since chapter records often have the references that book records lack. The button shows "Expanded" once the book and every chapter are. On Cambridge books, OpenAlex often gives every chapter (front matter included) the whole book's bibliography.
+- **Works not on OpenAlex:** references a publisher deposited with Crossref that OpenAlex has no work for (archival sources, older or non-English books) appear as **reference-only** works. They're grey nodes with a question-mark icon, listed as "Not on OpenAlex" in the source-type filter. Their type is `reference-only` (`REFERENCE_ONLY`), whichever direction they joined from. They have no neighbors to fetch, so traversal skips them (`canExpand`), and the details panel shows the citation as printed instead of Expand and "Make this the anchor".
 - **Filters:** filters hide nodes from the view. They don't remove nodes from the graph or stop them being fetched. Keep the graph data separate from what is visible. Available filters: year range, minimum in-graph citations and source type. Source type is an exclusion list (`excludedTypes`), so types that first appear after expanding a node are shown.
 
 ## Data sources
@@ -33,9 +34,11 @@ Combining several citation databases to fill each other's coverage gaps is the a
   - Adapters return provider IDs, not Tracer IDs. Each `ProviderWork` carries `externalIds` (DOI and others) for cross-provider matching, and `referencedIds` for drawing in-graph edges without extra requests.
   - Adapters are factories (`createOpenAlexProvider({ apiKey, fetch, sleep })`). Tests inject a fake `fetch` and `sleep`; they never call the real API.
   - **OpenAlex costs** (credits per request): single-work lookup 0, list or filter 1, search 10. The keyless daily budget is 1,000 credits; an `OPENALEX_API_KEY` gives 10 times that. Prefer batched `openalex:A|B|C` filters (up to 100 IDs) over many separate list requests.
-  - **Coverage gaps seen:** reference lists are often empty for older humanities articles (e.g. Thompson 1971 has 4,693 citing works but 0 references). Some abstracts are only author and title glued together.
+  - **Coverage gaps seen:** reference lists are often empty for older humanities articles (e.g. Thompson 1971 has 4,693 citing works but 0 references). Some abstracts are only author and title glued together. OpenAlex's `referenced_works` lists only references it matched to its own works; unmatched ones are dropped from the API entirely.
+  - **Crossref** (`crossref.js`) is the second adapter. It only reads reference lists (`getReferences(doi)` → `ProviderReference[]`), which publishers deposit there, including entries OpenAlex couldn't match. Coverage depends on the publisher: Cambridge and Taylor & Francis deposit them; OUP, Duke, Wiley and Project MUSE often don't. Entries are structured (author surname, year, title) or printed text only (`unstructured`; the year is taken from the text). The public pool allows one request at a time, so the adapter queues them. `CROSSREF_MAILTO` moves them to the faster polite pool.
 - **Merging:** when providers disagree or one is missing data, merge records and citation edges rather than picking one provider wholesale. Keep track of which provider each piece of data came from.
-  - **Not yet implemented.** Only OpenAlex is wired in. `toWorks()` in `server/src/works/workService.js` is where records will be merged. Duplicate `Source`s (e.g. two OpenAlex works with one DOI) are not merged yet either.
+  - **Reference lists** are merged: `getCitedWorks` also resolves the work's Crossref reference list (`resolveReferences`, cached on the Source for 30 days). References with a DOI OpenAlex has (looked up in batches with `getWorksByDoi`) become ordinary works, recovering citations OpenAlex didn't link. The rest become reference-only Sources. A Crossref failure is logged, and the OpenAlex references are still returned.
+  - **Otherwise not yet implemented.** OpenAlex is the only source of work records. `toWorks()` in `server/src/works/workService.js` is where records will be merged. Duplicate `Source`s (e.g. two OpenAlex works with one DOI) are not merged yet either.
 
 ## MongoDB roles
 
@@ -46,9 +49,11 @@ Combining several citation databases to fill each other's coverage gaps is the a
 Models are in `server/src/models/`:
 
 - **`Source`:** one per work. Its `_id` is the Tracer ID. It holds `externalIds` (`openalex` is unique; `doi` is indexed but not unique) and `records.<provider> = { data: ProviderWork, fetchedAt }`. A Source with no records is a **stub**. Saving a work upserts a stub for every work it references, so references get Tracer IDs immediately. That keeps edges intact when A is fetched before B, and keeps a Tracer ID stable when a stub is later filled in.
+  - A **reference-only** Source has no records. It holds `citation` (the `ProviderReference`) and `externalIds.citation`, a unique key from `citationKey()`: DOI, else first author, year and title, else the printed text, all case-, accent- and punctuation-insensitive. Works citing the same thing share one Source. A DOI is kept in `citation`, not `externalIds.doi`, so DOI lookups find OpenAlex records first.
+  - `records.crossref.data = { tracerIds, referenceOnly }` on a citing Source is its resolved reference list. `toWorks` appends it to the work's `references`.
 - **`CacheEntry`:** cached list results (citing works, searches) stored as ordered provider IDs under keys like `openalex:citing:W1:50`. A TTL index on `expiresAt` deletes old entries, and reads also check `expiresAt`. Cited lists aren't cached, because a work's own record already has its references.
 
-Refresh intervals (`DEFAULT_TTLS` in `workService.js`): work records 30 days, citing lists 7 days, searches 1 day. If a refresh finds nothing, stale data is served.
+Refresh intervals (`DEFAULT_TTLS` in `workService.js`): work records 30 days, Crossref reference lists 30 days, citing lists 7 days, searches 1 day. If a refresh finds nothing, stale data is served.
 
 Tech stack: Tracer is a MERN app managed as npm workspaces: React 19 + Vite in `client/`, Express 5 + Mongoose in `server/`. It deploys to Heroku as a single dyno. Both packages are ES modules (`"type": "module"`), and Node 24.x is required.
 
@@ -59,7 +64,7 @@ Run from the repo root:
 ```sh
 npm install                          # installs all workspaces
 docker run -d -p 27017:27017 --name tracer-mongo mongo:8.2   # local MongoDB (first time; then: docker start tracer-mongo)
-cp server/.env.example server/.env   # sets PORT, MONGODB_URI, OPENALEX_API_KEY
+cp server/.env.example server/.env   # sets PORT, MONGODB_URI, OPENALEX_API_KEY, CROSSREF_MAILTO
 npm run dev                          # server (:5000, node --watch) + Vite (:5173) via concurrently
 npm run build                        # builds client to client/dist
 npm start                            # production server (what Heroku runs)
@@ -89,7 +94,8 @@ Tooling layout: Vitest, ESLint and Prettier are installed at the root. The root 
 - **Works API** (`server/src/works/`): `routes.js` is thin; `workService.js` does lookup, caching and Tracer ID translation.
   - `GET /api/works?q=&limit=` searches, returning `{ works }`.
   - `GET /api/works/:id` returns `{ work }`.
-  - `GET /api/works/:id/citing?limit=` and `GET /api/works/:id/cited?limit=` return `{ works }`.
+  - `GET /api/works/:id/citing?limit=` and `GET /api/works/:id/cited?limit=` return `{ works }`. Cited works are OpenAlex's references, then more found by DOI in the Crossref list (together up to `limit`), then up to `limit` reference-only works. Reference-only works get their own allowance, so they appear even for works with many matched references. Both lists are empty for a reference-only work.
+  - Reference-only `Work`s have `type: 'reference-only'`, `providers: ['crossref']`, empty `references`, and `citation` (the printed text, if deposited).
   - `:id` may be a Tracer ID, an OpenAlex ID or URL, or a DOI. **DOIs must be URL-encoded**, since they contain `/`.
   - `limit` must be 1–200 and defaults to 50.
   - Responses are client-facing `Work` objects whose `id` and `references` are Tracer IDs.
@@ -108,6 +114,7 @@ Tooling layout: Vitest, ESLint and Prettier are installed at the root. The root 
   - **`graph/graphModel.js`:** pure graph logic, independent of React.
     - The graph is `{ anchorId, works: Map, relations: Map, expanded: Map }`.
     - `relations` records how each work joined: `anchor`, `citing` or `cited`.
+    - Cited works found for a work are merged into its `references` (`addFoundWorks`): a work's cited list is its reference list, and it can include works its own record didn't have when first fetched (reference-only works).
     - `expanded` records which directions have been fetched for each work.
     - `sticky` holds works that keep their neighbors across re-anchoring. `expandWork` (user expansion) adds to it, and `reanchorGraph` adds the outgoing anchor. Build traversal never makes a work sticky; if it did, re-anchoring could never drop anything.
     - `reanchorGraph` reuses the anchor's data (no `getWork`), runs `buildGraph`, then re-expands each sticky work. Neighbor lists are fetched again rather than tracked, which is cheap because the server caches them. A sticky work the new build didn't reach is recolored relative to the new anchor (`relationTo`).

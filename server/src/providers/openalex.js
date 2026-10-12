@@ -211,6 +211,17 @@ export function createOpenAlexProvider({
     return openAlexIds.map((id) => found.get(id)).filter(Boolean);
   }
 
+  async function getWorksByDoi(dois) {
+    // `,` and `|` separate filters and values, so DOIs containing them can't be batched.
+    const unique = [...new Set(dois.map(normalizeDoi))].filter((doi) => doi && !/[,|]/.test(doi));
+    const works = [];
+    for (const batch of chunk(unique, MAX_FILTER_VALUES)) {
+      // A DOI can belong to several OpenAlex works, so ask for more than one per DOI.
+      works.push(...(await listWorks({ filter: `doi:${batch.join('|')}` }, batch.length * 2)));
+    }
+    return works;
+  }
+
   async function getCitingWorks(id, { limit = DEFAULT_LIMIT } = {}) {
     // `cites:` needs an OpenAlex ID, so resolve DOIs first (single lookups are free).
     let openAlexId = toOpenAlexId(id);
@@ -233,5 +244,13 @@ export function createOpenAlexProvider({
     return listWorks({ search: query }, limit);
   }
 
-  return { name: NAME, getWork, getWorks, getCitingWorks, getCitedWorks, searchWorks };
+  return {
+    name: NAME,
+    getWork,
+    getWorks,
+    getWorksByDoi,
+    getCitingWorks,
+    getCitedWorks,
+    searchWorks,
+  };
 }

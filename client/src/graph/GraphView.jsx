@@ -6,6 +6,7 @@ import { deriveEdges, yearPositions } from './graphModel.js';
 import { layoutLinks, placeLinks, pointOnCurve } from './linkRouting.js';
 import { REFERENCE_ONLY } from './sourceTypeKeys.js';
 import { iconPath2D } from './sourceTypes.js';
+import { layoutSpread } from './spacing.js';
 
 // Node radius = NODE_MIN_RADIUS + NODE_GROWTH * log10(1 + total citations). Totals run from 0
 // to thousands, so the log keeps a classic from dwarfing the graph: 10 citations give about
@@ -29,6 +30,10 @@ const nodeVal = (count) => (NODE_MIN_RADIUS + NODE_GROWTH * Math.log10(1 + count
 const radiusOf = (val) => Math.sqrt(val);
 
 // Layout tuning. Years sit close together along the time axis; works spread out across it.
+// Large graphs get more room across the axis: repulsion (strength and range) and the gap
+// between circles are scaled by layoutSpread. Year spacing isn't: stretching the axis also
+// stretches empty decades, and fitting that shrinks every circle. (Repulsion scaled by the
+// factor's square spread works so far that fitted circles became dots.)
 const YEAR_SPACING = 15; // Distance between consecutive years along the axis.
 const YEAR_PULL = 0.5; // How firmly works hold their year's position.
 const ACROSS_PULL = 0.008; // Gentle pull back toward the axis, so the graph doesn't drift.
@@ -256,6 +261,8 @@ export default function GraphView({
   // force-graph stores positions on node objects, so reuse them across updates to keep the
   // layout stable as works are added.
   const [nodeCache] = useState(() => new Map());
+  // More works need more room, or they pack edge to edge with no space for links between them.
+  const spread = layoutSpread(graph.works.size);
   const positions = useMemo(
     () =>
       yearPositions(
@@ -272,7 +279,7 @@ export default function GraphView({
       const targetU = year == null ? null : positions.get(year);
       if (!node) {
         // Start new works at their year, so they don't fly across the graph to get there.
-        node = { id: work.id, ...geometry.fromUV(targetU ?? 0, jitter(work.id) * 60) };
+        node = { id: work.id, ...geometry.fromUV(targetU ?? 0, jitter(work.id) * 60 * spread) };
         nodeCache.set(work.id, node);
       }
       node.work = work;
@@ -282,7 +289,7 @@ export default function GraphView({
       return node;
     });
     return { nodes, links: deriveEdges(graph.works) };
-  }, [graph, sizes, years, positions, nodeCache, geometry]);
+  }, [graph, sizes, years, positions, nodeCache, geometry, spread]);
 
   // Year ticks: whole publication years only, not inferred midpoints.
   const ticks = useMemo(
@@ -303,16 +310,18 @@ export default function GraphView({
     );
     fg.d3Force(
       'collide',
-      forceCollide((node) => radiusOf(node.val) + COLLIDE_PADDING),
+      forceCollide((node) => radiusOf(node.val) + COLLIDE_PADDING * spread),
     );
     // Citations always join works from different years, so a strong link force would fight
     // the time axis. Keep links weak; they only loosely group related works across it.
     fg.d3Force('link').strength(0.02);
     // Limit repulsion to nearby works: otherwise many works on one side (e.g. all the works
     // citing the anchor) push a node off its year.
-    fg.d3Force('charge').strength(CHARGE).distanceMax(CHARGE_RANGE);
+    fg.d3Force('charge')
+      .strength(CHARGE * spread)
+      .distanceMax(CHARGE_RANGE * spread);
     fg.d3ReheatSimulation();
-  }, [ready]);
+  }, [ready, spread]);
 
   // Rotating the axis moves every node straight to its rotated position (same place along and
   // across the axis), rather than letting the simulation drag nodes there and reshuffle.

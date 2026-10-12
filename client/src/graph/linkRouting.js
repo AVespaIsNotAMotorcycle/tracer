@@ -113,7 +113,10 @@ export const BUNDLE_ANGLE = (20 * Math.PI) / 180;
 // more of their length...
 const BUNDLE_GAP = 60;
 // ...but never past this fraction of the shortest link, leaving room for the branches.
-const BUNDLE_REACH = 0.45;
+const BUNDLE_REACH = 0.6;
+// Directions tried for a trunk, spread across the angles its links leave at, so a trunk can
+// pass beside a circle instead of stopping at it.
+const TRUNK_DIRECTIONS = 9;
 // A trunk shorter than this beyond the node's edge isn't worth drawing.
 const MIN_TRUNK = 8;
 // Branches leave a junction along the trunk, with a control point this fraction of the
@@ -191,57 +194,97 @@ function clusterByAngle(entries) {
 }
 
 /**
- * Builds a bundle from a cluster of links at `node`, or returns null when their trunk would be
- * too short. The trunk stops short of any circle in its way.
+ * Builds a bundle from a cluster of links at `node`, or returns null when no trunk would be
+ * long enough. A trunk runs until its links diverge (BUNDLE_GAP), stops before its shortest
+ * link ends (BUNDLE_REACH) and short of any circle in its way. To merge links as far as
+ * possible, it tries leaving out the shortest links (they still leave along the trunk, so they
+ * look merged near the node) and turning within the links' angles to pass beside circles, and
+ * keeps whichever merges the most line length.
  */
 function makeBundle(node, cluster, outgoing, grid, radius, clearance) {
-  let ux = 0;
-  let uy = 0;
-  for (const { angle } of cluster) {
-    ux += Math.cos(angle);
-    uy += Math.sin(angle);
-  }
-  const norm = Math.hypot(ux, uy);
-  ux /= norm;
-  uy /= norm;
-  const spread = (cluster.at(-1).angle - cluster[0].angle + 2 * Math.PI) % (2 * Math.PI);
-  const shortest = Math.min(...cluster.map((entry) => entry.length));
-  let reach = Math.min(BUNDLE_GAP / Math.max(spread, 1e-3), BUNDLE_REACH * shortest);
-  const tipX = node.x + ux * reach;
-  const tipY = node.y + uy * reach;
-  const nearby = grid.near(
-    Math.min(node.x, tipX),
-    Math.min(node.y, tipY),
-    Math.max(node.x, tipX),
-    Math.max(node.y, tipY),
+  // Angles relative to the cluster's first, which clusterByAngle keeps contiguous.
+  const base = cluster[0].angle;
+  const relative = (angle) => (angle - base + 4 * Math.PI) % (2 * Math.PI);
+  const byLength = [...cluster].sort((a, b) => b.length - a.length);
+  const longestCap = BUNDLE_REACH * byLength[1].length;
+  const nearby = grid
+    .near(node.x - longestCap, node.y - longestCap, node.x + longestCap, node.y + longestCap)
+    .filter((other) => other !== node);
+
+  // How far a trunk at `angle` gets before a circle: computed once per direction and reused
+  // for every choice of links (the cap only depends on which links, the circles on direction).
+  const blocked = new Map();
+  const blockedAt = (angle) => {
+    if (blocked.has(angle)) return blocked.get(angle);
+    const ux = Math.cos(angle);
+    const uy = Math.sin(angle);
+    let at = Infinity;
+    for (const other of nearby) {
+      const r = radius(other) + clearance;
+      const along = (other.x - node.x) * ux + (other.y - node.y) * uy;
+      const across = (other.x - node.x) * uy - (other.y - node.y) * ux;
+      if (along > 0 && Math.abs(across) < r) at = Math.min(at, along - r);
+    }
+    blocked.set(angle, at);
+    return at;
+  };
+  // Directions spread across the whole cluster; each choice of links uses those within its own
+  // angles, plus its centre.
+  const clusterHigh = Math.max(...cluster.map((entry) => relative(entry.angle)));
+  const spreadAngles = Array.from(
+    { length: TRUNK_DIRECTIONS },
+    (_, k) => (k * clusterHigh) / (TRUNK_DIRECTIONS - 1),
   );
-  for (const other of nearby) {
-    if (other === node) continue;
-    const r = radius(other) + clearance;
-    const along = (other.x - node.x) * ux + (other.y - node.y) * uy;
-    const across = (other.x - node.x) * uy - (other.y - node.y) * ux;
-    if (along > 0 && along - r < reach && Math.abs(across) < r) reach = along - r;
+
+  let best = null;
+  for (let count = 2; count <= byLength.length; count++) {
+    const members = byLength.slice(0, count);
+    const angles = members.map((entry) => relative(entry.angle));
+    const low = Math.min(...angles);
+    const high = Math.max(...angles);
+    const byDivergence = BUNDLE_GAP / Math.max(high - low, 1e-3);
+    const byShortest = BUNDLE_REACH * members[count - 1].length;
+    const cap = Math.min(byDivergence, byShortest);
+    // Can't beat the best so far even with nothing in the way.
+    if ((count - 1) * cap <= (best?.score ?? 0)) continue;
+    // The centre first, so ties keep the trunk centred.
+    const candidates = [(low + high) / 2, ...spreadAngles.filter((a) => a >= low && a <= high)];
+    for (const offset of candidates) {
+      const angle = base + offset;
+      const block = blockedAt(angle);
+      const reach = Math.min(cap, block);
+      const limitedBy =
+        block < cap ? 'circle' : byDivergence <= byShortest ? 'divergence' : 'shortest';
+      const score = (count - 1) * reach;
+      if (reach >= radius(node) + MIN_TRUNK && score > (best?.score ?? 0)) {
+        best = { score, members, angle, reach, limitedBy };
+      }
+    }
   }
-  if (reach < radius(node) + MIN_TRUNK) return null;
-  return {
+  if (!best) return null;
+
+  const { members, angle, reach, limitedBy } = best;
+  const direction = { x: Math.cos(angle), y: Math.sin(angle) };
+  const bundle = {
     node,
     outgoing,
     reach,
-    direction: { x: ux, y: uy },
-    junction: { x: node.x + ux * reach, y: node.y + uy * reach },
-    links: cluster.map((entry) => entry.link),
+    limitedBy,
+    direction,
+    // How far the trunk turns from its links' mean direction, kept as they move (placeBundle).
+    turn: angle - Math.atan2(...meanDirection(node, members, outgoing).reverse()),
+    junction: { x: node.x + direction.x * reach, y: node.y + direction.y * reach },
+    links: members.map((entry) => entry.link),
   };
+  return bundle;
 }
 
-/**
- * Moves a bundle's trunk to where its node and links are now, keeping its planned reach: the
- * direction is the mean of its links' current directions.
- */
-function placeBundle(bundle) {
-  const { node, outgoing, links, reach } = bundle;
+/** Unit vector [x, y] of the mean direction from `node` to the other ends of `entries`. */
+function meanDirection(node, entries, outgoing) {
   let ux = 0;
   let uy = 0;
-  for (const link of links) {
+  for (const entry of entries) {
+    const link = entry.link ?? entry;
     const other = outgoing ? link.target : link.source;
     const length = Math.hypot(other.x - node.x, other.y - node.y);
     if (length > 0) {
@@ -249,8 +292,19 @@ function placeBundle(bundle) {
       uy += (other.y - node.y) / length;
     }
   }
-  const norm = Math.hypot(ux, uy);
-  if (norm > 0) bundle.direction = { x: ux / norm, y: uy / norm };
+  const norm = Math.hypot(ux, uy) || 1;
+  return [ux / norm, uy / norm];
+}
+
+/**
+ * Moves a bundle's trunk to where its node and links are now, keeping its planned reach and its
+ * turn from the links' mean direction.
+ */
+function placeBundle(bundle) {
+  const { node, outgoing, links, reach, turn } = bundle;
+  const [mx, my] = meanDirection(node, links, outgoing);
+  const angle = Math.atan2(my, mx) + turn;
+  bundle.direction = { x: Math.cos(angle), y: Math.sin(angle) };
   bundle.junction = {
     x: node.x + bundle.direction.x * reach,
     y: node.y + bundle.direction.y * reach,

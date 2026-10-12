@@ -257,6 +257,8 @@ export default function GraphView({
   const geometry = useMemo(() => axisGeometry(axisAngle), [axisAngle]);
   // The year force runs outside React, so it reads the current geometry from a ref.
   const geometryRef = useRef(geometry);
+  // Link layout plan, re-made every few frames (see paintFramePre).
+  const routing = useRef({ frame: 0, lastFrameAt: 0, data: null, visible: null, bundles: [] });
 
   // force-graph stores positions on node objects, so reuse them across updates to keep the
   // layout stable as works are added.
@@ -358,6 +360,17 @@ export default function GraphView({
   useEffect(() => {
     if (!new URLSearchParams(window.location.search).has('automation')) return undefined;
     window.__tracerAutomation = {
+      // Merged-line stats: how many bundles, how long their trunks are, and what stopped them.
+      bundles: () =>
+        routing.current.bundles.map(({ links, reach, limitedBy, node }) => ({
+          node: node.id,
+          links: links.length,
+          reach: Math.round(reach),
+          limitedBy,
+          lengths: links.map((link) =>
+            Math.round(Math.hypot(link.target.x - link.source.x, link.target.y - link.source.y)),
+          ),
+        })),
       nodes: () => {
         const fg = graphRef.current;
         const canvas = containerRef.current?.querySelector('canvas');
@@ -603,7 +616,6 @@ export default function GraphView({
   // Runs before each frame's links are drawn, so they follow the nodes as the layout moves.
   // Planning is the expensive part, so it's skipped on most frames (see ROUTE_EVERY), but never
   // when the works or the visible set have changed.
-  const routing = useRef({ frame: 0, lastFrameAt: 0, data: null, visible: null, bundles: [] });
   const paintFramePre = (ctx, scale) => {
     const state = routing.current;
     const now = frameClock();

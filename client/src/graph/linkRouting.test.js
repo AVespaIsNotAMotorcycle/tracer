@@ -198,7 +198,7 @@ describe('layoutLinks', () => {
     const [bundle] = bundles;
     expect(bundle).toMatchObject({ node: hub, outgoing: true });
     expect(bundle.junction.x).toBeGreaterThan(20);
-    expect(bundle.junction.x).toBeLessThanOrEqual(0.45 * Math.hypot(200, 10) + 1e-9);
+    expect(bundle.junction.x).toBeLessThanOrEqual(0.6 * Math.hypot(200, 10) + 1e-9);
     expect(Math.abs(bundle.junction.y)).toBeLessThan(1e-9);
     for (const link of links) {
       expect(link.route.sourceBundle).toBe(bundle);
@@ -242,6 +242,44 @@ describe('layoutLinks', () => {
       const point = pointOnCurve(route.start, route.controls, route.end, i / 50);
       expect(Math.hypot(point.x - block.x, point.y - block.y)).toBeGreaterThan(7 - 0.3);
     }
+  });
+
+  it('leaves out a short link that would cut the trunk short', () => {
+    const hub = node('hub', 0, 0);
+    const p = node('p', 400, -10);
+    const q = node('q', 400, 10);
+    const near = node('near', 40, 10); // Close to the hub, just beside the trunk's line.
+    const links = [
+      { source: hub, target: p },
+      { source: hub, target: q },
+      { source: hub, target: near },
+    ];
+    const [bundle] = layoutLinks(links, [hub, p, q, near], radius, 2);
+    expect(bundle.links).toEqual(links.slice(0, 2));
+    expect(links[2].route.sourceBundle).toBeNull();
+    // Long enough to pass the left-out link's node.
+    expect(bundle.reach).toBeGreaterThan(100);
+  });
+
+  it('turns the trunk within its links’ angles to pass a circle in its way', () => {
+    const hub = node('hub', 0, 0);
+    const p = node('p', 400, -60);
+    const q = node('q', 400, 60);
+    const block = node('block', 60, 0); // Right on the mean direction.
+    const links = [
+      { source: hub, target: p },
+      { source: hub, target: q },
+    ];
+    const [bundle] = layoutLinks(links, [hub, p, q, block], radius, 2);
+    expect(bundle.reach).toBeGreaterThan(60);
+    expect(Math.abs(bundle.direction.y)).toBeGreaterThan(0.05);
+
+    // The turn is kept relative to the links as they move.
+    for (const n of [hub, p, q, block]) n.y += 25;
+    const direction = { ...bundle.direction };
+    placeLinks(links, [bundle]);
+    expect(bundle.direction.x).toBeCloseTo(direction.x);
+    expect(bundle.direction.y).toBeCloseTo(direction.y);
   });
 
   it('bundles incoming links at their shared target', () => {

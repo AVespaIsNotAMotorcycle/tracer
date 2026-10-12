@@ -20,6 +20,11 @@ Combining several citation databases to fill each other's coverage gaps is the a
 
 - **Tracer IDs:** each source has its own Tracer ID. A mapping record links it to the source's IDs in each provider (OpenAlex ID, Semantic Scholar ID, DOI, and so on). The client and the database use only Tracer IDs, never a provider's ID as the primary key. Deduplication across paths and across providers goes through this mapping.
 - **Provider adapters:** put each external API behind a common interface that returns Tracer's own normalized types. Provider-specific response shapes must not leak outside the adapter.
+  - **Implemented:** `server/src/providers/`. `types.js` defines the `Provider` interface (`getWork`, `getWorks`, `getCitingWorks`, `getCitedWorks`, `searchWorks`) and the normalized `ProviderWork` type. `ids.js` has `normalizeDoi`, which every adapter must use so DOIs match across providers. `openalex.js` is the first adapter.
+  - Adapters return provider IDs, not Tracer IDs. Each `ProviderWork` carries `externalIds` (DOI and others) for cross-provider matching, and `referencedIds` for drawing in-graph edges without extra requests.
+  - Adapters are factories (`createOpenAlexProvider({ apiKey, fetch, sleep })`). Tests inject a fake `fetch` and `sleep`; they never call the real API.
+  - **OpenAlex costs** (credits per request): single-work lookup 0, list or filter 1, search 10. The keyless daily budget is 1,000 credits; an `OPENALEX_API_KEY` gives 10 times that. Prefer batched `openalex:A|B|C` filters (up to 100 IDs) over many separate list requests.
+  - **Coverage gaps seen:** reference lists are often empty for older humanities articles (e.g. Thompson 1971 has 4,693 citing works but 0 references). Some abstracts are only author and title glued together.
 - **Merging:** when providers disagree or one is missing data, merge records and citation edges rather than picking one provider wholesale. Keep track of which provider each piece of data came from.
 
 ## MongoDB roles

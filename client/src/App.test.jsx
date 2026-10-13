@@ -634,6 +634,39 @@ describe('App', () => {
     expect(screen.getByRole('button', { name: 'Increase minimum links' })).toBeDisabled();
   });
 
+  it('always shows pinned works, whatever the filters, until unpinned', async () => {
+    await buildFromSearch();
+    fireEvent.click(within(graph()).getByRole('button', { name: 'Title citer' }));
+    fireEvent.click(screen.getByRole('button', { name: 'Pin: always show' }));
+    fireEvent.click(screen.getByRole('button', { name: 'Close details' }));
+    // Hide every article: only the anchor and the pinned citer stay.
+    fireEvent.click(screen.getByRole('checkbox', { name: /Article/ }));
+    const shown = () =>
+      within(graph())
+        .getAllByRole('button')
+        .map((b) => b.textContent);
+    expect(shown()).toEqual(['Title anchor', 'Title citer']);
+    expect(screen.getByText(/Showing 2 of 3 · 1 pinned/)).toBeInTheDocument();
+
+    fireEvent.click(within(graph()).getByRole('button', { name: 'Title citer' }));
+    fireEvent.click(screen.getByRole('button', { name: 'Unpin' }));
+    fireEvent.click(screen.getByRole('button', { name: 'Close details' }));
+    expect(shown()).toEqual(['Title anchor']);
+  });
+
+  it('clears pins on a new search', async () => {
+    await buildFromSearch();
+    fireEvent.click(within(graph()).getByRole('button', { name: 'Title citer' }));
+    fireEvent.click(screen.getByRole('button', { name: 'Pin: always show' }));
+    expect(screen.getByText(/1 pinned/)).toBeInTheDocument();
+
+    fireEvent.click(screen.getByRole('button', { name: 'Go' }));
+    const results = await screen.findByRole('list', { name: 'Search results' });
+    fireEvent.click(within(results).getByRole('button', { name: /Title anchor/ }));
+    await waitFor(() => expect(screen.queryByText(/1 pinned/)).toBeNull());
+    expect(await within(graph()).findByRole('button', { name: 'Title citer' })).toBeInTheDocument();
+  });
+
   it('steps the links filter by one with its − and + buttons', async () => {
     await buildFromSearch();
     const decrease = screen.getByRole('button', { name: 'Decrease minimum links' });
@@ -900,6 +933,7 @@ describe('saved graphs', () => {
     fireEvent.click(within(graph()).getByRole('button', { name: 'Title ref' }));
     fireEvent.click(screen.getByRole('button', { name: 'Expand citing and cited works' }));
     await within(graph()).findByRole('button', { name: 'Title more' });
+    fireEvent.click(screen.getByRole('button', { name: 'Pin: always show' }));
     fireEvent.click(screen.getByRole('checkbox', { name: /Article/ }));
 
     fireEvent.click(screen.getByRole('button', { name: 'Save graph' }));
@@ -916,7 +950,7 @@ describe('saved graphs', () => {
       anchor: { id: 'anchor', ref: 'Wanchor', title: 'Title anchor' },
       options: { citingDepth: 1, citedDepth: 1, limit: 20, maxNodes: 300 },
       filters: { minYear: null, maxYear: null, minConnections: 1, excludedTypes: ['article'] },
-      view: { axisAngle: 30 },
+      view: { axisAngle: 30, pinned: ['ref'] },
       expanded: ['ref'],
     });
     // With the graph as built, so reopening it needn't fetch anything.
@@ -977,6 +1011,29 @@ describe('saved graphs', () => {
     expect(screen.getByLabelText('From year')).toHaveValue(1900);
     expect(graph()).toHaveAttribute('data-axis-angle', '60');
     expect(window.location.search).toBe('?graph=g1');
+  });
+
+  it('opens a saved graph with its pinned works shown', async () => {
+    vi.mocked(api.getSavedGraph).mockResolvedValue(
+      savedFrom({
+        anchor: { id: 'anchor', ref: 'Wanchor', title: 'Title anchor' },
+        options: { citingDepth: 1, citedDepth: 1, limit: 20, maxNodes: 300 },
+        filters: { minYear: null, maxYear: null, minConnections: 1, excludedTypes: ['article'] },
+        view: { axisAngle: 30, pinned: ['citer'] },
+        expanded: [],
+      }),
+    );
+    window.history.replaceState(null, '', '/?graph=g1');
+    render(<App />);
+
+    // Every work is an article, so only the anchor and the pinned citer pass.
+    await waitFor(() =>
+      expect(
+        within(graph())
+          .getAllByRole('button')
+          .map((b) => b.textContent),
+      ).toEqual(['Title anchor', 'Title citer']),
+    );
   });
 
   const savedState = {

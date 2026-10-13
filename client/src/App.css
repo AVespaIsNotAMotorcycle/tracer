@@ -41,6 +41,8 @@
   --node-icon-on-reference-only: var(--ink);
   --node-selected: var(--ink);
   --node-expanded: var(--palette-2);
+  --node-pin: var(--ink);
+  --node-icon-on-pin: var(--paper);
   --graph-link: color-mix(in srgb, var(--ink) 22%, transparent);
   --graph-link-active: var(--palette-2);
   --graph-axis: color-mix(in srgb, var(--ink) 12%, transparent);
@@ -80,6 +82,8 @@
     --node-icon-on-reference-only: var(--ink);
     --node-selected: var(--palette-4);
     --node-expanded: color-mix(in oklab, var(--palette-2) 85%, white);
+    --node-pin: var(--palette-4);
+    --node-icon-on-pin: var(--ink);
     --graph-link: color-mix(in srgb, var(--paper) 18%, transparent);
     --graph-link-active: var(--accent);
     --graph-axis: color-mix(in srgb, var(--paper) 10%, transparent);
@@ -182,6 +186,10 @@ button.primary,
   display: flex;
   align-items: center;
   gap: 6px;
+}
+
+button.with-icon {
+  justify-content: center;
 }
 
 /* Layout */
@@ -518,6 +526,23 @@ button.primary,
 .swatch.expanded {
   background: none;
   border: 2px solid var(--node-expanded);
+}
+
+/* A pin badge, as pinned works carry on the graph. */
+.swatch.pinned {
+  display: inline-grid;
+  place-items: center;
+  width: 14px;
+  height: 14px;
+  margin-left: -2px;
+  margin-right: 4px;
+  background: var(--node-pin);
+  color: var(--node-icon-on-pin);
+}
+
+.swatch.pinned svg {
+  width: 9px;
+  height: 9px;
 }
 
 .source-types {

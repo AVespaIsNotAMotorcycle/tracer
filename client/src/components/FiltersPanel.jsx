@@ -25,6 +25,7 @@ export default function FiltersPanel({
   maxConnections,
   visibleCount,
   totalCount,
+  pinnedCount = 0,
 }) {
   const excluded = new Set(filters.excludedTypes);
   // The slider shows a minimum above the graph's maximum (after works are removed) as the
@@ -116,6 +117,7 @@ export default function FiltersPanel({
       <div className="filter-footer">
         <span className="muted">
           Showing {visibleCount} of {totalCount}
+          {pinnedCount > 0 && ` · ${pinnedCount} pinned`}
         </span>
         <button
           type="button"

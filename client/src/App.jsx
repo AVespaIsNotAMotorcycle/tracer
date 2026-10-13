@@ -1,3 +1,4 @@
+import { Pin } from 'lucide-react';
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { getSavedGraph, saveGraph, saveGraphSnapshot, updateGraph } from './api.js';
 import './App.css';
@@ -75,6 +76,16 @@ function GraphPage({ auth }) {
   // Build options start from the URL (or the defaults), so a shared link reproduces the graph.
   const [options, setOptions] = useState(() => readUrlState(window.location.search).options);
   const [filters, setFilters] = useState(NO_FILTERS);
+  // Works the user pinned: always shown, whatever the filters. View state like the filters,
+  // kept across re-anchoring and saved with the graph.
+  const [pinned, setPinned] = useState(() => new Set());
+  const togglePin = (id) =>
+    setPinned((prev) => {
+      const next = new Set(prev);
+      if (next.has(id)) next.delete(id);
+      else next.add(id);
+      return next;
+    });
   const [selectedId, setSelectedId] = useState(null);
   const [axisAngle, setAxisAngle] = useState(DEFAULT_AXIS_ANGLE);
   // Counts runs (builds, re-anchors, options changes), so the view re-fits after each one.
@@ -97,8 +108,8 @@ function GraphPage({ auth }) {
   const years = useMemo(() => layoutYears(view), [view]);
   const outgoing = useMemo(() => outgoingCounts(view.works), [view.works]);
   const visible = useMemo(
-    () => visibleIds(view, filters, connections, shownId ? [shownId] : [], years),
-    [view, filters, connections, shownId, years],
+    () => visibleIds(view, filters, connections, [...pinned, ...(shownId ? [shownId] : [])], years),
+    [view, filters, connections, pinned, shownId, years],
   );
   // Per-chapter counts for a book's details, from the unfolded graph.
   const partCounts = useMemo(
@@ -125,6 +136,7 @@ function GraphPage({ auth }) {
   const handleBuild = (anchorId) => {
     setSelectedId(null);
     setFilters(NO_FILTERS);
+    setPinned(new Set());
     setSavedGraph(null);
     setOpenError(null);
     pendingUrl.current = { mode: 'push', options };
@@ -156,6 +168,7 @@ function GraphPage({ auth }) {
         excludedTypes: saved.filters?.excludedTypes ?? [],
       });
       setAxisAngle(saved.view?.axisAngle ?? DEFAULT_AXIS_ANGLE);
+      setPinned(new Set(saved.view?.pinned ?? []));
       setSelectedId(null);
       setSavedGraph({ id: saved.id, name: saved.name });
       setOpenError(null);
@@ -213,6 +226,7 @@ function GraphPage({ auth }) {
       setOptions(urlOptions);
       setSelectedId(null);
       setFilters(NO_FILTERS);
+      setPinned(new Set());
       setSavedGraph(null);
       if (anchor) {
         pendingUrl.current = { mode: 'replace', options: urlOptions };
@@ -282,7 +296,8 @@ function GraphPage({ auth }) {
       },
       options: graphOptions ?? options,
       filters,
-      view: { axisAngle },
+      // Pins of works no longer on the graph (dropped by a re-anchor) aren't worth keeping.
+      view: { axisAngle, pinned: [...pinned].filter((id) => view.works.has(id)) },
       expanded: [...graph.sticky],
     };
     const snapshot = busy || expanding.size > 0 ? undefined : graphSnapshot(graph, truncated);
@@ -316,6 +331,7 @@ function GraphPage({ auth }) {
             works={view.works}
             maxConnections={maxConnections}
             visibleCount={visible.size}
+            pinnedCount={[...pinned].filter((id) => view.works.has(id)).length}
             totalCount={view.works.size}
           />
         )}
@@ -333,6 +349,12 @@ function GraphPage({ auth }) {
             </span>
             <span>
               <i className="swatch expanded" /> Expanded
+            </span>
+            <span>
+              <i className="swatch pinned">
+                <Pin aria-hidden="true" />
+              </i>{' '}
+              Pinned: always shown
             </span>
             <span className="muted small">
               Older works toward the top left, newer toward the bottom right
@@ -376,6 +398,7 @@ function GraphPage({ auth }) {
             graph={view}
             sizes={sizes}
             expandedIds={expandedIds}
+            pinnedIds={pinned}
             years={years}
             visible={visible}
             selectedId={shownId}
@@ -411,6 +434,8 @@ function GraphPage({ auth }) {
             })
           }
           onMakeAnchor={() => handleReanchor(selected.id)}
+          pinned={pinned.has(selected.id)}
+          onTogglePin={() => togglePin(selected.id)}
           onCollapse={
             // Only works the user expanded (or earlier anchors) can be collapsed; the build's
             // own expansions would just come back.

@@ -36,7 +36,8 @@ const bad = (message) => new HttpError(400, message);
  * The parts of a graph to save, checked and trimmed to what's stored. Throws 400 if anything
  * is missing or out of range.
  *
- * @param {any} state  { anchor: { id, ref?, title? }, options, filters, view, expanded }
+ * @param {any} state  { anchor: { id, ref?, title? }, options, filters,
+ *   view: { axisAngle, pinned }, expanded }
  */
 export function checkState(state) {
   if (!state || typeof state !== 'object') throw bad('Missing graph');
@@ -69,6 +70,14 @@ export function checkState(state) {
   if (axisAngle != null && (typeof axisAngle !== 'number' || axisAngle < 0 || axisAngle > 90)) {
     throw bad('Invalid axis angle');
   }
+  const pinned = view.pinned ?? [];
+  if (
+    !Array.isArray(pinned) ||
+    pinned.length > MAX_EXPANDED ||
+    !pinned.every((id) => typeof id === 'string' && id.length <= 64)
+  ) {
+    throw bad('Invalid pinned works');
+  }
   if (
     !Array.isArray(expanded) ||
     expanded.length > MAX_EXPANDED ||
@@ -89,7 +98,7 @@ export function checkState(state) {
       minConnections,
       excludedTypes,
     },
-    view: { axisAngle },
+    view: { axisAngle, pinned: [...new Set(pinned)] },
     expanded: [...new Set(expanded)],
   };
 }

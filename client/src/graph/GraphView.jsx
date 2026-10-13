@@ -1,4 +1,5 @@
 import { forceCollide } from 'd3-force';
+import { Pin as PinShape } from 'lucide';
 import { useEffect, useMemo, useRef, useState } from 'react';
 import ForceGraph2D from 'react-force-graph-2d';
 import { axisGeometry, DEFAULT_AXIS_ANGLE } from './axis.js';
@@ -14,7 +15,7 @@ import {
   trunkSegments,
 } from './linkRouting.js';
 import { REFERENCE_ONLY } from './sourceTypeKeys.js';
-import { iconPath2D } from './sourceTypes.js';
+import { iconPath2D, iconPathData } from './sourceTypes.js';
 import { layoutSpread } from './spacing.js';
 
 // Node radius = NODE_MIN_RADIUS + NODE_GROWTH * log10(1 + total citations). Totals run from 0
@@ -26,6 +27,16 @@ const NODE_GROWTH = 6;
 // Ring around expanded works, in screen pixels: its width, and its gap from the circle's edge.
 const EXPANDED_RING_WIDTH = 2;
 const EXPANDED_RING_GAP = 3.5;
+
+// Badge on pinned works, in screen pixels: its radius, and its pin icon's size. It sits on the
+// circle's top right edge and stays the same size at any zoom, so pins stay noticeable.
+const PIN_BADGE_RADIUS = 9;
+const PIN_ICON_SIZE = 12;
+let pinPath = null;
+const pinPath2D = () => {
+  if (!pinPath && typeof Path2D !== 'undefined') pinPath = new Path2D(iconPathData(PinShape));
+  return pinPath;
+};
 
 // Source-type icons are drawn inside circles at least this many screen pixels in radius;
 // smaller ones would be illegible clutter.
@@ -130,6 +141,8 @@ const COLOR_VARS = {
   referenceOnly: '--node-reference-only',
   selected: '--node-selected',
   expanded: '--node-expanded',
+  pin: '--node-pin',
+  iconOnPin: '--node-icon-on-pin',
   outline: '--node-outline',
   iconOnAnchor: '--node-icon-on-anchor',
   iconOnCiting: '--node-icon-on-citing',
@@ -257,6 +270,7 @@ export default function GraphView({
   graph,
   sizes,
   expandedIds = new Set(),
+  pinnedIds = new Set(),
   years,
   visible,
   selectedId,
@@ -534,6 +548,27 @@ export default function GraphView({
             ? colors.iconOnCiting
             : colors.iconOnCited;
       ctx.stroke(icon);
+      ctx.restore();
+    }
+
+    // Pinned works (always shown, whatever the filters) get a pin badge on their top right.
+    const pin = pinnedIds.has(node.id) ? pinPath2D() : null;
+    if (pin) {
+      const cx = node.x + r * Math.SQRT1_2;
+      const cy = node.y - r * Math.SQRT1_2;
+      ctx.beginPath();
+      ctx.arc(cx, cy, PIN_BADGE_RADIUS / scale, 0, 2 * Math.PI);
+      ctx.fillStyle = colors.pin;
+      ctx.fill();
+      const size = PIN_ICON_SIZE / scale;
+      ctx.save();
+      ctx.translate(cx - size / 2, cy - size / 2);
+      ctx.scale(size / 24, size / 24);
+      ctx.lineWidth = 2.5;
+      ctx.lineCap = 'round';
+      ctx.lineJoin = 'round';
+      ctx.strokeStyle = colors.iconOnPin;
+      ctx.stroke(pin);
       ctx.restore();
     }
 

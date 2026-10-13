@@ -50,7 +50,7 @@ const state = (overrides = {}) => ({
   anchor: { id: 'tracer-anchor', ref: '10.1093/past/50.1.76', title: 'The Moral Economy' },
   options: { citingDepth: 1, citedDepth: 2, limit: 60, maxNodes: 500 },
   filters: { minYear: 1950, maxYear: null, minConnections: 2, excludedTypes: ['dataset'] },
-  view: { axisAngle: 45 },
+  view: { axisAngle: 45, pinned: ['tracer-b'] },
   expanded: ['tracer-a', 'tracer-b'],
   ...overrides,
 });
@@ -68,7 +68,7 @@ describe('saving and opening graphs', () => {
       anchor: { id: 'tracer-anchor', ref: '10.1093/past/50.1.76', title: 'The Moral Economy' },
       options: { citingDepth: 1, citedDepth: 2, limit: 60, maxNodes: 500 },
       filters: { minYear: 1950, maxYear: null, minConnections: 2, excludedTypes: ['dataset'] },
-      view: { axisAngle: 45 },
+      view: { axisAngle: 45, pinned: ['tracer-b'] },
       expanded: ['tracer-a', 'tracer-b'],
       annotations: [],
     });
@@ -285,6 +285,7 @@ describe('validation', () => {
     ],
     ['a non-integer year', state({ filters: { minYear: 'soon' } })],
     ['an axis angle out of range', state({ view: { axisAngle: 120 } })],
+    ['pinned works that aren’t IDs', state({ view: { axisAngle: 30, pinned: [7] } })],
     ['expanded works that aren’t IDs', state({ expanded: [{ id: 'x' }] })],
   ])('refuses a graph with %s', async (_, bad) => {
     const agent = await signedIn();

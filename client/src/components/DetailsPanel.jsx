@@ -1,3 +1,4 @@
+import { Pin, PinOff } from 'lucide-react';
 import { useEffect, useState } from 'react';
 import { getArchiveItems, getCitationMatch } from '../api.js';
 import { canExpand } from '../graph/graphModel.js';
@@ -56,7 +57,8 @@ const doiLink = (work) => work.links.find((link) => link.kind === 'doi');
  * differ from the book's. A work not on OpenAlex (known only from a reference list) can't be
  * expanded or made the anchor, so it shows its citation as printed instead. `yearInfo` (from
  * layoutYears) explains a listed year that was set aside as implausible. `onCollapse` is
- * given only for works the user expanded, and undoes that.
+ * given only for works the user expanded, and undoes that. `pinned` works are always shown,
+ * whatever the filters; `onTogglePin` pins or unpins it.
  */
 export default function DetailsPanel({
   work,
@@ -71,6 +73,8 @@ export default function DetailsPanel({
   onExpand,
   onMakeAnchor,
   onCollapse,
+  pinned = false,
+  onTogglePin,
   onClose,
 }) {
   const fullyExpanded = expanded.has('citing') && expanded.has('cited');
@@ -168,6 +172,17 @@ export default function DetailsPanel({
       {expandable && relation !== 'anchor' && (
         <button type="button" onClick={onMakeAnchor} disabled={busy}>
           Make this the anchor
+        </button>
+      )}
+
+      {onTogglePin && (
+        <button type="button" className="with-icon" onClick={onTogglePin}>
+          {pinned ? (
+            <PinOff className="icon" aria-hidden="true" />
+          ) : (
+            <Pin className="icon" aria-hidden="true" />
+          )}
+          <span>{pinned ? 'Unpin' : 'Pin: always show'}</span>
         </button>
       )}
 

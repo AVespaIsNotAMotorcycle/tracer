@@ -37,7 +37,8 @@ const savedGraphSchema = new mongoose.Schema(
       minConnections: Number,
       excludedTypes: [String],
     },
-    view: { axisAngle: Number },
+    // Pinned works (Tracer IDs) are always shown, whatever the filters.
+    view: { axisAngle: Number, pinned: [String] },
     expanded: [String],
     annotations: { type: [annotationSchema], default: [] },
   },

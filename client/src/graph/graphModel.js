@@ -670,7 +670,32 @@ export async function restoreGraph(saved, api, onProgress = () => {}, progress =
   const ids = expanded.filter((id) => id !== anchorId);
   progress.plan(ids.length * 2);
   const built = await buildGraph(anchorId, options, api, onProgress, progress);
-  let graph = built.graph;
+  const graph = await addExpandedWorks(built.graph, ids, options, api, onProgress, progress);
+  return { graph, truncated: built.truncated };
+}
+
+/**
+ * Adds works to the graph and expands each, in order, as if the user had: works not on it yet
+ * are fetched first, colored by how they relate to the anchor. One that can't be fetched is
+ * skipped. They become sticky.
+ *
+ * @param {Graph} graph
+ * @param {string[]} ids
+ * @param {{ limit: number }} options
+ * @param {GraphApi} api
+ * @param {(graph: Graph) => void} [onProgress]
+ * @param {ReturnType<typeof import('./progress.js').createProgressTracker>} [progress]
+ *   Gets two completed requests per work; the caller plans them.
+ * @returns {Promise<Graph>}
+ */
+export async function addExpandedWorks(
+  graph,
+  ids,
+  { limit },
+  api,
+  onProgress = () => {},
+  progress = noProgress,
+) {
   const anchor = graph.works.get(graph.anchorId);
   for (const id of ids) {
     if (!graph.works.has(id)) {
@@ -684,11 +709,11 @@ export async function restoreGraph(saved, api, onProgress = () => {}, progress =
       }
       graph = addWorks(graph, [work], relationTo(anchor, work));
     }
-    graph = (await expandWork(graph, id, { limit: options.limit }, api, progress))(graph);
+    graph = (await expandWork(graph, id, { limit }, api, progress))(graph);
     progress.setWorks(graph.works.size);
     onProgress(graph);
   }
-  return { graph, truncated: built.truncated };
+  return graph;
 }
 
 /**

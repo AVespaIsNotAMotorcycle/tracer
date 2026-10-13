@@ -1,6 +1,7 @@
 import { useCallback, useEffect, useRef, useState } from 'react';
 import * as defaultApi from '../api.js';
 import {
+  addExpandedWorks,
   applyCoCitations as applyCoCitationsTo,
   buildGraph,
   collapseWorks,
@@ -201,6 +202,41 @@ export function useCitationGraph(api = defaultApi) {
     [rebuild],
   );
 
+  /**
+   * Adds works (from a search, say) to the graph on screen and expands each, as if the user
+   * had. Like a re-anchor, it's a run: the graph stays on screen until the result is in.
+   */
+  const addWorks = useCallback(
+    async (ids, /** @type {BuildOptions} */ options) => {
+      const { signal, scoped } = startRun();
+      setStatus('reanchoring');
+      setError(null);
+      const label = `Adding ${ids.length} work${ids.length === 1 ? '' : 's'}`;
+      const progress = track('run', label, signal, 2);
+      progress.plan(ids.length * 2);
+      try {
+        const graph = await addExpandedWorks(
+          graphRef.current,
+          ids,
+          options,
+          scoped,
+          undefined,
+          progress,
+        );
+        if (signal.aborted) return;
+        setGraph(graph);
+        setStatus('done');
+      } catch (err) {
+        if (signal.aborted) return;
+        setError(err.message);
+        setStatus('done');
+      } finally {
+        if (!signal.aborted) untrack('run');
+      }
+    },
+    [startRun, track, untrack],
+  );
+
   /** Cancels any run in progress and clears the graph. */
   const reset = useCallback(() => {
     controller.current?.abort();
@@ -290,6 +326,7 @@ export function useCitationGraph(api = defaultApi) {
     reanchor,
     expand,
     collapse,
+    addWorks,
     findCoCitations,
     applyCoCitations,
     reset,

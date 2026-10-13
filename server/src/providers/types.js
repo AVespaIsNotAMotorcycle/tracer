@@ -67,6 +67,38 @@
  */
 
 /**
+ * What an advanced search looks for. Every given field must match; text fields match words,
+ * not exact strings. Venue and publisher IDs come from the same provider's `suggest`.
+ *
+ * @typedef {object} SearchCriteria
+ * @property {string} [any]       Any field: title, abstract, full text and so on.
+ * @property {string} [title]
+ * @property {string} [author]    Author names as printed.
+ * @property {string} [abstract]
+ * @property {string} [fulltext]
+ * @property {string[]} [venueIds]      Any of these journals or book series.
+ * @property {string[]} [publisherIds]  Any of these publishers (or their imprints).
+ * @property {number} [fromYear]
+ * @property {number} [toYear]
+ * @property {string[]} [types]   Any of these work types, e.g. "book".
+ * @property {string} [language]  ISO 639-1 code, e.g. "fr".
+ * @property {number} [minCitations]  Times cited, at least.
+ * @property {boolean} [openAccess]
+ * @property {'relevance' | 'cited' | 'newest' | 'oldest'} [sort]
+ *   Relevance needs a text field; without one, the most-cited works come first.
+ */
+
+/**
+ * A venue or publisher to search within, as `suggest` returns it.
+ *
+ * @typedef {object} Suggestion
+ * @property {string} id    The provider's ID for it, opaque outside the adapter.
+ * @property {string} name
+ * @property {string | null} hint  E.g. a journal's publisher.
+ * @property {number | null} worksCount
+ */
+
+/**
  * The interface every provider adapter implements.
  *
  * @typedef {object} Provider
@@ -82,6 +114,11 @@
  * @property {(id: string, options?: ListOptions) => Promise<ProviderWork[]>} getCitedWorks
  *   Works the given work cites.
  * @property {(query: string, options?: ListOptions) => Promise<ProviderWork[]>} searchWorks
+ * @property {(criteria: SearchCriteria, options?: { limit?: number, page?: number }) =>
+ *   Promise<{ works: ProviderWork[], total: number }>} [searchWorksAdvanced]
+ *   One page of works matching every field of `criteria`, and how many match in all.
+ * @property {(kind: 'venue' | 'publisher', query: string) => Promise<Suggestion[]>} [suggest]
+ *   Venues or publishers whose names match `query`.
  */
 
 export {};

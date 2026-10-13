@@ -15,6 +15,81 @@ function parseLimit(value) {
   return limit;
 }
 
+const TEXT_FIELDS = ['any', 'title', 'author', 'abstract', 'fulltext'];
+const SORTS = ['relevance', 'cited', 'newest', 'oldest'];
+const MAX_TEXT = 300;
+const MAX_IDS = 20;
+// OpenAlex pages through at most the first 10,000 results.
+const MAX_RESULT = 10000;
+const ID_LIST = /^[A-Za-z]\d{1,15}(?:,[A-Za-z]\d{1,15})*$/;
+const TYPE_LIST = /^[a-z-]{1,40}(?:,[a-z-]{1,40})*$/;
+
+const single = (value) => (typeof value === 'string' ? value.trim() : '');
+
+function parseInteger(value, name, min, max) {
+  const text = single(value);
+  if (!text) return undefined;
+  const number = Number(text);
+  if (!Number.isInteger(number) || number < min || number > max) {
+    throw new HttpError(400, `${name} must be an integer from ${min} to ${max}`);
+  }
+  return number;
+}
+
+function parseList(value, name, pattern) {
+  const text = single(value);
+  if (!text) return undefined;
+  if (!pattern.test(text)) throw new HttpError(400, `${name} is not a valid list`);
+  const items = [...new Set(text.split(','))];
+  if (items.length > MAX_IDS) throw new HttpError(400, `${name} may list at most ${MAX_IDS}`);
+  return items;
+}
+
+/**
+ * The criteria of an advanced search from its query string (see SearchCriteria). At least one
+ * field must narrow it; options like sort alone don't.
+ *
+ * @returns {import('../providers/types.js').SearchCriteria}
+ */
+export function parseCriteria(query) {
+  const criteria = {};
+  for (const field of TEXT_FIELDS) {
+    const text = single(query[field]).replace(/\s+/g, ' ');
+    if (text.length > MAX_TEXT) throw new HttpError(400, `${field} is too long`);
+    if (text) criteria[field] = text;
+  }
+  const venueIds = parseList(query.venue, 'venue', ID_LIST);
+  if (venueIds) criteria.venueIds = venueIds;
+  const publisherIds = parseList(query.publisher, 'publisher', ID_LIST);
+  if (publisherIds) criteria.publisherIds = publisherIds;
+  const fromYear = parseInteger(query.fromYear, 'fromYear', -5000, 3000);
+  if (fromYear !== undefined) criteria.fromYear = fromYear;
+  const toYear = parseInteger(query.toYear, 'toYear', -5000, 3000);
+  if (toYear !== undefined) criteria.toYear = toYear;
+  if (fromYear !== undefined && toYear !== undefined && fromYear > toYear) {
+    throw new HttpError(400, 'fromYear must not be after toYear');
+  }
+  const types = parseList(query.types, 'types', TYPE_LIST);
+  if (types) criteria.types = types;
+  const language = single(query.language).toLowerCase();
+  if (language) {
+    if (!/^[a-z]{2}$/.test(language)) throw new HttpError(400, 'language must be a 2-letter code');
+    criteria.language = language;
+  }
+  const minCitations = parseInteger(query.minCitations, 'minCitations', 0, 1_000_000);
+  if (minCitations) criteria.minCitations = minCitations;
+  if (single(query.openAccess) === 'true') criteria.openAccess = true;
+  if (Object.keys(criteria).length === 0) {
+    throw new HttpError(400, 'Give at least one field to search');
+  }
+  const sort = single(query.sort);
+  if (sort) {
+    if (!SORTS.includes(sort)) throw new HttpError(400, `sort must be one of ${SORTS.join(', ')}`);
+    criteria.sort = sort;
+  }
+  return criteria;
+}
+
 /**
  * Routes under /api/works. `:id` accepts a Tracer ID, an OpenAlex ID, or a DOI. DOIs contain
  * slashes, so clients must URL-encode them (encodeURIComponent).
@@ -38,6 +113,25 @@ export function createWorksRouter(workService) {
     res.json({
       works: await workService.searchWorks(query, { limit: parseLimit(req.query.limit) }),
     });
+  });
+
+  // Before /:id, which would take "search" and "suggest" for work IDs.
+  router.get('/search', async (req, res) => {
+    const criteria = parseCriteria(req.query);
+    const limit = parseLimit(req.query.limit);
+    const page = parseInteger(req.query.page, 'page', 1, Math.floor(MAX_RESULT / limit)) ?? 1;
+    res.json(await workService.advancedSearch(criteria, { limit, page }));
+  });
+
+  router.get('/suggest/:kind', async (req, res) => {
+    const { kind } = req.params;
+    if (kind !== 'venue' && kind !== 'publisher') {
+      throw new HttpError(404, `Nothing to suggest for ${kind}`);
+    }
+    const query = single(req.query.q);
+    if (!query) throw new HttpError(400, 'q is required');
+    if (query.length > MAX_TEXT) throw new HttpError(400, 'q is too long');
+    res.json({ suggestions: await workService.suggest(kind, query) });
   });
 
   router.get('/:id', async (req, res) => {

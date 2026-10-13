@@ -55,6 +55,11 @@ function fakeProvider() {
     ),
     getCitedWorks: vi.fn(),
     searchWorks: vi.fn(async (query, { limit }) => [...catalog.values()].slice(0, limit)),
+    searchWorksAdvanced: vi.fn(async (criteria, { limit, page }) => ({
+      works: [...catalog.values()].slice((page - 1) * limit, page * limit),
+      total: catalog.size,
+    })),
+    suggest: vi.fn(async () => [{ id: 'S1', name: 'Past & Present', hint: null, worksCount: 1 }]),
   };
 }
 
@@ -680,6 +685,79 @@ describe('GET /api/works?q=', () => {
   it('requires q', async () => {
     expect((await api.get('/api/works')).status).toBe(400);
     expect((await api.get('/api/works?q=%20')).status).toBe(400);
+  });
+});
+
+describe('GET /api/works/search', () => {
+  it('returns a page of works with Tracer IDs and the total, and caches it', async () => {
+    const url = '/api/works/search?title=moral&types=book,article&fromYear=1960&limit=2&page=2';
+    const first = await api.get(url);
+    const again = await api.get(url);
+
+    expect(first.status).toBe(200);
+    expect(first.body.total).toBe(4);
+    expect(first.body.works.map((w) => w.externalIds.openalex)).toEqual(['W4', 'W5']);
+    expect(first.body.works[0].id).toBe(await tracerIdOf('W4'));
+    expect(again.body).toEqual(first.body);
+    expect(provider.searchWorksAdvanced).toHaveBeenCalledTimes(1);
+    expect(provider.searchWorksAdvanced).toHaveBeenCalledWith(
+      { title: 'moral', types: ['book', 'article'], fromYear: 1960 },
+      { limit: 2, page: 2 },
+    );
+  });
+
+  it('passes every field through', async () => {
+    await api.get(
+      '/api/works/search?any=a&title=b&author=c&abstract=d&fulltext=e&venue=S1,S2' +
+        '&publisher=P1&toYear=1990&language=FR&minCitations=5&openAccess=true&sort=oldest',
+    );
+    expect(provider.searchWorksAdvanced).toHaveBeenCalledWith(
+      {
+        any: 'a',
+        title: 'b',
+        author: 'c',
+        abstract: 'd',
+        fulltext: 'e',
+        venueIds: ['S1', 'S2'],
+        publisherIds: ['P1'],
+        toYear: 1990,
+        language: 'fr',
+        minCitations: 5,
+        openAccess: true,
+        sort: 'oldest',
+      },
+      { limit: 50, page: 1 },
+    );
+  });
+
+  it.each([
+    ['nothing to search', 'sort=cited'],
+    ['a blank field', 'title=%20'],
+    ['a bad year', 'fromYear=19x0'],
+    ['years out of order', 'fromYear=2000&toYear=1990'],
+    ['a bad venue ID', 'venue=S1,openalex:W1'],
+    ['a bad type', 'types=book|article'],
+    ['a bad language', 'language=french'],
+    ['a bad sort', 'title=a&sort=random'],
+    ['a page past the 10,000th result', 'title=a&limit=100&page=101'],
+  ])('rejects %s', async (_, query) => {
+    expect((await api.get(`/api/works/search?${query}`)).status).toBe(400);
+    expect(provider.searchWorksAdvanced).not.toHaveBeenCalled();
+  });
+});
+
+describe('GET /api/works/suggest/:kind', () => {
+  it('suggests venues and publishers', async () => {
+    const res = await api.get('/api/works/suggest/venue?q=past');
+    expect(res.status).toBe(200);
+    expect(res.body.suggestions[0].name).toBe('Past & Present');
+    expect(provider.suggest).toHaveBeenCalledWith('venue', 'past');
+    expect((await api.get('/api/works/suggest/publisher?q=oup')).status).toBe(200);
+  });
+
+  it('rejects unknown kinds and a missing query', async () => {
+    expect((await api.get('/api/works/suggest/author?q=x')).status).toBe(404);
+    expect((await api.get('/api/works/suggest/venue')).status).toBe(400);
   });
 });
 

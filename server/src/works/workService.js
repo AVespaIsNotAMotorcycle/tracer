@@ -55,6 +55,14 @@ const MAX_ARCHIVE_ITEMS = 5;
 
 const unique = (values) => [...new Set(values)];
 
+/** JSON with keys sorted, so equal objects give equal strings (for cache keys). */
+const stableJson = (value) =>
+  JSON.stringify(value, (key, v) =>
+    v && typeof v === 'object' && !Array.isArray(v)
+      ? Object.fromEntries(Object.entries(v).sort(([a], [b]) => a.localeCompare(b)))
+      : v,
+  );
+
 /** Lowercase letters and digits only, so formatting differences don't matter. */
 const squash = (text) =>
   (text ?? '')
@@ -647,6 +655,44 @@ export function createWorkService({
         .map((tracerId) => byId.get(tracerId))
         .filter((s) => recordOf(s) || isReferenceOnly(s));
       return [...works, ...(await toWorks(ordered))];
+    },
+
+    /**
+     * One page of works matching every field of `criteria` (see SearchCriteria), and how many
+     * match in all. Cached like searches.
+     *
+     * @param {import('../providers/types.js').SearchCriteria} criteria
+     * @returns {Promise<{ works: Work[], total: number }>}
+     */
+    async advancedSearch(criteria, { limit, page }) {
+      if (!provider.searchWorksAdvanced) throw new HttpError(501, 'Advanced search unavailable');
+      const key = `${providerName}:advanced:${limit}:${page}:${stableJson(criteria)}`;
+      const entry = await CacheEntry.findOne({ key, expiresAt: { $gt: now() } })
+        .lean()
+        .exec();
+      if (entry) {
+        return { works: await worksForProviderIds(entry.providerIds), total: entry.total ?? 0 };
+      }
+      const { works, total } = await provider.searchWorksAdvanced(criteria, { limit, page });
+      await saveWorks(works);
+      const providerIds = works.map((work) => work.providerId);
+      await CacheEntry.updateOne(
+        { key },
+        { $set: { providerIds, total, expiresAt: new Date(now().getTime() + ttl.search) } },
+        { upsert: true },
+      );
+      return { works: await worksForProviderIds(providerIds), total };
+    },
+
+    /**
+     * Venues ('venue') or publishers ('publisher') whose names match `query`, for narrowing
+     * an advanced search. Not cached: the provider's autocomplete is free and fast.
+     *
+     * @returns {Promise<import('../providers/types.js').Suggestion[]>}
+     */
+    async suggest(kind, query) {
+      if (!provider.suggest) return [];
+      return provider.suggest(kind, query);
     },
 
     /** @returns {Promise<Work[]>} */

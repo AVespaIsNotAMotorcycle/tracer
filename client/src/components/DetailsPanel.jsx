@@ -85,6 +85,7 @@ export default function DetailsPanel({
   findingCoCitations = false,
   coCitationResult = null,
   onClose,
+  inert = false,
 }) {
   const fullyExpanded = expanded.has('citing') && expanded.has('cited');
   // A listed year set aside as implausible (see layoutYears) shows as a bound instead.
@@ -102,7 +103,7 @@ export default function DetailsPanel({
   const printedOnly = !expandable && Boolean(work.citation) && work.title === work.citation;
 
   return (
-    <aside className="details" aria-labelledby="details-title">
+    <aside className="details" aria-labelledby="details-title" inert={inert}>
       <div className="details-header">
         <span className="muted">{RELATION_LABELS[relation]}</span>
         <button type="button" className="icon-button" onClick={onClose} aria-label="Close details">

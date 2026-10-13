@@ -14,6 +14,7 @@ export default function SearchPanel({
   onOptionsChange,
   onBuild,
   onApply,
+  onAdvanced,
   canApply = false,
   busy,
   search = searchWorks,
@@ -66,6 +67,15 @@ export default function SearchPanel({
           {searching ? 'Searching…' : 'Go'}
         </button>
       </form>
+      {onAdvanced && (
+        <button
+          type="button"
+          className="link-button advanced-link"
+          onClick={() => onAdvanced(looksLikeWorkId(query) ? '' : query.trim())}
+        >
+          Advanced search
+        </button>
+      )}
 
       <fieldset className="options">
         <legend>Graph depth and size</legend>

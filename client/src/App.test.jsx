@@ -28,6 +28,8 @@ vi.mock('./graph/GraphView.jsx', () => ({
 vi.mock('./api.js', async (importOriginal) => ({
   ...(await importOriginal()),
   searchWorks: vi.fn(),
+  advancedSearch: vi.fn(),
+  suggest: vi.fn(),
   getWork: vi.fn(),
   getCiting: vi.fn(),
   getCited: vi.fn(),
@@ -947,6 +949,165 @@ describe('App', () => {
     fireEvent.click(screen.getByRole('button', { name: 'Go' }));
 
     expect(await screen.findByRole('alert')).toHaveTextContent('Work not found: W1');
+  });
+});
+
+describe('advanced search', () => {
+  const book = work('book', { type: 'book', year: 2000, references: [] });
+  const bookCiter = work('bookCiter', { references: ['book'], year: 2005 });
+
+  beforeEach(() => {
+    vi.mocked(api.getCiting).mockImplementation(async (id) =>
+      id === 'anchor' ? [citer] : id === 'book' ? [bookCiter] : [more],
+    );
+    vi.mocked(api.advancedSearch).mockResolvedValue({ works: [anchor, book], total: 2 });
+    vi.mocked(api.suggest).mockResolvedValue([
+      { id: 'S1', name: 'Past & Present', hint: 'Oxford University Press', worksCount: 2616 },
+    ]);
+    vi.mocked(api.getWork).mockImplementation(async (id) => (id === 'book' ? book : anchor));
+  });
+
+  const openAdvanced = () => {
+    const button = screen.getByRole('button', { name: 'Advanced search' });
+    button.focus();
+    fireEvent.click(button);
+    return screen.getByRole('region', { name: 'Advanced search' });
+  };
+  const results = () => screen.findByRole('list', { name: 'Advanced search results' });
+
+  it('opens over the page, starting from the simple search’s text, and closes again', async () => {
+    render(<App />);
+    fireEvent.change(screen.getByLabelText('Title, DOI, or OpenAlex ID'), {
+      target: { value: 'moral economy' },
+    });
+    const page = openAdvanced();
+
+    expect(within(page).getByLabelText('Any field')).toHaveValue('moral economy');
+    expect(within(page).getByLabelText('Any field')).toHaveFocus();
+    expect(document.querySelector('.sidebar')).toHaveAttribute('inert');
+
+    fireEvent.click(within(page).getByRole('button', { name: 'Back' }));
+    expect(screen.queryByRole('region', { name: 'Advanced search' })).not.toBeInTheDocument();
+    expect(document.querySelector('.sidebar')).not.toHaveAttribute('inert');
+    expect(screen.getByRole('button', { name: 'Advanced search' })).toHaveFocus();
+  });
+
+  it('searches by several fields at once', async () => {
+    render(<App />);
+    const page = openAdvanced();
+    fireEvent.change(within(page).getByLabelText('Title'), { target: { value: 'moral' } });
+    fireEvent.change(within(page).getByLabelText('Author'), { target: { value: 'Thompson' } });
+    fireEvent.change(within(page).getByLabelText('Published from'), { target: { value: '1960' } });
+    fireEvent.change(within(page).getByLabelText('to'), { target: { value: '1980' } });
+    fireEvent.click(within(page).getByRole('checkbox', { name: 'Book' }));
+    fireEvent.change(within(page).getByLabelText('Language'), { target: { value: 'fr' } });
+    fireEvent.click(within(page).getByRole('button', { name: 'Search' }));
+
+    expect(await results()).toBeInTheDocument();
+    expect(within(page).getByRole('heading', { name: '2 works found' })).toBeInTheDocument();
+    expect(api.advancedSearch).toHaveBeenCalledWith(
+      {
+        title: 'moral',
+        author: 'Thompson',
+        fromYear: 1960,
+        toYear: 1980,
+        types: ['book'],
+        language: 'fr',
+        sort: 'relevance',
+      },
+      expect.objectContaining({ page: 1 }),
+    );
+  });
+
+  it('picks a venue from suggestions', async () => {
+    render(<App />);
+    const page = openAdvanced();
+    const venue = within(page).getByRole('combobox', { name: 'Journal or series' });
+    fireEvent.change(venue, { target: { value: 'past and present' } });
+    fireEvent.click(await within(page).findByRole('option', { name: /Past & Present/ }));
+
+    expect(within(page).getByRole('list', { name: 'Chosen journal or series' })).toHaveTextContent(
+      'Past & Present',
+    );
+    fireEvent.click(within(page).getByRole('button', { name: 'Search' }));
+    await results();
+    expect(api.advancedSearch).toHaveBeenCalledWith(
+      { venueIds: ['S1'], sort: 'cited' },
+      expect.anything(),
+    );
+  });
+
+  it('refuses a year range that runs backwards', () => {
+    render(<App />);
+    const page = openAdvanced();
+    fireEvent.change(within(page).getByLabelText('Published from'), { target: { value: '1990' } });
+    fireEvent.change(within(page).getByLabelText('to'), { target: { value: '1980' } });
+
+    expect(within(page).getByRole('alert')).toHaveTextContent('after the second');
+    expect(within(page).getByRole('button', { name: 'Search' })).toBeDisabled();
+  });
+
+  it('loads more results', async () => {
+    vi.mocked(api.advancedSearch)
+      .mockResolvedValueOnce({ works: [anchor], total: 2 })
+      .mockResolvedValueOnce({ works: [book], total: 2 });
+    render(<App />);
+    const page = openAdvanced();
+    fireEvent.change(within(page).getByLabelText('Title'), { target: { value: 'x' } });
+    fireEvent.click(within(page).getByRole('button', { name: 'Search' }));
+    fireEvent.click(await within(page).findByRole('button', { name: /Show more \(1 of 2\)/ }));
+
+    await waitFor(() =>
+      expect(within(page).getAllByRole('checkbox', { name: /Title/ })).toHaveLength(2),
+    );
+    expect(api.advancedSearch).toHaveBeenLastCalledWith(
+      expect.anything(),
+      expect.objectContaining({ page: 2 }),
+    );
+  });
+
+  it('builds a graph from the chosen works: the anchor, then the others expanded', async () => {
+    render(<App />);
+    const page = openAdvanced();
+    fireEvent.change(within(page).getByLabelText('Title'), { target: { value: 'x' } });
+    fireEvent.click(within(page).getByRole('button', { name: 'Search' }));
+    const list = await results();
+    fireEvent.click(within(list).getByRole('checkbox', { name: /Title anchor/ }));
+    fireEvent.click(within(list).getByRole('checkbox', { name: /Title book/ }));
+    // The first chosen is the anchor, until another is made the anchor.
+    fireEvent.click(within(page).getByRole('button', { name: 'Make “Title book” the anchor' }));
+    fireEvent.click(within(page).getByRole('button', { name: 'Build graph' }));
+
+    expect(screen.queryByRole('region', { name: 'Advanced search' })).not.toBeInTheDocument();
+    await waitFor(() =>
+      expect(within(graph()).getByRole('button', { name: 'Title citer' })).toBeInTheDocument(),
+    );
+    expect(within(graph()).getByRole('button', { name: 'Title book' })).toBeInTheDocument();
+    expect(api.getWork).toHaveBeenCalledWith('book', expect.anything());
+    expect(api.getCiting).toHaveBeenCalledWith('anchor', expect.anything());
+    await waitFor(() => expect(window.location.search).toBe('?anchor=Wbook'));
+    // The others are pinned; the anchor is always shown anyway.
+    expect(screen.getByText(/· 1 pinned/)).toBeInTheDocument();
+  });
+
+  it('adds chosen works to the graph on screen, expanding them', async () => {
+    await buildFromSearch();
+    const page = openAdvanced();
+    fireEvent.change(within(page).getByLabelText('Any field'), { target: { value: 'x' } });
+    fireEvent.click(within(page).getByRole('button', { name: 'Search' }));
+    const list = await results();
+    expect(within(list).getByText('On the graph')).toBeInTheDocument();
+    fireEvent.click(within(list).getByRole('checkbox', { name: /Title book/ }));
+    fireEvent.click(within(page).getByRole('button', { name: 'Add to current graph' }));
+
+    await waitFor(() =>
+      expect(within(graph()).getByRole('button', { name: 'Title book' })).toBeInTheDocument(),
+    );
+    expect(within(graph()).getByRole('button', { name: 'Title bookCiter' })).toBeInTheDocument();
+    expect(within(graph()).getByRole('button', { name: 'Title anchor' })).toBeInTheDocument();
+    expect(api.getCiting).toHaveBeenCalledWith('book', expect.anything());
+    expect(api.getCited).toHaveBeenCalledWith('book', expect.anything());
+    expect(screen.getByText(/Showing \d+ of \d+ · 1 pinned/)).toBeInTheDocument();
   });
 });
 

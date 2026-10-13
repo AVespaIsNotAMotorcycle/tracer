@@ -98,6 +98,61 @@ export function normalizeWork(raw) {
   };
 }
 
+// Text fields of an advanced search and the OpenAlex filter each searches.
+const TEXT_FILTERS = {
+  any: 'default.search',
+  title: 'title.search',
+  author: 'raw_author_name.search',
+  abstract: 'abstract.search',
+  fulltext: 'fulltext.search',
+};
+
+const SORTS = {
+  relevance: 'relevance_score:desc',
+  cited: 'cited_by_count:desc',
+  newest: 'publication_year:desc',
+  oldest: 'publication_year:asc',
+};
+
+/**
+ * The OpenAlex `filter` and `sort` for an advanced search. Commas and pipes separate filters
+ * and values, so they're dropped from text. Relevance needs a text field; without one, the
+ * most-cited works come first.
+ *
+ * @param {import('./types.js').SearchCriteria} criteria
+ * @returns {{ filter: string, sort: string }}
+ */
+export function advancedSearchParams(criteria) {
+  const filters = [];
+  for (const [field, filter] of Object.entries(TEXT_FILTERS)) {
+    const text = criteria[field]?.replace(/[,|]/g, ' ').replace(/\s+/g, ' ').trim();
+    if (text) filters.push(`${filter}:${text}`);
+  }
+  const hasText = filters.length > 0;
+  if (criteria.venueIds?.length) {
+    filters.push(`primary_location.source.id:${criteria.venueIds.join('|')}`);
+  }
+  if (criteria.publisherIds?.length) {
+    filters.push(
+      `primary_location.source.host_organization_lineage:${criteria.publisherIds.join('|')}`,
+    );
+  }
+  const { fromYear, toYear } = criteria;
+  if (fromYear != null || toYear != null) {
+    filters.push(`publication_year:${fromYear ?? ''}-${toYear ?? ''}`);
+  }
+  if (criteria.types?.length) filters.push(`type:${criteria.types.join('|')}`);
+  if (criteria.language) filters.push(`language:${criteria.language}`);
+  if (criteria.minCitations) filters.push(`cited_by_count:>${criteria.minCitations - 1}`);
+  if (criteria.openAccess) filters.push('open_access.is_oa:true');
+
+  const sort = criteria.sort ?? 'relevance';
+  return {
+    filter: filters.join(','),
+    sort: sort === 'relevance' && !hasText ? SORTS.cited : SORTS[sort],
+  };
+}
+
 function chunk(items, size) {
   const chunks = [];
   for (let i = 0; i < items.length; i += size) chunks.push(items.slice(i, i + size));
@@ -244,6 +299,43 @@ export function createOpenAlexProvider({
     return listWorks({ search: query }, limit);
   }
 
+  /**
+   * One page of works matching every given field (see advancedSearchParams), with how many
+   * match in all. Filters cost list credits, not search credits.
+   */
+  async function searchWorksAdvanced(criteria, { limit = 25, page = 1 } = {}) {
+    const { filter, sort } = advancedSearchParams(criteria);
+    const data = await request('/works', {
+      filter,
+      sort,
+      select: SELECT_FIELDS,
+      per_page: Math.min(MAX_PER_PAGE, limit),
+      page,
+    });
+    return {
+      works: (data?.results ?? []).map(normalizeWork),
+      total: data?.meta?.count ?? 0,
+    };
+  }
+
+  /**
+   * Venues ('venue': journals, book series) or publishers ('publisher') whose names match
+   * `query`, for picking one to search within. Autocomplete requests are free.
+   *
+   * @returns {Promise<import('./types.js').Suggestion[]>}
+   */
+  async function suggest(kind, query) {
+    const entity = { venue: 'sources', publisher: 'publishers' }[kind];
+    if (!entity) throw new ProviderError(NAME, `unknown suggestion kind: ${kind}`);
+    const data = await request(`/autocomplete/${entity}`, { q: query });
+    return (data?.results ?? []).map((result) => ({
+      id: result.id.replace(/^https?:\/\/openalex\.org\//, ''),
+      name: result.display_name,
+      hint: result.hint ?? null,
+      worksCount: result.works_count ?? null,
+    }));
+  }
+
   return {
     name: NAME,
     getWork,
@@ -252,5 +344,7 @@ export function createOpenAlexProvider({
     getCitingWorks,
     getCitedWorks,
     searchWorks,
+    searchWorksAdvanced,
+    suggest,
   };
 }

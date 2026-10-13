@@ -5,6 +5,8 @@ import mongoose from 'mongoose';
 const cacheEntrySchema = new mongoose.Schema({
   key: { type: String, required: true, unique: true },
   providerIds: { type: [String], default: [] },
+  // For a page of search results: how many works match in all.
+  total: { type: Number },
   expiresAt: { type: Date, required: true },
 });
 

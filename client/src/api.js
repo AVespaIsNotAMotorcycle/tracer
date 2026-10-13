@@ -24,6 +24,31 @@ export async function searchWorks(query, { limit = 20, signal } = {}) {
   return (await get(`/api/works?${params}`, { signal })).works;
 }
 
+/**
+ * Works matching every field of `criteria` (any, title, author, abstract, fulltext, venueIds,
+ * publisherIds, fromYear, toYear, types, language, minCitations, openAccess, sort), one page
+ * at a time: { works, total }, where total counts every match.
+ */
+export async function advancedSearch(criteria, { limit = 25, page = 1, signal } = {}) {
+  const params = new URLSearchParams({ limit: String(limit), page: String(page) });
+  const lists = { venueIds: 'venue', publisherIds: 'publisher', types: 'types' };
+  for (const [key, value] of Object.entries(criteria)) {
+    if (value == null || value === '' || value === false) continue;
+    if (Array.isArray(value)) {
+      if (value.length) params.set(lists[key] ?? key, value.join(','));
+    } else {
+      params.set(key, String(value).trim());
+    }
+  }
+  return get(`/api/works/search?${params}`, { signal });
+}
+
+/** Venues ('venue') or publishers ('publisher') named like `query`: [{ id, name, hint }]. */
+export async function suggest(kind, query, { signal } = {}) {
+  const params = new URLSearchParams({ q: query });
+  return (await get(`/api/works/suggest/${kind}?${params}`, { signal })).suggestions;
+}
+
 export async function getWork(id, { signal } = {}) {
   return (await get(workPath(id), { signal })).work;
 }

@@ -1,6 +1,7 @@
 import { describe, expect, it, vi } from 'vitest';
 import { ProviderError } from './errors.js';
 import {
+  advancedSearchParams,
   createOpenAlexProvider,
   normalizeWork,
   reconstructAbstract,
@@ -317,6 +318,61 @@ describe('createOpenAlexProvider', () => {
     });
   });
 
+  describe('searchWorksAdvanced', () => {
+    it('requests one page of the filter, with the total', async () => {
+      const { provider, requestedUrl } = setup(
+        jsonResponse({ meta: { count: 1234 }, results: [rawWork('W1'), rawWork('W2')] }),
+      );
+
+      const result = await provider.searchWorksAdvanced(
+        { title: 'moral economy', sort: 'cited' },
+        { limit: 2, page: 3 },
+      );
+
+      expect(result.total).toBe(1234);
+      expect(result.works.map((w) => w.providerId)).toEqual(['W1', 'W2']);
+      const url = requestedUrl(0);
+      expect(url.searchParams.get('filter')).toBe('title.search:moral economy');
+      expect(url.searchParams.get('sort')).toBe('cited_by_count:desc');
+      expect(url.searchParams.get('per_page')).toBe('2');
+      expect(url.searchParams.get('page')).toBe('3');
+    });
+  });
+
+  describe('suggest', () => {
+    it('autocompletes venues as short IDs', async () => {
+      const { provider, requestedUrl } = setup(
+        jsonResponse({
+          results: [
+            {
+              id: 'https://openalex.org/S42922845',
+              display_name: 'Past & Present',
+              hint: 'Oxford University Press',
+              works_count: 2616,
+            },
+          ],
+        }),
+      );
+
+      expect(await provider.suggest('venue', 'past and present')).toEqual([
+        {
+          id: 'S42922845',
+          name: 'Past & Present',
+          hint: 'Oxford University Press',
+          worksCount: 2616,
+        },
+      ]);
+      expect(requestedUrl(0).pathname).toBe('/autocomplete/sources');
+      expect(requestedUrl(0).searchParams.get('q')).toBe('past and present');
+    });
+
+    it('autocompletes publishers', async () => {
+      const { provider, requestedUrl } = setup(jsonResponse({ results: [] }));
+      await provider.suggest('publisher', 'cambridge');
+      expect(requestedUrl(0).pathname).toBe('/autocomplete/publishers');
+    });
+  });
+
   describe('requests', () => {
     it('sends the API key as a Bearer token', async () => {
       const fetch = vi.fn().mockResolvedValue(jsonResponse(rawWork('W1')));
@@ -384,5 +440,60 @@ describe('createOpenAlexProvider', () => {
 
       await expect(provider.getWork('W1')).rejects.toThrow(ProviderError);
     });
+  });
+});
+
+describe('advancedSearchParams', () => {
+  it('combines every field into one filter', () => {
+    const { filter, sort } = advancedSearchParams({
+      any: 'qing',
+      title: 'manchus',
+      author: 'Rhoads',
+      abstract: 'banner',
+      fulltext: 'eight banners',
+      venueIds: ['S1', 'S2'],
+      publisherIds: ['P3'],
+      fromYear: 1990,
+      toYear: 2010,
+      types: ['book', 'book-chapter'],
+      language: 'en',
+      minCitations: 10,
+      openAccess: true,
+    });
+
+    expect(filter.split(',')).toEqual([
+      'default.search:qing',
+      'title.search:manchus',
+      'raw_author_name.search:Rhoads',
+      'abstract.search:banner',
+      'fulltext.search:eight banners',
+      'primary_location.source.id:S1|S2',
+      'primary_location.source.host_organization_lineage:P3',
+      'publication_year:1990-2010',
+      'type:book|book-chapter',
+      'language:en',
+      'cited_by_count:>9',
+      'open_access.is_oa:true',
+    ]);
+    expect(sort).toBe('relevance_score:desc');
+  });
+
+  it('drops commas and pipes from text, which would split the filter', () => {
+    expect(advancedSearchParams({ title: 'Manchus, Han | Qing' }).filter).toBe(
+      'title.search:Manchus Han Qing',
+    );
+  });
+
+  it('leaves either end of a year range open', () => {
+    expect(advancedSearchParams({ fromYear: 1900 }).filter).toBe('publication_year:1900-');
+    expect(advancedSearchParams({ toYear: 1900 }).filter).toBe('publication_year:-1900');
+  });
+
+  it('sorts by citations when there is no text to rank by relevance', () => {
+    expect(advancedSearchParams({ types: ['book'] }).sort).toBe('cited_by_count:desc');
+    expect(advancedSearchParams({ title: ',', types: ['book'] }).sort).toBe('cited_by_count:desc');
+    expect(advancedSearchParams({ types: ['book'], sort: 'oldest' }).sort).toBe(
+      'publication_year:asc',
+    );
   });
 });

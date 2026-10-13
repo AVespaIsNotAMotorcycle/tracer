@@ -3,6 +3,7 @@ import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { getSavedGraph, saveGraph, saveGraphSnapshot, updateGraph } from './api.js';
 import './App.css';
 import { useAuth } from './auth/useAuth.js';
+import AdvancedSearch from './components/AdvancedSearch.jsx';
 import DetailsPanel from './components/DetailsPanel.jsx';
 import FiltersPanel from './components/FiltersPanel.jsx';
 import Header from './components/Header.jsx';
@@ -73,6 +74,7 @@ function GraphPage({ auth }) {
     reanchor,
     expand,
     collapse,
+    addWorks,
     findCoCitations,
     applyCoCitations,
     reset,
@@ -109,6 +111,15 @@ function GraphPage({ auth }) {
   // can update it. A new search starts a new, unsaved graph.
   const [savedGraph, setSavedGraph] = useState(null);
   const [openError, setOpenError] = useState(null);
+  // Advanced search fills the page below the header while open. Once opened it stays mounted
+  // (hidden), so its fields, results and chosen works are still there next time; `query` is
+  // the simple search's text when it was first opened, to start from.
+  const [advanced, setAdvanced] = useState({ mounted: false, open: false, query: '' });
+  const openAdvanced = (query) =>
+    setAdvanced((prev) =>
+      prev.mounted ? { ...prev, open: true } : { mounted: true, open: true, query },
+    );
+  const closeAdvanced = useCallback(() => setAdvanced((prev) => ({ ...prev, open: false })), []);
 
   // What the graph shows: each book's chapters folded into the book (see foldBookParts).
   // Everything drawn or filtered works from this view; `graph` keeps every work.
@@ -146,16 +157,30 @@ function GraphPage({ auth }) {
   // that build used, not whatever the form shows by the time it finishes.
   const pendingUrl = useRef(null);
 
-  const handleBuild = (anchorId) => {
+  // Builds a new graph around `anchorId`. Any `extraIds` (works chosen together in advanced
+  // search) are then added and expanded, as if the user had expanded each, and pinned: the user
+  // asked for them, so filters (such as minimum links, for a work nothing cites) don't hide them.
+  const handleBuild = (anchorId, extraIds = []) => {
     setSelectedId(null);
     setFilters(NO_FILTERS);
-    setPinned(new Set());
+    setPinned(new Set(extraIds));
     setCoCitations(null);
     setSavedGraph(null);
     setOpenError(null);
     pendingUrl.current = { mode: 'push', options };
     setRunCount((n) => n + 1);
-    build(anchorId, options);
+    if (extraIds.length) {
+      restore({ anchorId, options, expanded: extraIds }, 'Building graph');
+    } else {
+      build(anchorId, options);
+    }
+  };
+
+  // Adds works chosen in advanced search to the graph on screen, expanding and pinning each.
+  const handleAddWorks = (ids) => {
+    setPinned((prev) => new Set([...prev, ...ids]));
+    setRunCount((n) => n + 1);
+    addWorks(ids, options);
   };
 
   // Rebuild the current graph with the form's options: a re-anchor on the same anchor, so works
@@ -393,12 +418,31 @@ function GraphPage({ auth }) {
   return (
     <div className={`app${selected ? ' has-details' : ''}`}>
       <Header auth={auth} />
-      <aside className="sidebar">
+      {advanced.mounted && (
+        <AdvancedSearch
+          hidden={!advanced.open}
+          initialQuery={advanced.query}
+          onClose={closeAdvanced}
+          onBuild={([anchorId, ...rest]) => {
+            closeAdvanced();
+            handleBuild(anchorId, rest);
+          }}
+          onAdd={(ids) => {
+            closeAdvanced();
+            handleAddWorks(ids);
+          }}
+          hasGraph={hasGraph}
+          onGraph={graph.works}
+          busy={busy}
+        />
+      )}
+      <aside className="sidebar" inert={advanced.open}>
         <SearchPanel
           options={options}
           onOptionsChange={setOptions}
           onBuild={handleBuild}
           onApply={hasGraph ? handleApplyOptions : undefined}
+          onAdvanced={openAdvanced}
           canApply={graphOptions != null && !sameOptions(options, graphOptions)}
           busy={busy}
         />
@@ -447,7 +491,7 @@ function GraphPage({ auth }) {
         )}
       </aside>
 
-      <main className="canvas">
+      <main className="canvas" inert={advanced.open}>
         <div className="canvas-overlay">
           <LoadingProgress tasks={tasks} />
           {/* Announced to screen readers only on start/finish, not every request. While a
@@ -559,6 +603,7 @@ function GraphPage({ auth }) {
               : undefined
           }
           onClose={() => setSelectedId(null)}
+          inert={advanced.open}
         />
       )}
     </div>

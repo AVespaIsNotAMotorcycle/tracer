@@ -1,4 +1,5 @@
 import AccountMenu from './AccountMenu.jsx';
+import TracerMark from './TracerMark.jsx';
 
 /** The page header: the app's name (linking home) and the account controls. */
 export default function Header({ auth }) {
@@ -6,6 +7,7 @@ export default function Header({ auth }) {
     <header className="app-header">
       <h1>
         <a href="/" className="home-link">
+          <TracerMark size={32} style={{ marginBottom: '-8px' }} />
           Tracer
         </a>
       </h1>

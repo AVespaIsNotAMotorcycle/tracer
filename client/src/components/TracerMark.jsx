@@ -3,10 +3,16 @@
  * so it follows the surrounding text color in light and dark mode. Decorative by default,
  * since it's shown next to the "Tracer" name; pass a `title` to give it an accessible name.
  */
-export default function TracerMark({ size = 32, title }) {
+export default function TracerMark({ size = 32, style = {}, title }) {
   const labelProps = title ? { role: 'img', 'aria-label': title } : { 'aria-hidden': true };
   return (
-    <svg width={size} height={size} viewBox="0 0 100 100" fill="none" {...labelProps}>
+    <svg
+	  width={size}
+	  height={size}
+	  style={style}
+	  viewBox="0 0 100 100"
+	  fill="none" {...labelProps}
+	>
       <rect
         x="14"
         y="14"

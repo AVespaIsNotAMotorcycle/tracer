@@ -6,6 +6,7 @@ import DetailsPanel from './components/DetailsPanel.jsx';
 import FiltersPanel from './components/FiltersPanel.jsx';
 import LoadingProgress from './components/LoadingProgress.jsx';
 import SearchPanel from './components/SearchPanel.jsx';
+import TracerMark from './components/TracerMark.jsx';
 import ViewPanel from './components/ViewPanel.jsx';
 import { DEFAULT_AXIS_ANGLE } from './graph/axis.js';
 import GraphView from './graph/GraphView.jsx';
@@ -188,7 +189,10 @@ export default function App() {
   return (
     <div className={`app${selected ? ' has-details' : ''}`}>
       <header className="app-header">
-        <h1>Tracer</h1>
+        <h1>
+          <TracerMark size={28} />
+          Tracer
+        </h1>
         <p className="muted">Citation graphs for the humanities</p>
         <AccountMenu
           user={auth.user}

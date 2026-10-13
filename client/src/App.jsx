@@ -9,6 +9,7 @@ import LoadingProgress from './components/LoadingProgress.jsx';
 import ProfilePage from './components/ProfilePage.jsx';
 import SaveGraph from './components/SaveGraph.jsx';
 import SearchPanel from './components/SearchPanel.jsx';
+import TracerMark from './components/TracerMark.jsx';
 import ViewPanel from './components/ViewPanel.jsx';
 import { DEFAULT_AXIS_ANGLE } from './graph/axis.js';
 import GraphView from './graph/GraphView.jsx';
@@ -276,8 +277,19 @@ function GraphPage({ auth }) {
 
   return (
     <div className={`app${selected ? ' has-details' : ''}`}>
-      <Header auth={auth} />
-
+      <header className="app-header">
+        <h1>
+          <TracerMark size={28} />
+          Tracer
+        </h1>
+        <p className="muted">Citation graphs for the humanities</p>
+        <AccountMenu
+          user={auth.user}
+          onSignUp={auth.signUp}
+          onLogIn={auth.logIn}
+          onLogOut={auth.logOut}
+        />
+      </header>
       <aside className="sidebar">
         <SearchPanel
           options={options}

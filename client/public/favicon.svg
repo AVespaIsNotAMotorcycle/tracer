@@ -1,0 +1,16 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 100 100" fill="none">
+  <!-- Simplified for 16-32px: three pins instead of four, heavier strokes. Switches to Linen in dark mode. -->
+  <style>
+    .c { color: #363537; }
+    @media (prefers-color-scheme: dark) { .c { color: #ffede1; } }
+  </style>
+  <g class="c">
+    <rect x="12" y="12" width="76" height="76" rx="8" transform="rotate(-7 50 50)" stroke="currentColor" stroke-width="8"/>
+    <polyline points="31,33 70,41 38,69" stroke="currentColor" stroke-width="7" stroke-linejoin="round" stroke-linecap="round"/>
+    <g fill="currentColor">
+      <circle cx="31" cy="33" r="11"/>
+      <circle cx="70" cy="41" r="10"/>
+      <circle cx="38" cy="69" r="10"/>
+    </g>
+  </g>
+</svg>

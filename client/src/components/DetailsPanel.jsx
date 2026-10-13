@@ -1,10 +1,11 @@
 import { useEffect, useState } from 'react';
-import { getArchiveItems } from '../api.js';
+import { getArchiveItems, getCitationMatch } from '../api.js';
 import { canExpand } from '../graph/graphModel.js';
 import { sourceType } from '../graph/sourceTypes.js';
 
 const LINK_LABELS = {
   doi: 'DOI',
+  jstor: 'JSTOR',
   landing_page: 'Publisher page',
   pdf: 'Open-access PDF',
   provider: 'OpenAlex',
@@ -18,20 +19,24 @@ const ARCHIVE_ACCESS = {
 };
 
 /**
- * Copies of the work on the Internet Archive, looked up when it's selected (the server caches
- * them). Empty until they arrive, and if the lookup fails: they're only extra links.
+ * Something looked up about the selected work (`lookup(id, { signal })`; the server caches
+ * it): `empty` until it arrives, and if the lookup fails, since it only adds links. Skipped
+ * when `enabled` is false.
  */
-function useArchiveItems(id) {
-  const [found, setFound] = useState({ id: null, items: [] });
+function useWorkLookup(lookup, id, empty, enabled = true) {
+  const [found, setFound] = useState({ id: null, value: empty });
   useEffect(() => {
+    if (!enabled) return undefined;
     const controller = new AbortController();
-    getArchiveItems(id, { signal: controller.signal })
-      .then((items) => setFound({ id, items: items ?? [] }))
+    lookup(id, { signal: controller.signal })
+      .then((value) => setFound({ id, value: value ?? empty }))
       .catch(() => {});
     return () => controller.abort();
-  }, [id]);
-  return found.id === id ? found.items : [];
+  }, [lookup, id, empty, enabled]);
+  return enabled && found.id === id ? found.value : empty;
 }
+
+const NO_ITEMS = [];
 
 const RELATION_LABELS = {
   anchor: 'Anchor',
@@ -75,7 +80,11 @@ export default function DetailsPanel({
   const byline = [year, work.venue].filter(Boolean).join(' · ');
   const { label: typeLabel, Icon: TypeIcon } = sourceType(work.type);
   const expandable = canExpand(work);
-  const archiveItems = useArchiveItems(work.id);
+  // Copies on the Internet Archive; for a work not on OpenAlex, also the work Crossref
+  // matched its citation to.
+  const archiveItems = useWorkLookup(getArchiveItems, work.id, NO_ITEMS);
+  const match = useWorkLookup(getCitationMatch, work.id, null, !expandable && !work.links.length);
+  const links = [...work.links, ...(match?.links ?? [])];
 
   return (
     <aside className="details" aria-labelledby="details-title">
@@ -107,6 +116,14 @@ export default function DetailsPanel({
           </p>
           {work.citation && work.citation !== work.title && (
             <blockquote className="citation">{work.citation}</blockquote>
+          )}
+          {match && (
+            <p className="muted small">
+              Crossref matches it to &ldquo;{match.title}&rdquo;
+              {[match.venue, match.year].filter(Boolean).length > 0 &&
+                ` (${[match.venue, match.year].filter(Boolean).join(', ')})`}
+              , linked below.
+            </p>
           )}
         </>
       )}
@@ -152,11 +169,11 @@ export default function DetailsPanel({
         </button>
       )}
 
-      {(work.links.length > 0 || archiveItems.length > 0) && (
+      {(links.length > 0 || archiveItems.length > 0) && (
         <>
           <h3>Links</h3>
           <ul className="links">
-            {work.links.map((link) => (
+            {links.map((link) => (
               <li key={link.url}>
                 <a href={link.url} target="_blank" rel="noopener noreferrer">
                   {LINK_LABELS[link.kind] ?? link.kind}

@@ -54,6 +54,10 @@ export function createWorksRouter(workService) {
     res.json({ works: await workService.getCitedWorks(req.params.id, { limit }) });
   });
 
+  router.get('/:id/match', async (req, res) => {
+    res.json({ match: await workService.getCitationMatch(req.params.id) });
+  });
+
   router.get('/:id/archive', async (req, res) => {
     res.json({ items: await workService.getArchiveItems(req.params.id) });
   });

@@ -1,5 +1,6 @@
 import { describe, expect, it } from 'vitest';
-import { mainTitle, matchArchiveItems, searchWords } from './archiveMatch.js';
+import { matchArchiveItems, searchWords } from './archiveMatch.js';
+import { mainTitle, surname } from './textMatch.js';
 
 const item = (identifier, title, creators = [], overrides = {}) => ({
   identifier,
@@ -85,5 +86,17 @@ describe('matchArchiveItems', () => {
     expect(matchArchiveItems({ title: null, authors: [], year: null }, [item('x', '')])).toEqual(
       [],
     );
+  });
+});
+
+describe('surname', () => {
+  it.each([
+    ['E. P. Thompson', 'thompson'],
+    ['Thompson, E. P.', 'thompson'],
+    ['Fox E.W.', 'fox'],
+    ['Whiting Fox', 'fox'],
+    ['Zebrowski', 'zebrowski'],
+  ])('%s', (name, expected) => {
+    expect(surname(name)).toBe(expected);
   });
 });

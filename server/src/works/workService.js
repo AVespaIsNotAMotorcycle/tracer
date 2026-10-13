@@ -3,6 +3,7 @@ import { Source } from '../models/Source.js';
 import { normalizeDoi } from '../providers/ids.js';
 import { toOpenAlexId } from '../providers/openalex.js';
 import { matchArchiveItems, searchWords } from './archiveMatch.js';
+import { citationQuery, doiLinks, matchCitation } from './citationMatch.js';
 import { HttpError } from './errors.js';
 
 /** @typedef {import('../providers/types.js').Provider} Provider */
@@ -24,6 +25,7 @@ export const DEFAULT_TTLS = {
   search: 1 * DAY_MS,
   references: 30 * DAY_MS,
   archive: 30 * DAY_MS,
+  citationMatch: 30 * DAY_MS,
 };
 // Most Internet Archive items returned per work (editions and copies of a book).
 const MAX_ARCHIVE_ITEMS = 5;
@@ -206,7 +208,7 @@ export function createWorkService({
           abstract: null,
           citedByCount: null,
           references: [],
-          links: citation.doi ? [{ kind: 'doi', url: `https://doi.org/${citation.doi}` }] : [],
+          links: citation.doi ? doiLinks(citation.doi) : [],
           providers: [referenceProvider?.name ?? 'crossref'],
           citation: citation.unstructured,
         };
@@ -533,6 +535,37 @@ export function createWorkService({
         { $set: { [field]: { data: { items }, fetchedAt: now() } } },
       );
       return items;
+    },
+
+    /**
+     * For a reference-only work, the work Crossref's citation search matched it to (see
+     * matchCitation), with links to it (its DOI, and JSTOR for a JSTOR DOI); null when there's
+     * none, or for any other work. Cached on its Source, misses too. A failed search is logged
+     * and gives the cached match, if any: it's an extra, not worth an error.
+     */
+    async getCitationMatch(id) {
+      if (!referenceProvider?.searchCitation) return null;
+      const source = await loadSource(id);
+      if (!isReferenceOnly(source) || source.citation.doi) return null;
+      const cached = source.citationMatch;
+      const withLinks = (match) => (match ? { ...match, links: doiLinks(match.doi) } : null);
+      if (cached?.fetchedAt && now() - cached.fetchedAt < ttl.citationMatch) {
+        return withLinks(cached.data);
+      }
+      const query = citationQuery(source.citation);
+      if (!query) return null;
+      let match;
+      try {
+        match = matchCitation(source.citation, await referenceProvider.searchCitation(query));
+      } catch (err) {
+        console.error(err);
+        return withLinks(cached?.data ?? null);
+      }
+      await Source.updateOne(
+        { _id: source._id },
+        { $set: { citationMatch: { data: match, fetchedAt: now() } } },
+      );
+      return withLinks(match);
     },
 
     /** Works that cite `id`, most-cited first. @returns {Promise<Work[]>} */

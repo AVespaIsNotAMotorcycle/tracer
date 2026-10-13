@@ -11,6 +11,7 @@ import mongoose from 'mongoose';
 // deposited with Crossref) that no citation database has: an archival source, say. It has no
 // records; `citation` holds the reference as deposited, and `externalIds.citation` a key
 // built from it (citationKey), so works citing the same thing share one source.
+// `citationMatch` caches what Crossref's citation search found for it.
 const sourceSchema = new mongoose.Schema(
   {
     externalIds: {
@@ -21,6 +22,9 @@ const sourceSchema = new mongoose.Schema(
       citation: String,
     },
     citation: mongoose.Schema.Types.Mixed,
+    // For a reference-only source: the work Crossref's citation search matched it to
+    // (a CrossrefWork), or null for none, and when that was looked up.
+    citationMatch: { data: mongoose.Schema.Types.Mixed, fetchedAt: Date },
     records: {
       type: Map,
       of: new mongoose.Schema(

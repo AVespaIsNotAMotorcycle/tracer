@@ -141,3 +141,39 @@ describe('createCrossrefProvider', () => {
     expect(fetch).not.toHaveBeenCalled();
   });
 });
+
+describe('searchCitation', () => {
+  const found = {
+    DOI: '10.2307/2942138',
+    title: ["The Manchu-Chinese Dyarchy in the 1840's and '50's"],
+    author: [{ given: 'John K.', family: 'Fairbank' }],
+    issued: { 'date-parts': [[1953, 2]] },
+    type: 'journal-article',
+    'container-title': ['The Far Eastern Quarterly'],
+    resource: { primary: { URL: 'https://www.jstor.org/stable/2942138?origin=crossref' } },
+  };
+
+  it('searches by citation and returns candidate works', async () => {
+    const { provider, fetch } = setup(
+      jsonResponse({ message: { items: [found, { title: ['No DOI'] }] } }),
+    );
+    const works = await provider.searchCitation('Fairbank Manchu-Chinese Dyarchy 1953');
+    expect(works).toEqual([
+      {
+        doi: '10.2307/2942138',
+        title: "The Manchu-Chinese Dyarchy in the 1840's and '50's",
+        authors: [{ name: 'John K. Fairbank', family: 'Fairbank' }],
+        year: 1953,
+        type: 'journal-article',
+        venue: 'The Far Eastern Quarterly',
+        url: 'https://www.jstor.org/stable/2942138?origin=crossref',
+      },
+    ]);
+    const url = new URL(fetch.mock.calls[0][0]);
+    expect(url.pathname).toBe('/works');
+    expect(url.searchParams.get('query.bibliographic')).toBe(
+      'Fairbank Manchu-Chinese Dyarchy 1953',
+    );
+    expect(url.searchParams.get('rows')).toBe('5');
+  });
+});

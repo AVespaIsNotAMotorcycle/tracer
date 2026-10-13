@@ -41,6 +41,14 @@ export async function getArchiveItems(id, { signal } = {}) {
   return (await get(`${workPath(id)}/archive`, { signal })).items;
 }
 
+/**
+ * For a work not on OpenAlex, the work Crossref's citation search matched it to
+ * ({ doi, title, authors, year, venue, type, links }), or null.
+ */
+export async function getCitationMatch(id, { signal } = {}) {
+  return (await get(`${workPath(id)}/match`, { signal })).match;
+}
+
 // Accounts. The session lives in an httpOnly cookie the browser sends with same-origin
 // requests; the server requires JSON for anything that changes state.
 async function post(path, body = {}) {

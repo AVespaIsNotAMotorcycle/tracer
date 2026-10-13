@@ -3,6 +3,22 @@ import { normalizeDoi } from './ids.js';
 
 /** @typedef {import('./types.js').ProviderReference} ProviderReference */
 
+/**
+ * A work Crossref has a DOI for, as found by a citation search.
+ *
+ * @typedef {object} CrossrefWork
+ * @property {string} doi            Normalized with normalizeDoi().
+ * @property {string | null} title
+ * @property {{ name: string, family: string | null }[]} authors  Or its editors, if it has none.
+ * @property {number | null} year
+ * @property {string | null} type    Crossref's type, e.g. "journal-article", "book".
+ * @property {string | null} venue   Journal or book series.
+ * @property {string | null} url     Where the DOI resolves (the publisher's or JSTOR's page).
+ */
+
+// Fields a citation search returns, to keep responses small.
+const SEARCH_FIELDS = 'DOI,title,author,issued,type,container-title,resource';
+
 const NAME = 'crossref';
 const DEFAULT_BASE_URL = 'https://api.crossref.org';
 
@@ -44,8 +60,31 @@ export function normalizeReference(raw) {
 }
 
 /**
- * Creates the Crossref adapter. It only reads reference lists: Crossref is where publishers
- * deposit them, including the entries OpenAlex couldn't match to a work.
+ * Converts one work from a Crossref search.
+ *
+ * @param {any} raw
+ * @returns {CrossrefWork}
+ */
+export function normalizeCrossrefWork(raw) {
+  return {
+    doi: normalizeDoi(raw.DOI),
+    title: raw.title?.[0] ?? null,
+    // Edited books list their editors instead.
+    authors: (raw.author?.length ? raw.author : (raw.editor ?? [])).map((author) => ({
+      name: author.name ?? [author.given, author.family].filter(Boolean).join(' '),
+      family: author.family ?? null,
+    })),
+    year: raw.issued?.['date-parts']?.[0]?.[0] ?? null,
+    type: raw.type ?? null,
+    venue: raw['container-title']?.[0] ?? null,
+    url: raw.resource?.primary?.URL ?? null,
+  };
+}
+
+/**
+ * Creates the Crossref adapter. It reads reference lists (Crossref is where publishers
+ * deposit them, including the entries OpenAlex couldn't match to a work), and searches for
+ * the work a citation refers to.
  *
  * Crossref's public pool allows one request at a time, so requests are queued. A `mailto`
  * moves them to the faster "polite" pool.
@@ -119,6 +158,24 @@ export function createCrossrefProvider({
       const data = await enqueue(() => request(`/works/${encodeURIComponent(normalized)}`));
       if (!data) return null;
       return (data.message?.reference ?? []).map(normalizeReference);
+    },
+
+    /**
+     * The works most likely to be the one `citation` refers to, best first, by Crossref's
+     * citation matching. They're only candidates: the caller checks them.
+     *
+     * @param {string} citation  The citation as text (as printed, or assembled from fields).
+     * @param {{ rows?: number }} [options]
+     * @returns {Promise<CrossrefWork[]>}
+     */
+    async searchCitation(citation, { rows = 5 } = {}) {
+      const params = new URLSearchParams({
+        'query.bibliographic': citation,
+        rows: String(rows),
+        select: SEARCH_FIELDS,
+      });
+      const data = await enqueue(() => request(`/works?${params}`));
+      return (data?.message?.items ?? []).map(normalizeCrossrefWork).filter((work) => work.doi);
     },
   };
 }

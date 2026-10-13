@@ -31,6 +31,7 @@ vi.mock('./api.js', async (importOriginal) => ({
   getCiting: vi.fn(),
   getCited: vi.fn(),
   getArchiveItems: vi.fn(),
+  getCitationMatch: vi.fn(),
   getCurrentUser: vi.fn(),
   signUp: vi.fn(),
   logIn: vi.fn(),
@@ -80,6 +81,7 @@ beforeEach(() => {
   vi.mocked(api.getCiting).mockImplementation(async (id) => (id === 'anchor' ? [citer] : [more]));
   vi.mocked(api.getCited).mockImplementation(async (id) => (id === 'anchor' ? [ref] : []));
   vi.mocked(api.getArchiveItems).mockResolvedValue([]);
+  vi.mocked(api.getCitationMatch).mockResolvedValue(null);
 });
 
 async function buildFromSearch(expectedNodes = 3) {
@@ -249,6 +251,49 @@ describe('App', () => {
     expect(within(details).queryByRole('button', { name: 'Make this the anchor' })).toBeNull();
     // The source-type filter lists it under its own label.
     expect(screen.getByRole('checkbox', { name: /Not on OpenAlex/ })).toBeChecked();
+  });
+
+  it('links a work not on OpenAlex to the work Crossref matches it to', async () => {
+    const dyarchy = work('dyarchy', {
+      type: 'reference-only',
+      title: 'The Manchu-Chinese Dyarchy',
+      authors: [{ name: 'Fairbank' }],
+      year: 1953,
+      citedByCount: null,
+      links: [],
+      providers: ['crossref'],
+    });
+    vi.mocked(api.getCited).mockImplementation(async (id) =>
+      id === 'anchor' ? [ref, dyarchy] : [],
+    );
+    vi.mocked(api.getCitationMatch).mockResolvedValue({
+      doi: '10.2307/2942138',
+      title: "The Manchu-Chinese Dyarchy in the 1840's and '50's",
+      authors: [{ name: 'John K. Fairbank', family: 'Fairbank' }],
+      year: 1953,
+      venue: 'The Far Eastern Quarterly',
+      type: 'journal-article',
+      links: [
+        { kind: 'doi', url: 'https://doi.org/10.2307/2942138' },
+        { kind: 'jstor', url: 'https://www.jstor.org/stable/10.2307/2942138' },
+      ],
+    });
+    await buildFromSearch(4);
+
+    fireEvent.click(within(graph()).getByRole('button', { name: 'The Manchu-Chinese Dyarchy' }));
+    const details = screen.getByRole('complementary', { name: 'The Manchu-Chinese Dyarchy' });
+    expect(await within(details).findByRole('link', { name: 'JSTOR' })).toHaveAttribute(
+      'href',
+      'https://www.jstor.org/stable/10.2307/2942138',
+    );
+    expect(within(details).getByRole('link', { name: 'DOI' })).toBeInTheDocument();
+    expect(
+      within(details).getByText(/Crossref matches it to .The Manchu-Chinese Dyarchy in the 1840/),
+    ).toHaveTextContent('(The Far Eastern Quarterly, 1953), linked below.');
+
+    // Works on OpenAlex aren't looked up.
+    fireEvent.click(within(graph()).getByRole('button', { name: 'Title ref' }));
+    expect(api.getCitationMatch).toHaveBeenCalledTimes(1);
   });
 
   it('explains a listed year that its citers predate', async () => {

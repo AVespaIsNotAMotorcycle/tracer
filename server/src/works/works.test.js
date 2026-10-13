@@ -558,6 +558,85 @@ describe('GET /api/works/:id/archive', () => {
   });
 });
 
+describe('GET /api/works/:id/match', () => {
+  const fairbank = {
+    doi: null,
+    title: "The Manchu-Chinese Dyarchy in the 1840's and '50's",
+    authors: [{ name: 'Fairbank', orcid: null }],
+    year: 1953,
+    venue: 'Far Eastern Quarterly',
+    unstructured: null,
+  };
+  const found = {
+    doi: '10.2307/2942138',
+    title: "The Manchu-Chinese Dyarchy in the 1840's and '50's",
+    authors: [{ name: 'John K. Fairbank', family: 'Fairbank' }],
+    year: 1953,
+    type: 'journal-article',
+    venue: 'The Far Eastern Quarterly',
+    url: 'https://www.jstor.org/stable/2942138',
+  };
+  let referenceProvider;
+  let source;
+
+  beforeEach(async () => {
+    referenceProvider = {
+      name: 'crossref',
+      getReferences: vi.fn(async () => []),
+      searchCitation: vi.fn(async () => [found]),
+    };
+    const workService = createWorkService({ provider, referenceProvider, now: () => clock });
+    api = request(createApp({ workService }));
+    source = await Source.create({
+      citation: fairbank,
+      externalIds: { citation: citationKey(fairbank) },
+    });
+  });
+
+  it('matches a reference-only work, with links to it, and caches it for 30 days', async () => {
+    const res = await api.get(`/api/works/${source._id}/match`);
+    expect(res.status).toBe(200);
+    expect(res.body.match).toEqual({
+      ...found,
+      links: [
+        { kind: 'doi', url: 'https://doi.org/10.2307/2942138' },
+        { kind: 'jstor', url: 'https://www.jstor.org/stable/10.2307/2942138' },
+      ],
+    });
+    expect(referenceProvider.searchCitation).toHaveBeenCalledWith(
+      "Fairbank The Manchu-Chinese Dyarchy in the 1840's and '50's Far Eastern Quarterly 1953",
+    );
+
+    await api.get(`/api/works/${source._id}/match`);
+    expect(referenceProvider.searchCitation).toHaveBeenCalledTimes(1);
+    advance(DEFAULT_TTLS.citationMatch + 1);
+    await api.get(`/api/works/${source._id}/match`);
+    expect(referenceProvider.searchCitation).toHaveBeenCalledTimes(2);
+  });
+
+  it('caches a miss too', async () => {
+    referenceProvider.searchCitation.mockResolvedValue([{ ...found, title: 'Something else' }]);
+    expect((await api.get(`/api/works/${source._id}/match`)).body.match).toBeNull();
+    await api.get(`/api/works/${source._id}/match`);
+    expect(referenceProvider.searchCitation).toHaveBeenCalledTimes(1);
+  });
+
+  it('gives no match for works on OpenAlex, without searching', async () => {
+    expect((await api.get('/api/works/W1/match')).body.match).toBeNull();
+    expect(referenceProvider.searchCitation).not.toHaveBeenCalled();
+  });
+
+  it('gives the cached match, or none, when Crossref fails', async () => {
+    vi.spyOn(console, 'error').mockImplementation(() => {});
+    await api.get(`/api/works/${source._id}/match`);
+    advance(DEFAULT_TTLS.citationMatch + 1);
+    referenceProvider.searchCitation.mockRejectedValue(new ProviderError('crossref', 'down'));
+    const res = await api.get(`/api/works/${source._id}/match`);
+    expect(res.status).toBe(200);
+    expect(res.body.match.doi).toBe('10.2307/2942138');
+  });
+});
+
 describe('citationKey', () => {
   it('ignores case, punctuation and accents, preferring DOI, then title, then the citation', () => {
     const base = { doi: null, authors: [{ name: 'Zebrowski' }], year: 1983, unstructured: null };

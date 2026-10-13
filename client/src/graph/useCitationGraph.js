@@ -5,6 +5,7 @@ import {
   collapseWorks,
   emptyGraph,
   expandWorks,
+  graphFromSnapshot,
   reanchorGraph,
   restoreGraph,
 } from './graphModel.js';
@@ -98,15 +99,28 @@ export function useCitationGraph(api = defaultApi) {
     [startRun, track, untrack],
   );
 
-  /** Opens a saved graph (see restoreGraph): like build, then its expansions again. */
+  /**
+   * Opens a saved graph: from `saved.snapshot` (the graph as last built) when there is one,
+   * without fetching anything; otherwise rebuilt (see restoreGraph), like build and then its
+   * expansions again. Resolves to the rebuilt { graph, truncated }, or null when it came from
+   * the snapshot, failed or was cancelled.
+   */
   const restore = useCallback(
     async (saved, label) => {
       const { signal, scoped } = startRun();
+      setError(null);
+      setExpanding(new Set());
+      if (saved.snapshot) {
+        const loaded = graphFromSnapshot(saved.snapshot);
+        setGraph(loaded.graph);
+        setTruncated(loaded.truncated);
+        setStatus('done');
+        untrack('run');
+        return null;
+      }
       setGraph(emptyGraph());
       setStatus('loading');
-      setError(null);
       setTruncated(false);
-      setExpanding(new Set());
       const progress = track('run', label, signal, saved.options.concurrency ?? 4);
       try {
         const result = await restoreGraph(
@@ -117,14 +131,16 @@ export function useCitationGraph(api = defaultApi) {
           },
           progress,
         );
-        if (signal.aborted) return;
+        if (signal.aborted) return null;
         setGraph(result.graph);
         setTruncated(result.truncated);
         setStatus('done');
+        return result;
       } catch (err) {
-        if (signal.aborted) return;
+        if (signal.aborted) return null;
         setError(err.message);
         setStatus('error');
+        return null;
       } finally {
         if (!signal.aborted) untrack('run');
       }

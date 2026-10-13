@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
-import { getSavedGraph, saveGraph, updateGraph } from './api.js';
+import { getSavedGraph, saveGraph, saveGraphSnapshot, updateGraph } from './api.js';
 import './App.css';
 import { useAuth } from './auth/useAuth.js';
 import DetailsPanel from './components/DetailsPanel.jsx';
@@ -15,6 +15,7 @@ import GraphView from './graph/GraphView.jsx';
 import {
   deriveEdges,
   foldBookParts,
+  graphSnapshot,
   inGraphCitationCounts,
   inGraphConnectionCounts,
   totalCitationCounts,
@@ -136,8 +137,10 @@ function GraphPage({ auth }) {
     reanchor(anchorId, options);
   };
 
-  // Opens a saved graph: its options, filters and view, then the graph itself, rebuilt with the
-  // works the user had expanded (see restoreGraph). The URL already names it (?graph=<id>).
+  // Opens a saved graph: its options, filters and view, then the graph itself. That's the
+  // server's snapshot of it as last built, while it's fresh (a week); otherwise it's rebuilt
+  // with the works the user had expanded (see restoreGraph), and the result becomes the new
+  // snapshot. The URL already names it (?graph=<id>).
   const openSaved = useCallback(
     (saved) => {
       setOptions(saved.options);
@@ -153,9 +156,22 @@ function GraphPage({ auth }) {
       setOpenError(null);
       setRunCount((n) => n + 1);
       restore(
-        { anchorId: saved.anchor.id, options: saved.options, expanded: saved.expanded ?? [] },
+        {
+          anchorId: saved.anchor.id,
+          options: saved.options,
+          expanded: saved.expanded ?? [],
+          snapshot: saved.snapshot,
+        },
         `Opening “${short(saved.name)}”`,
-      );
+      ).then((built) => {
+        if (!built || !saved.stateKey) return;
+        // Only saves time next time, so a failure isn't worth reporting.
+        saveGraphSnapshot(
+          saved.id,
+          saved.stateKey,
+          graphSnapshot(built.graph, built.truncated),
+        ).catch(() => {});
+      });
     },
     [restore],
   );
@@ -249,8 +265,9 @@ function GraphPage({ auth }) {
   const anchorWork = graph.works.get(graph.anchorId);
 
   // Saves the graph as it is now: what's needed to rebuild it (anchor, the options it was built
-  // with, the works the user expanded, in order) and how it's shown (filters, axis). Updates the
-  // saved graph it came from, unless saving as new.
+  // with, the works the user expanded, in order) and how it's shown (filters, axis), plus a
+  // snapshot of its works so reopening it needn't fetch them (not while a run or expansion is
+  // still changing them). Updates the saved graph it came from, unless saving as new.
   const handleSave = async (name, asNew) => {
     const state = {
       anchor: {
@@ -263,10 +280,11 @@ function GraphPage({ auth }) {
       view: { axisAngle },
       expanded: [...graph.sticky],
     };
+    const snapshot = busy || expanding.size > 0 ? undefined : graphSnapshot(graph, truncated);
     const saved =
       savedGraph && !asNew
-        ? await updateGraph(savedGraph.id, name, state)
-        : await saveGraph(name, state);
+        ? await updateGraph(savedGraph.id, name, state, snapshot)
+        : await saveGraph(name, state, snapshot);
     setSavedGraph({ id: saved.id, name: saved.name });
     // Reloading (or sharing the link with yourself) reopens the saved graph.
     const { pathname, search, hash } = window.location;
@@ -276,7 +294,7 @@ function GraphPage({ auth }) {
 
   return (
     <div className={`app${selected ? ' has-details' : ''}`}>
-	  <Header auth={auth} />
+      <Header auth={auth} />
       <aside className="sidebar">
         <SearchPanel
           options={options}

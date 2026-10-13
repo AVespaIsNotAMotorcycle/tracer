@@ -71,7 +71,8 @@ export async function logOut() {
 }
 
 // Saved graphs (the signed-in user's own). `state` is what's needed to rebuild a graph:
-// { anchor: { id, ref, title }, options, filters, view: { axisAngle }, expanded }.
+// { anchor: { id, ref, title }, options, filters, view: { axisAngle }, expanded }. A `snapshot`
+// is the graph as built (graphSnapshot), which opening the saved graph returns for a week.
 const graphPath = (id) => `/api/graphs/${encodeURIComponent(id)}`;
 
 /** Summaries of the user's saved graphs, most recently changed first. */
@@ -83,12 +84,17 @@ export async function getSavedGraph(id) {
   return (await get(graphPath(id))).graph;
 }
 
-export async function saveGraph(name, state) {
-  return (await post('/api/graphs', { name, state })).graph;
+export async function saveGraph(name, state, snapshot) {
+  return (await post('/api/graphs', { name, state, snapshot })).graph;
 }
 
-export async function updateGraph(id, name, state) {
-  return (await send('PUT', graphPath(id), { name, state })).graph;
+export async function updateGraph(id, name, state, snapshot) {
+  return (await send('PUT', graphPath(id), { name, state, snapshot })).graph;
+}
+
+/** Stores the graph as just rebuilt from the saved state `key` identifies (its stateKey). */
+export async function saveGraphSnapshot(id, key, snapshot) {
+  await send('PUT', `${graphPath(id)}/snapshot`, { key, snapshot });
 }
 
 export async function renameGraph(id, name) {

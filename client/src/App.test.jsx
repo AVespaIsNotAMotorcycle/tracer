@@ -38,6 +38,7 @@ vi.mock('./api.js', async (importOriginal) => ({
   getSavedGraph: vi.fn(),
   saveGraph: vi.fn(),
   updateGraph: vi.fn(),
+  saveGraphSnapshot: vi.fn(),
   renameGraph: vi.fn(),
   deleteGraph: vi.fn(),
 }));
@@ -772,6 +773,12 @@ describe('saved graphs', () => {
       view: { axisAngle: 30 },
       expanded: ['ref'],
     });
+    // With the graph as built, so reopening it needn't fetch anything.
+    const snapshot = vi.mocked(api.saveGraph).mock.calls[0][2];
+    expect(snapshot).toMatchObject({ anchorId: 'anchor', sticky: ['ref'], truncated: false });
+    expect(snapshot.works.map((w) => w.id)).toContain('more');
+    expect(snapshot.relations).toContainEqual(['anchor', 'anchor']);
+    expect(snapshot.expanded).toContainEqual(['ref', ['citing', 'cited']]);
     expect(window.location.search).toContain('graph=g1');
   });
 
@@ -788,7 +795,12 @@ describe('saved graphs', () => {
     fireEvent.click(screen.getByRole('button', { name: 'Save graph' }));
     fireEvent.click(screen.getByRole('button', { name: 'Update' }));
     await waitFor(() =>
-      expect(api.updateGraph).toHaveBeenCalledWith('g1', 'Title anchor', expect.any(Object)),
+      expect(api.updateGraph).toHaveBeenCalledWith(
+        'g1',
+        'Title anchor',
+        expect.any(Object),
+        expect.any(Object),
+      ),
     );
 
     fireEvent.click(screen.getByRole('button', { name: 'Save graph' }));
@@ -819,6 +831,59 @@ describe('saved graphs', () => {
     expect(screen.getByLabelText('From year')).toHaveValue(1900);
     expect(graph()).toHaveAttribute('data-axis-angle', '60');
     expect(window.location.search).toBe('?graph=g1');
+  });
+
+  const savedState = {
+    anchor: { id: 'anchor', ref: 'Wanchor', title: 'Title anchor' },
+    options: { citingDepth: 1, citedDepth: 1, limit: 20, maxNodes: 300 },
+    filters: { minYear: null, maxYear: null, minConnections: 1, excludedTypes: [] },
+    view: { axisAngle: 30 },
+    expanded: ['ref'],
+  };
+
+  it('opens a saved graph from its snapshot without fetching any works', async () => {
+    vi.mocked(api.getSavedGraph).mockResolvedValue(
+      savedFrom(savedState, {
+        stateKey: 'k1',
+        snapshot: {
+          anchorId: 'anchor',
+          works: [work('anchor', { references: ['ref'] }), work('ref', { year: 1950 })],
+          relations: [
+            ['anchor', 'anchor'],
+            ['ref', 'cited'],
+          ],
+          expanded: [['ref', ['citing', 'cited']]],
+          sticky: ['ref'],
+          truncated: true,
+        },
+      }),
+    );
+    window.history.replaceState(null, '', '/?graph=g1');
+    render(<App />);
+
+    await waitFor(() =>
+      expect(within(graph()).getByRole('button', { name: 'Title ref' })).toBeInTheDocument(),
+    );
+    // Truncated, as when it was built.
+    expect(screen.getByText(/Stopped at 2 works/)).toBeInTheDocument();
+    for (const fetcher of [api.getWork, api.getCiting, api.getCited, api.saveGraphSnapshot]) {
+      expect(fetcher).not.toHaveBeenCalled();
+    }
+  });
+
+  it('stores a snapshot after rebuilding a saved graph that had none', async () => {
+    vi.mocked(api.getSavedGraph).mockResolvedValue(
+      savedFrom(savedState, { stateKey: 'k1', snapshot: null }),
+    );
+    vi.mocked(api.saveGraphSnapshot).mockResolvedValue();
+    window.history.replaceState(null, '', '/?graph=g1');
+    render(<App />);
+
+    await waitFor(() => expect(api.saveGraphSnapshot).toHaveBeenCalled());
+    const [id, key, snapshot] = vi.mocked(api.saveGraphSnapshot).mock.calls[0];
+    expect([id, key]).toEqual(['g1', 'k1']);
+    expect(snapshot.works.map((w) => w.id)).toEqual(expect.arrayContaining(['anchor', 'more']));
+    expect(api.getCiting).toHaveBeenCalled();
   });
 
   it('says so when a saved graph can’t be opened', async () => {

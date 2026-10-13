@@ -542,6 +542,41 @@ export async function restoreGraph(saved, api, onProgress = () => {}, progress =
 }
 
 /**
+ * A built graph as plain JSON, for the server to keep as a saved graph's snapshot (so reopening
+ * it needn't fetch every work again). `graphFromSnapshot` reverses it.
+ *
+ * @param {Graph} graph
+ * @param {boolean} truncated  Whether the build stopped at maxNodes.
+ */
+export function graphSnapshot(graph, truncated) {
+  return {
+    anchorId: graph.anchorId,
+    works: [...graph.works.values()],
+    relations: [...graph.relations],
+    expanded: [...graph.expanded].map(([id, directions]) => [id, [...directions]]),
+    sticky: [...graph.sticky],
+    truncated,
+  };
+}
+
+/**
+ * @param {ReturnType<typeof graphSnapshot>} snapshot
+ * @returns {{ graph: Graph, truncated: boolean }}
+ */
+export function graphFromSnapshot(snapshot) {
+  return {
+    graph: {
+      anchorId: snapshot.anchorId,
+      works: new Map(snapshot.works.map((work) => [work.id, work])),
+      relations: new Map(snapshot.relations),
+      expanded: new Map(snapshot.expanded.map(([id, directions]) => [id, new Set(directions)])),
+      sticky: new Set(snapshot.sticky),
+    },
+    truncated: snapshot.truncated === true,
+  };
+}
+
+/**
  * Returns `graph` with `ids` no longer sticky, ready for reanchorGraph on the same anchor:
  * the rebuild then keeps their neighbors only if the build (or another sticky work) reaches
  * them. This is how a user expansion is collapsed.

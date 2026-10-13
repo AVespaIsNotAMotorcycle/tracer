@@ -4,6 +4,8 @@ import request from 'supertest';
 import { afterAll, beforeAll, beforeEach, describe, expect, it } from 'vitest';
 import { createApp } from '../app.js';
 import { createAuthService } from '../auth/authService.js';
+import { createGraphService, SNAPSHOT_TTL_MS } from './graphService.js';
+import { GraphSnapshot } from '../models/GraphSnapshot.js';
 import { Identity } from '../models/Identity.js';
 import { SavedGraph } from '../models/SavedGraph.js';
 import { Session } from '../models/Session.js';
@@ -11,11 +13,14 @@ import { User } from '../models/User.js';
 
 let mongo;
 let app;
+let clock;
 
 beforeAll(async () => {
   mongo = await MongoMemoryServer.create();
   await mongoose.connect(mongo.getUri());
-  await Promise.all([User.init(), Identity.init(), Session.init(), SavedGraph.init()]);
+  await Promise.all(
+    [User, Identity, Session, SavedGraph, GraphSnapshot].map((model) => model.init()),
+  );
 });
 
 afterAll(async () => {
@@ -24,8 +29,14 @@ afterAll(async () => {
 });
 
 beforeEach(async () => {
-  await Promise.all([User, Identity, Session, SavedGraph].map((model) => model.deleteMany({})));
-  app = createApp({ authService: createAuthService() });
+  await Promise.all(
+    [User, Identity, Session, SavedGraph, GraphSnapshot].map((model) => model.deleteMany({})),
+  );
+  clock = Date.parse('2026-10-01T00:00:00Z');
+  app = createApp({
+    authService: createAuthService(),
+    graphService: createGraphService({ now: () => clock }),
+  });
 });
 
 /** A signed-in agent (it keeps the session cookie). */
@@ -63,7 +74,7 @@ describe('saving and opening graphs', () => {
     });
 
     const opened = await agent.get(`/api/graphs/${graph.id}`);
-    expect(opened.body.graph).toEqual(graph);
+    expect(opened.body.graph).toEqual({ ...graph, snapshot: null });
     const other = await agent.post('/api/graphs').send({ state: state() });
     expect(other.body.graph.id).not.toBe(graph.id);
   });
@@ -114,6 +125,122 @@ describe('saving and opening graphs', () => {
     expect((await agent.delete(`/api/graphs/${graph.id}`)).status).toBe(204);
     expect((await agent.get(`/api/graphs/${graph.id}`)).status).toBe(404);
     expect((await agent.get('/api/graphs')).body.graphs).toEqual([]);
+  });
+});
+
+// A built graph as the client serializes it (serializeGraph).
+const snapshot = (overrides = {}) => ({
+  anchorId: 'tracer-anchor',
+  works: [
+    { id: 'tracer-anchor', title: 'The Moral Economy', year: 1971, references: ['tracer-a'] },
+    { id: 'tracer-a', title: 'Riots', year: 1960, references: [], abstract: 'x'.repeat(50_000) },
+  ],
+  relations: [
+    ['tracer-anchor', 'anchor'],
+    ['tracer-a', 'cited'],
+  ],
+  expanded: [['tracer-anchor', ['citing', 'cited']]],
+  sticky: ['tracer-a'],
+  truncated: false,
+  ...overrides,
+});
+
+describe('snapshots of built graphs', () => {
+  it('opens a graph saved with its snapshot as built, for a week', async () => {
+    const agent = await signedIn();
+    const { graph } = (
+      await agent.post('/api/graphs').send({ state: state(), snapshot: snapshot() })
+    ).body;
+    expect(graph.snapshot).toBeUndefined();
+
+    expect((await agent.get(`/api/graphs/${graph.id}`)).body.graph.snapshot).toEqual(snapshot());
+    clock += SNAPSHOT_TTL_MS - 1000;
+    expect((await agent.get(`/api/graphs/${graph.id}`)).body.graph.snapshot).toEqual(snapshot());
+    clock += 2000;
+    expect((await agent.get(`/api/graphs/${graph.id}`)).body.graph.snapshot).toBeNull();
+  });
+
+  it('stores a snapshot for a graph just rebuilt, refusing one of an older state', async () => {
+    const agent = await signedIn();
+    const { graph } = (await agent.post('/api/graphs').send({ state: state() })).body;
+    const res = await agent
+      .put(`/api/graphs/${graph.id}/snapshot`)
+      .send({ key: graph.stateKey, snapshot: snapshot() });
+    expect(res.status).toBe(204);
+    expect((await agent.get(`/api/graphs/${graph.id}`)).body.graph.snapshot).toEqual(snapshot());
+
+    // Saved meanwhile (another tab) with other expansions: a snapshot of the old state is stale.
+    const updated = (
+      await agent.put(`/api/graphs/${graph.id}`).send({ state: state({ expanded: ['tracer-c'] }) })
+    ).body.graph;
+    expect(updated.stateKey).not.toBe(graph.stateKey);
+    expect((await agent.get(`/api/graphs/${graph.id}`)).body.graph.snapshot).toBeNull();
+    const stale = await agent
+      .put(`/api/graphs/${graph.id}/snapshot`)
+      .send({ key: graph.stateKey, snapshot: snapshot() });
+    expect(stale.status).toBe(409);
+  });
+
+  it('keeps the snapshot when only the name, filters or view change', async () => {
+    const agent = await signedIn();
+    const { graph } = (
+      await agent.post('/api/graphs').send({ state: state(), snapshot: snapshot() })
+    ).body;
+    await agent.patch(`/api/graphs/${graph.id}`).send({ name: 'Renamed' });
+    await agent
+      .put(`/api/graphs/${graph.id}`)
+      .send({ state: state({ filters: { minYear: 1900 }, view: { axisAngle: 10 } }) });
+    expect((await agent.get(`/api/graphs/${graph.id}`)).body.graph.snapshot).toEqual(snapshot());
+  });
+
+  it('replaces the snapshot when updated with one, and deletes it with the graph', async () => {
+    const agent = await signedIn();
+    const { graph } = (
+      await agent.post('/api/graphs').send({ state: state(), snapshot: snapshot() })
+    ).body;
+    const next = snapshot({ sticky: ['tracer-a', 'tracer-anchor'], truncated: true });
+    await agent.put(`/api/graphs/${graph.id}`).send({ state: state(), snapshot: next });
+    expect((await agent.get(`/api/graphs/${graph.id}`)).body.graph.snapshot).toEqual(next);
+
+    await agent.delete(`/api/graphs/${graph.id}`);
+    expect(await GraphSnapshot.countDocuments()).toBe(0);
+  });
+
+  it.each([
+    ['of a different anchor', snapshot({ anchorId: 'tracer-a' })],
+    ['without its anchor’s work', snapshot({ works: [{ id: 'tracer-a' }] })],
+    ['with an unknown relation', snapshot({ relations: [['tracer-a', 'sibling']] })],
+    ['with an unknown direction', snapshot({ expanded: [['tracer-a', ['sideways']]] })],
+  ])('refuses a snapshot %s', async (_, bad) => {
+    const agent = await signedIn();
+    const res = await agent.post('/api/graphs').send({ state: state(), snapshot: bad });
+    expect(res.status).toBe(400);
+    expect(await SavedGraph.countDocuments()).toBe(0);
+  });
+
+  it('accepts snapshots larger than other requests may be', async () => {
+    const agent = await signedIn();
+    const big = snapshot({
+      works: [
+        ...snapshot().works,
+        ...Array.from({ length: 300 }, (_, i) => ({ id: `w${i}`, abstract: 'y'.repeat(5000) })),
+      ],
+    });
+    const res = await agent.post('/api/graphs').send({ state: state(), snapshot: big });
+    expect(res.status).toBe(201);
+    const tooBig = await agent.post('/api/auth/login').send({ email: 'z'.repeat(20_000) });
+    expect(tooBig.status).toBe(413);
+  });
+
+  it('keeps other users from storing snapshots of a graph', async () => {
+    const owner = await signedIn('owner@example.org');
+    const other = await signedIn('other@example.org');
+    const { graph } = (await owner.post('/api/graphs').send({ state: state() })).body;
+    const res = await other
+      .put(`/api/graphs/${graph.id}/snapshot`)
+      .send({ key: graph.stateKey, snapshot: snapshot() });
+    expect(res.status).toBe(404);
+    expect(await GraphSnapshot.countDocuments()).toBe(0);
   });
 });
 

@@ -24,6 +24,11 @@ export function createApp({ workService, authService, authOptions, graphService 
   const app = express();
   // Heroku's router sits in front: trust its X-Forwarded-* headers for req.ip and HTTPS.
   app.set('trust proxy', 1);
+  // Saved graphs come first: they parse their own, larger bodies (snapshots of built graphs),
+  // after checking the user.
+  if (authService) {
+    app.use('/api/graphs', createGraphsRouter(graphService ?? createGraphService(), authService));
+  }
   app.use(express.json({ limit: '16kb' }));
 
   app.get('/api/health', (req, res) => {
@@ -34,11 +39,7 @@ export function createApp({ workService, authService, authOptions, graphService 
   });
 
   if (workService) app.use('/api/works', createWorksRouter(workService));
-  if (authService) {
-    app.use('/api/auth', createAuthRouter(authService, authOptions));
-    // Saved graphs belong to accounts, so they come with them.
-    app.use('/api/graphs', createGraphsRouter(graphService ?? createGraphService(), authService));
-  }
+  if (authService) app.use('/api/auth', createAuthRouter(authService, authOptions));
 
   if (process.env.NODE_ENV === 'production') {
     app.use(express.static(clientDist));

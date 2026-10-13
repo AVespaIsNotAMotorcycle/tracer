@@ -10,9 +10,12 @@ import {
   expandWork,
   expandWorks,
   foldBookParts,
+  graphFromSnapshot,
+  graphSnapshot,
   inGraphCitationCounts,
   inGraphConnectionCounts,
   layoutYears,
+  markExpanded,
   reanchorGraph,
   restoreGraph,
   totalCitationCounts,
@@ -838,5 +841,17 @@ describe('foldBookParts', () => {
   it('returns the same graph when nothing folds', () => {
     const graph = graphOf('anchor', work('anchor'), book);
     expect(foldBookParts(graph).graph).toBe(graph);
+  });
+});
+
+describe('graphSnapshot', () => {
+  it('survives a trip through JSON as the same graph', () => {
+    let graph = addWorks(emptyGraph(), [{ id: 'anchor', references: ['ref'] }], 'anchor');
+    graph = addWorks(graph, [{ id: 'ref', references: [] }], 'cited');
+    graph = { ...graph, anchorId: 'anchor', sticky: new Set(['ref']) };
+    graph = markExpanded(markExpanded(graph, 'ref', 'citing'), 'ref', 'cited');
+
+    const sent = JSON.parse(JSON.stringify(graphSnapshot(graph, true)));
+    expect(graphFromSnapshot(sent)).toEqual({ graph, truncated: true });
   });
 });

@@ -34,6 +34,12 @@ vi.mock('./api.js', async (importOriginal) => ({
   signUp: vi.fn(),
   logIn: vi.fn(),
   logOut: vi.fn(),
+  listGraphs: vi.fn(),
+  getSavedGraph: vi.fn(),
+  saveGraph: vi.fn(),
+  updateGraph: vi.fn(),
+  renameGraph: vi.fn(),
+  deleteGraph: vi.fn(),
 }));
 
 const work = (id, { references = [], year = 1971, ...rest } = {}) => ({
@@ -715,5 +721,187 @@ describe('accounts', () => {
 
     expect(await screen.findByRole('button', { name: 'Log in' })).toBeInTheDocument();
     expect(screen.queryByText('historian@example.org')).toBeNull();
+  });
+});
+
+describe('saved graphs', () => {
+  const user = { id: 'u1', email: 'historian@example.org' };
+  const savedFrom = (state, overrides = {}) => ({
+    id: 'g1',
+    name: 'Riots',
+    createdAt: '2026-01-01T00:00:00Z',
+    updatedAt: '2026-01-02T00:00:00Z',
+    annotations: [],
+    ...state,
+    ...overrides,
+  });
+
+  beforeEach(() => {
+    vi.mocked(api.getCurrentUser).mockResolvedValue(user);
+  });
+
+  it('asks you to log in to save', async () => {
+    vi.mocked(api.getCurrentUser).mockResolvedValue(null);
+    await buildFromSearch();
+    expect(await screen.findByText('Log in to save this graph')).toBeInTheDocument();
+    expect(screen.queryByRole('button', { name: 'Save graph' })).toBeNull();
+  });
+
+  it('saves the graph with a name: its anchor, options, filters, view and expansions', async () => {
+    vi.mocked(api.saveGraph).mockImplementation(async (name, state) => savedFrom(state, { name }));
+    await buildFromSearch();
+    fireEvent.click(within(graph()).getByRole('button', { name: 'Title ref' }));
+    fireEvent.click(screen.getByRole('button', { name: 'Expand citing and cited works' }));
+    await within(graph()).findByRole('button', { name: 'Title more' });
+    fireEvent.click(screen.getByRole('checkbox', { name: /Article/ }));
+
+    fireEvent.click(screen.getByRole('button', { name: 'Save graph' }));
+    const dialog = screen.getByRole('dialog', { name: 'Save graph' });
+    // Named after the anchor unless you change it.
+    expect(within(dialog).getByLabelText('Name')).toHaveValue('Title anchor');
+    fireEvent.change(within(dialog).getByLabelText('Name'), { target: { value: 'Riots' } });
+    fireEvent.click(within(dialog).getByRole('button', { name: 'Save' }));
+
+    expect(await screen.findByText('Saved as “Riots”')).toBeInTheDocument();
+    const [name, state] = vi.mocked(api.saveGraph).mock.calls[0];
+    expect(name).toBe('Riots');
+    expect(state).toEqual({
+      anchor: { id: 'anchor', ref: 'Wanchor', title: 'Title anchor' },
+      options: { citingDepth: 1, citedDepth: 1, limit: 20, maxNodes: 300 },
+      filters: { minYear: null, maxYear: null, minConnections: 1, excludedTypes: ['article'] },
+      view: { axisAngle: 30 },
+      expanded: ['ref'],
+    });
+    expect(window.location.search).toContain('graph=g1');
+  });
+
+  it('updates the saved graph it came from, or saves a new one', async () => {
+    vi.mocked(api.saveGraph).mockImplementation(async (name, state) => savedFrom(state, { name }));
+    vi.mocked(api.updateGraph).mockImplementation(async (id, name, state) =>
+      savedFrom(state, { id, name }),
+    );
+    await buildFromSearch();
+    fireEvent.click(screen.getByRole('button', { name: 'Save graph' }));
+    fireEvent.click(screen.getByRole('button', { name: 'Save' }));
+    await screen.findByText(/Saved as/);
+
+    fireEvent.click(screen.getByRole('button', { name: 'Save graph' }));
+    fireEvent.click(screen.getByRole('button', { name: 'Update' }));
+    await waitFor(() =>
+      expect(api.updateGraph).toHaveBeenCalledWith('g1', 'Title anchor', expect.any(Object)),
+    );
+
+    fireEvent.click(screen.getByRole('button', { name: 'Save graph' }));
+    fireEvent.click(screen.getByRole('button', { name: 'Save as new' }));
+    await waitFor(() => expect(api.saveGraph).toHaveBeenCalledTimes(2));
+  });
+
+  it('opens a saved graph from its link, with its expansions, filters and view', async () => {
+    vi.mocked(api.getSavedGraph).mockResolvedValue(
+      savedFrom({
+        anchor: { id: 'anchor', ref: 'Wanchor', title: 'Title anchor' },
+        options: { citingDepth: 1, citedDepth: 1, limit: 20, maxNodes: 300 },
+        filters: { minYear: 1900, maxYear: null, minConnections: 1, excludedTypes: [] },
+        view: { axisAngle: 60 },
+        expanded: ['ref'],
+      }),
+    );
+    window.history.replaceState(null, '', '/?graph=g1');
+    render(<App />);
+
+    // more only arrives with the saved expansion of ref.
+    await waitFor(() =>
+      expect(within(graph()).getByRole('button', { name: 'Title more' })).toBeInTheDocument(),
+    );
+    expect(api.getSavedGraph).toHaveBeenCalledWith('g1');
+    // Opening is a cancellable run, so its requests carry an abort signal.
+    expect(api.getCiting).toHaveBeenCalledWith('ref', expect.objectContaining({ limit: 20 }));
+    expect(screen.getByLabelText('From year')).toHaveValue(1900);
+    expect(graph()).toHaveAttribute('data-axis-angle', '60');
+    expect(window.location.search).toBe('?graph=g1');
+  });
+
+  it('says so when a saved graph can’t be opened', async () => {
+    vi.mocked(api.getSavedGraph).mockRejectedValue(new Error('Log in first'));
+    window.history.replaceState(null, '', '/?graph=g1');
+    render(<App />);
+    expect(await screen.findByRole('alert')).toHaveTextContent(
+      'Couldn’t open the saved graph: Log in first',
+    );
+  });
+});
+
+describe('profile page', () => {
+  const user = { id: 'u1', email: 'historian@example.org' };
+  const summary = (id, name) => ({
+    id,
+    name,
+    anchor: { title: 'The Moral Economy', ref: '10.1093/past/50.1.76' },
+    expandedCount: 2,
+    createdAt: '2026-01-01T00:00:00Z',
+    updatedAt: '2026-01-02T00:00:00Z',
+  });
+
+  beforeEach(() => {
+    window.history.replaceState(null, '', '/profile');
+    vi.mocked(api.getCurrentUser).mockResolvedValue(user);
+    vi.mocked(api.listGraphs).mockResolvedValue([summary('g1', 'Riots'), summary('g2', 'Famine')]);
+  });
+
+  const list = () => screen.findByRole('list', { name: 'Saved graphs' });
+
+  it('lists your saved graphs, each linking to open it', async () => {
+    render(<App />);
+    const items = within(await list()).getAllByRole('listitem');
+    expect(items).toHaveLength(2);
+    expect(within(items[0]).getByRole('link', { name: 'Riots' })).toHaveAttribute(
+      'href',
+      '/?graph=g1',
+    );
+    expect(items[0]).toHaveTextContent('Anchor: The Moral Economy');
+    expect(items[0]).toHaveTextContent('2 expanded');
+  });
+
+  it('renames a saved graph', async () => {
+    vi.mocked(api.renameGraph).mockResolvedValue(summary('g1', 'Food riots'));
+    render(<App />);
+    const item = within(await list()).getAllByRole('listitem')[0];
+    fireEvent.click(within(item).getByRole('button', { name: 'Rename' }));
+    fireEvent.change(within(item).getByLabelText('Name'), { target: { value: 'Food riots' } });
+    fireEvent.click(within(item).getByRole('button', { name: 'Save name' }));
+
+    expect(await within(item).findByRole('link', { name: 'Food riots' })).toBeInTheDocument();
+    expect(api.renameGraph).toHaveBeenCalledWith('g1', 'Food riots');
+  });
+
+  it('deletes a saved graph after confirming', async () => {
+    vi.mocked(api.deleteGraph).mockResolvedValue();
+    render(<App />);
+    const item = within(await list()).getAllByRole('listitem')[1];
+    fireEvent.click(within(item).getByRole('button', { name: 'Delete' }));
+    expect(within(item).getByText('Delete “Famine”?')).toBeInTheDocument();
+    fireEvent.click(within(item).getByRole('button', { name: 'Delete' }));
+
+    await waitFor(() =>
+      expect(
+        within(screen.getByRole('list', { name: 'Saved graphs' })).getAllByRole('listitem'),
+      ).toHaveLength(1),
+    );
+    expect(api.deleteGraph).toHaveBeenCalledWith('g2');
+  });
+
+  it('asks you to log in, and links to it from the header', async () => {
+    vi.mocked(api.getCurrentUser).mockResolvedValue(null);
+    render(<App />);
+    expect(await screen.findByText('Log in to see your saved graphs.')).toBeInTheDocument();
+  });
+
+  it('is linked from the header when signed in', async () => {
+    window.history.replaceState(null, '', '/');
+    render(<App />);
+    expect(await screen.findByRole('link', { name: 'My graphs' })).toHaveAttribute(
+      'href',
+      '/profile',
+    );
   });
 });

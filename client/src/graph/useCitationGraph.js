@@ -1,6 +1,13 @@
 import { useCallback, useEffect, useRef, useState } from 'react';
 import * as defaultApi from '../api.js';
-import { buildGraph, collapseWorks, emptyGraph, expandWorks, reanchorGraph } from './graphModel.js';
+import {
+  buildGraph,
+  collapseWorks,
+  emptyGraph,
+  expandWorks,
+  reanchorGraph,
+  restoreGraph,
+} from './graphModel.js';
 import { createProgressTracker } from './progress.js';
 
 /** @typedef {import('./graphModel.js').BuildOptions} BuildOptions */
@@ -70,6 +77,40 @@ export function useCitationGraph(api = defaultApi) {
         const result = await buildGraph(
           anchorId,
           options,
+          scoped,
+          (g) => {
+            if (!signal.aborted) setGraph(g);
+          },
+          progress,
+        );
+        if (signal.aborted) return;
+        setGraph(result.graph);
+        setTruncated(result.truncated);
+        setStatus('done');
+      } catch (err) {
+        if (signal.aborted) return;
+        setError(err.message);
+        setStatus('error');
+      } finally {
+        if (!signal.aborted) untrack('run');
+      }
+    },
+    [startRun, track, untrack],
+  );
+
+  /** Opens a saved graph (see restoreGraph): like build, then its expansions again. */
+  const restore = useCallback(
+    async (saved, label) => {
+      const { signal, scoped } = startRun();
+      setGraph(emptyGraph());
+      setStatus('loading');
+      setError(null);
+      setTruncated(false);
+      setExpanding(new Set());
+      const progress = track('run', label, signal, saved.options.concurrency ?? 4);
+      try {
+        const result = await restoreGraph(
+          saved,
           scoped,
           (g) => {
             if (!signal.aborted) setGraph(g);
@@ -193,6 +234,7 @@ export function useCitationGraph(api = defaultApi) {
     truncated,
     expanding,
     build,
+    restore,
     reanchor,
     expand,
     collapse,

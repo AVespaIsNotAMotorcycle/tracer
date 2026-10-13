@@ -504,6 +504,44 @@ function relationTo(anchor, work) {
 }
 
 /**
+ * Rebuilds a saved graph: a build from its anchor at its options, then the expansions the user
+ * made, in the order they were made (a later expansion can depend on works an earlier one
+ * brought in). An expanded work the build didn't reach is fetched first. Expanded works become
+ * sticky, as they were when saved.
+ *
+ * @param {{ anchorId: string, options: BuildOptions, expanded: string[] }} saved
+ * @param {GraphApi} api
+ * @param {(graph: Graph) => void} [onProgress]
+ * @param {ReturnType<typeof import('./progress.js').createProgressTracker>} [progress]
+ * @returns {Promise<{ graph: Graph, truncated: boolean }>}
+ */
+export async function restoreGraph(saved, api, onProgress = () => {}, progress = noProgress) {
+  const { anchorId, options, expanded } = saved;
+  const ids = expanded.filter((id) => id !== anchorId);
+  progress.plan(ids.length * 2);
+  const built = await buildGraph(anchorId, options, api, onProgress, progress);
+  let graph = built.graph;
+  const anchor = graph.works.get(graph.anchorId);
+  for (const id of ids) {
+    if (!graph.works.has(id)) {
+      let work;
+      try {
+        work = await api.getWork(id);
+      } catch {
+        // Gone from the database (or the provider): skip it rather than fail the whole graph.
+        progress.complete(2);
+        continue;
+      }
+      graph = addWorks(graph, [work], relationTo(anchor, work));
+    }
+    graph = (await expandWork(graph, id, { limit: options.limit }, api, progress))(graph);
+    progress.setWorks(graph.works.size);
+    onProgress(graph);
+  }
+  return { graph, truncated: built.truncated };
+}
+
+/**
  * Returns `graph` with `ids` no longer sticky, ready for reanchorGraph on the same anchor:
  * the rebuild then keeps their neighbors only if the build (or another sticky work) reaches
  * them. This is how a user expansion is collapsed.

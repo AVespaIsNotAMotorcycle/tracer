@@ -39,10 +39,14 @@ export async function getCited(id, { limit, signal } = {}) {
 // Accounts. The session lives in an httpOnly cookie the browser sends with same-origin
 // requests; the server requires JSON for anything that changes state.
 async function post(path, body = {}) {
+  return send('POST', path, body);
+}
+
+async function send(method, path, body) {
   const res = await fetch(path, {
-    method: 'POST',
+    method,
     headers: { Accept: 'application/json', 'Content-Type': 'application/json' },
-    body: JSON.stringify(body),
+    body: body === undefined ? undefined : JSON.stringify(body),
   });
   const data = res.status === 204 ? {} : await res.json().catch(() => ({}));
   if (!res.ok) throw new Error(data.error ?? `Request failed (${res.status})`);
@@ -64,4 +68,33 @@ export async function logIn(email, password) {
 
 export async function logOut() {
   await post('/api/auth/logout');
+}
+
+// Saved graphs (the signed-in user's own). `state` is what's needed to rebuild a graph:
+// { anchor: { id, ref, title }, options, filters, view: { axisAngle }, expanded }.
+const graphPath = (id) => `/api/graphs/${encodeURIComponent(id)}`;
+
+/** Summaries of the user's saved graphs, most recently changed first. */
+export async function listGraphs() {
+  return (await get('/api/graphs')).graphs;
+}
+
+export async function getSavedGraph(id) {
+  return (await get(graphPath(id))).graph;
+}
+
+export async function saveGraph(name, state) {
+  return (await post('/api/graphs', { name, state })).graph;
+}
+
+export async function updateGraph(id, name, state) {
+  return (await send('PUT', graphPath(id), { name, state })).graph;
+}
+
+export async function renameGraph(id, name) {
+  return (await send('PATCH', graphPath(id), { name })).graph;
+}
+
+export async function deleteGraph(id) {
+  await send('DELETE', graphPath(id));
 }

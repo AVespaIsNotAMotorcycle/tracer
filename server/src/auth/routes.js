@@ -17,12 +17,52 @@ export function readCookie(req, name) {
 
 /**
  * Attaches the signed-in account (or null) as `req.user`, for routes that need one (e.g.
- * saved graphs, later).
+ * saved graphs).
  */
 export function loadUser(authService) {
   return async (req, res, next) => {
     req.user = await authService.userForToken(readCookie(req, SESSION_COOKIE));
     next();
+  };
+}
+
+/** Like loadUser, but answers 401 when nobody is signed in. */
+export function requireUser(authService) {
+  return async (req, res, next) => {
+    req.user = await authService.userForToken(readCookie(req, SESSION_COOKIE));
+    if (!req.user) throw new HttpError(401, 'Log in first');
+    next();
+  };
+}
+
+/**
+ * Checks for routes using the session cookie: the database must be connected; POSTs must be
+ * JSON; and any request that changes state must, when the browser sends an Origin, come from
+ * this site. With SameSite cookies that stops other sites from acting as the user.
+ */
+export function sessionRequestChecks() {
+  return (req, res, next) => {
+    if (mongoose.connection.readyState !== 1) throw new HttpError(503, 'Database unavailable');
+    if (req.method === 'POST' && !req.is('application/json')) throw new HttpError(415, 'Send JSON');
+    if (req.method !== 'GET' && req.method !== 'HEAD') {
+      const origin = req.get('origin');
+      if (origin && new URL(origin).host !== req.get('host')) {
+        throw new HttpError(403, 'Cross-site request refused');
+      }
+    }
+    next();
+  };
+}
+
+/** The JSON error handler for routers using HttpError. */
+export function jsonErrors() {
+  // eslint-disable-next-line no-unused-vars -- Express identifies error handlers by arity.
+  return (err, req, res, next) => {
+    if (err instanceof HttpError) return res.status(err.status).json({ error: err.message });
+    // Malformed JSON bodies.
+    if (err.type === 'entity.parse.failed') return res.status(400).json({ error: 'Invalid JSON' });
+    console.error(err);
+    res.status(500).json({ error: 'Internal server error' });
   };
 }
 
@@ -54,17 +94,7 @@ export function createAuthRouter(authService, { secureCookies = false, now } = {
   const setSession = (res, token) =>
     res.cookie(SESSION_COOKIE, token, { ...cookieOptions, maxAge: SESSION_TTL_MS });
 
-  router.use((req, res, next) => {
-    if (mongoose.connection.readyState !== 1) throw new HttpError(503, 'Database unavailable');
-    if (req.method === 'POST') {
-      if (!req.is('application/json')) throw new HttpError(415, 'Send JSON');
-      const origin = req.get('origin');
-      if (origin && new URL(origin).host !== req.get('host')) {
-        throw new HttpError(403, 'Cross-site request refused');
-      }
-    }
-    next();
-  });
+  router.use(sessionRequestChecks());
 
   router.post('/signup', async (req, res) => {
     if (!signUpsByIp.attempt(req.ip)) {
@@ -97,14 +127,7 @@ export function createAuthRouter(authService, { secureCookies = false, now } = {
     res.json({ user: await authService.userForToken(readCookie(req, SESSION_COOKIE)) });
   });
 
-  // eslint-disable-next-line no-unused-vars -- Express identifies error handlers by arity.
-  router.use((err, req, res, next) => {
-    if (err instanceof HttpError) return res.status(err.status).json({ error: err.message });
-    // Malformed JSON bodies.
-    if (err.type === 'entity.parse.failed') return res.status(400).json({ error: 'Invalid JSON' });
-    console.error(err);
-    res.status(500).json({ error: 'Internal server error' });
-  });
+  router.use(jsonErrors());
 
   return router;
 }

@@ -3,6 +3,8 @@ import { fileURLToPath } from 'node:url';
 import express from 'express';
 import mongoose from 'mongoose';
 import { createAuthRouter } from './auth/routes.js';
+import { createGraphService } from './graphs/graphService.js';
+import { createGraphsRouter } from './graphs/routes.js';
 import { createWorksRouter } from './works/routes.js';
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
@@ -16,8 +18,9 @@ const clientDist = path.resolve(__dirname, '../../client/dist');
  * @param {ReturnType<typeof import('./works/workService.js').createWorkService>} [deps.workService]
  * @param {ReturnType<typeof import('./auth/authService.js').createAuthService>} [deps.authService]
  * @param {object} [deps.authOptions]  Passed to createAuthRouter (e.g. secureCookies).
+ * @param {ReturnType<typeof import('./graphs/graphService.js').createGraphService>} [deps.graphService]
  */
-export function createApp({ workService, authService, authOptions } = {}) {
+export function createApp({ workService, authService, authOptions, graphService } = {}) {
   const app = express();
   // Heroku's router sits in front: trust its X-Forwarded-* headers for req.ip and HTTPS.
   app.set('trust proxy', 1);
@@ -31,7 +34,11 @@ export function createApp({ workService, authService, authOptions } = {}) {
   });
 
   if (workService) app.use('/api/works', createWorksRouter(workService));
-  if (authService) app.use('/api/auth', createAuthRouter(authService, authOptions));
+  if (authService) {
+    app.use('/api/auth', createAuthRouter(authService, authOptions));
+    // Saved graphs belong to accounts, so they come with them.
+    app.use('/api/graphs', createGraphsRouter(graphService ?? createGraphService(), authService));
+  }
 
   if (process.env.NODE_ENV === 'production') {
     app.use(express.static(clientDist));

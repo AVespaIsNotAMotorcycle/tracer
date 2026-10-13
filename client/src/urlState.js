@@ -1,5 +1,6 @@
 // The graph's anchor and build options, as URL query parameters, so a graph can be shared by
-// copying the URL: ?anchor=<id>&citing=1&cited=2&perNode=20&max=300.
+// copying the URL: ?anchor=<id>&citing=1&cited=2&perNode=20&max=300. A saved graph is opened
+// by its ID instead (?graph=<id>), which also restores its expansions, filters and view.
 //
 // The anchor is written as a DOI or OpenAlex ID rather than a Tracer ID: Tracer IDs only mean
 // something within one database, so they'd break when shared across deployments or after a
@@ -36,7 +37,7 @@ export function readUrlState(search) {
       options[key] = value;
     }
   }
-  return { anchor, options };
+  return { anchor, options, graph: params.get('graph')?.trim() || null };
 }
 
 /**
@@ -49,10 +50,19 @@ export function readUrlState(search) {
 export function writeUrlState(search, anchorWork, options) {
   const params = new URLSearchParams(search);
   params.set('anchor', shareableId(anchorWork));
+  // A new run is no longer the saved graph the URL named.
+  params.delete('graph');
   for (const [key, { name }] of Object.entries(PARAMS)) {
     if (options[key] === DEFAULT_OPTIONS[key]) params.delete(name);
     else params.set(name, String(options[key]));
   }
   const query = params.toString();
   return query ? `?${query}` : '';
+}
+
+/** Returns `search` with a saved graph's ID, so reloading reopens the saved graph. */
+export function withSavedGraph(search, id) {
+  const params = new URLSearchParams(search);
+  params.set('graph', id);
+  return `?${params}`;
 }

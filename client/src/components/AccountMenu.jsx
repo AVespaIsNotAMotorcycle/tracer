@@ -1,10 +1,11 @@
 import { useEffect, useId, useRef, useState } from 'react';
+import Modal from './Modal.jsx';
 
 const MIN_PASSWORD_LENGTH = 8;
 
 /**
- * The header's account controls: "Log in" and "Sign up" when signed out, the account's email
- * and "Log out" when signed in. Logging in and signing up happen in a small dialog.
+ * The header's account controls: "Log in" and "Sign up" when signed out; a link to the user's
+ * saved graphs, the account's email and "Log out" when signed in. Logging in and signing up happen in a small dialog.
  */
 export default function AccountMenu({ user, onSignUp, onLogIn, onLogOut }) {
   const [mode, setMode] = useState(null); // 'login' | 'signup' | null
@@ -16,6 +17,7 @@ export default function AccountMenu({ user, onSignUp, onLogIn, onLogOut }) {
   if (user) {
     return (
       <div className="account">
+        <a href="/profile">My graphs</a>
         <span className="muted" title="Signed in">
           {user.email}
         </span>
@@ -80,64 +82,56 @@ function AuthDialog({ mode, onModeChange, onSubmit, onClose }) {
   };
 
   return (
-    <div className="dialog-backdrop" onMouseDown={(e) => e.target === e.currentTarget && onClose()}>
-      <div
-        role="dialog"
-        aria-modal="true"
-        aria-labelledby={titleId}
-        className="dialog"
-        onKeyDown={(event) => event.key === 'Escape' && onClose()}
-      >
-        <h2 id={titleId}>{title}</h2>
-        <form onSubmit={handleSubmit}>
-          <label>
-            Email
-            <input
-              ref={emailRef}
-              type="email"
-              autoComplete="email"
-              required
-              value={email}
-              onChange={(event) => setEmail(event.target.value)}
-            />
-          </label>
-          <label>
-            Password
-            <input
-              type="password"
-              autoComplete={signingUp ? 'new-password' : 'current-password'}
-              required
-              minLength={signingUp ? MIN_PASSWORD_LENGTH : undefined}
-              value={password}
-              onChange={(event) => setPassword(event.target.value)}
-            />
-          </label>
-          {signingUp && <p className="muted small">At least {MIN_PASSWORD_LENGTH} characters.</p>}
-          {error && (
-            <p role="alert" className="error">
-              {error}
-            </p>
-          )}
-          <div className="dialog-actions">
-            <button type="button" onClick={onClose}>
-              Cancel
-            </button>
-            <button type="submit" className="primary" disabled={submitting}>
-              {submitting ? 'Please wait…' : title}
-            </button>
-          </div>
-        </form>
-        <p className="muted small">
-          {signingUp ? 'Already have an account? ' : 'New to Tracer? '}
-          <button
-            type="button"
-            className="link-button"
-            onClick={() => onModeChange(signingUp ? 'login' : 'signup')}
-          >
-            {signingUp ? 'Log in' : 'Create an account'}
+    <Modal titleId={titleId} onClose={onClose}>
+      <h2 id={titleId}>{title}</h2>
+      <form onSubmit={handleSubmit}>
+        <label>
+          Email
+          <input
+            ref={emailRef}
+            type="email"
+            autoComplete="email"
+            required
+            value={email}
+            onChange={(event) => setEmail(event.target.value)}
+          />
+        </label>
+        <label>
+          Password
+          <input
+            type="password"
+            autoComplete={signingUp ? 'new-password' : 'current-password'}
+            required
+            minLength={signingUp ? MIN_PASSWORD_LENGTH : undefined}
+            value={password}
+            onChange={(event) => setPassword(event.target.value)}
+          />
+        </label>
+        {signingUp && <p className="muted small">At least {MIN_PASSWORD_LENGTH} characters.</p>}
+        {error && (
+          <p role="alert" className="error">
+            {error}
+          </p>
+        )}
+        <div className="dialog-actions">
+          <button type="button" onClick={onClose}>
+            Cancel
           </button>
-        </p>
-      </div>
-    </div>
+          <button type="submit" className="primary" disabled={submitting}>
+            {submitting ? 'Please wait…' : title}
+          </button>
+        </div>
+      </form>
+      <p className="muted small">
+        {signingUp ? 'Already have an account? ' : 'New to Tracer? '}
+        <button
+          type="button"
+          className="link-button"
+          onClick={() => onModeChange(signingUp ? 'login' : 'signup')}
+        >
+          {signingUp ? 'Log in' : 'Create an account'}
+        </button>
+      </p>
+    </Modal>
   );
 }

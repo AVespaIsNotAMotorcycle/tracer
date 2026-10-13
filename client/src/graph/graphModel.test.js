@@ -14,6 +14,7 @@ import {
   inGraphConnectionCounts,
   layoutYears,
   reanchorGraph,
+  restoreGraph,
   totalCitationCounts,
   NO_FILTERS,
   visibleIds,
@@ -520,6 +521,35 @@ describe('yearPositions', () => {
     // Order is kept, and without a focus nothing changes.
     expect([...positions.keys()]).toEqual(years);
     expect(yearPositions(years, 10, null)).toEqual(yearPositions(years, 10));
+  });
+});
+
+describe('restoreGraph', () => {
+  // R cites A; A cites D; D cites G; E cites A.
+  const network = { R: ['A'], A: ['D'], D: ['G'], G: [], E: ['A'] };
+  const options = { citingDepth: 0, citedDepth: 1, limit: 10, maxNodes: 100 };
+
+  it('builds from the anchor, then repeats the expansions in order', async () => {
+    const api = fakeApi(network);
+    // D is only on the graph once A is expanded, so order matters.
+    const { graph } = await restoreGraph({ anchorId: 'R', options, expanded: ['A', 'D'] }, api);
+
+    expect([...graph.works.keys()].sort()).toEqual(['A', 'D', 'E', 'G', 'R']);
+    expect([...graph.sticky]).toEqual(['A', 'D']);
+    expect(graph.expanded.get('D')).toEqual(new Set(['citing', 'cited']));
+  });
+
+  it('fetches an expanded work the build did not reach, and skips one that is gone', async () => {
+    const api = fakeApi(network);
+    const getWork = api.getWork.getMockImplementation();
+    api.getWork.mockImplementation(async (id) => {
+      if (id === 'GONE') throw new Error('Work not found');
+      return getWork(id);
+    });
+    const { graph } = await restoreGraph({ anchorId: 'R', options, expanded: ['GONE', 'G'] }, api);
+    expect(graph.works.has('G')).toBe(true);
+    expect(graph.works.has('GONE')).toBe(false);
+    expect([...graph.sticky]).toEqual(['G']);
   });
 });
 

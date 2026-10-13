@@ -1,3 +1,4 @@
+import { Minus, Plus } from 'lucide-react';
 import { NO_FILTERS } from '../graph/graphModel.js';
 import { sourceType } from '../graph/sourceTypes.js';
 
@@ -26,6 +27,11 @@ export default function FiltersPanel({
   totalCount,
 }) {
   const excluded = new Set(filters.excludedTypes);
+  // The slider shows a minimum above the graph's maximum (after works are removed) as the
+  // maximum, so stepping starts from what it shows.
+  const minConnections = Math.min(filters.minConnections, maxConnections);
+  const setMinConnections = (value) =>
+    onChange({ ...filters, minConnections: Math.max(1, Math.min(maxConnections, value)) });
   const toggleType = (key) => {
     const next = new Set(excluded);
     if (next.has(key)) next.delete(key);
@@ -54,16 +60,37 @@ export default function FiltersPanel({
           />
         </label>
       </div>
-      <label className="filter-range">
-        Cited by or cites at least {filters.minConnections} on graph
-        <input
-          type="range"
-          min={1}
-          max={maxConnections}
-          value={filters.minConnections}
-          onChange={(event) => onChange({ ...filters, minConnections: Number(event.target.value) })}
-        />
-      </label>
+      <div className="filter-range">
+        <span id="min-connections-label">
+          Cited by or cites at least {filters.minConnections} on graph
+        </span>
+        <div className="stepper">
+          <button
+            type="button"
+            onClick={() => setMinConnections(minConnections - 1)}
+            disabled={minConnections <= 1}
+            aria-label="Decrease minimum links"
+          >
+            <Minus className="icon" aria-hidden="true" />
+          </button>
+          <input
+            type="range"
+            min={1}
+            max={maxConnections}
+            value={filters.minConnections}
+            onChange={(event) => setMinConnections(Number(event.target.value))}
+            aria-labelledby="min-connections-label"
+          />
+          <button
+            type="button"
+            onClick={() => setMinConnections(minConnections + 1)}
+            disabled={minConnections >= maxConnections}
+            aria-label="Increase minimum links"
+          >
+            <Plus className="icon" aria-hidden="true" />
+          </button>
+        </div>
+      </div>
       <fieldset className="type-filter">
         <legend>Source types</legend>
         <ul className="source-types">

@@ -401,6 +401,26 @@ button.primary,
   font-size: 0.85em;
 }
 
+/* The connections slider, with − and + buttons that step it by one. */
+.stepper {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+}
+
+.stepper input {
+  flex: 1;
+  min-width: 0;
+}
+
+.stepper button {
+  display: grid;
+  place-items: center;
+  padding: 2px;
+  width: 26px;
+  height: 26px;
+}
+
 .results-header {
   display: flex;
   justify-content: space-between;

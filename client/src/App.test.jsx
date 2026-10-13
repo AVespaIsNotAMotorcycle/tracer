@@ -618,6 +618,22 @@ describe('App', () => {
     ).toEqual(['Title anchor', 'Title ref']);
   });
 
+  it('steps the links filter by one with its − and + buttons', async () => {
+    await buildFromSearch();
+    const decrease = screen.getByRole('button', { name: 'Decrease minimum links' });
+    const increase = screen.getByRole('button', { name: 'Increase minimum links' });
+    // At the minimum of 1, of a maximum of 2.
+    expect(decrease).toBeDisabled();
+
+    fireEvent.click(increase);
+    expect(screen.getByRole('slider', { name: /at least 2 on graph/ })).toHaveValue('2');
+    expect(increase).toBeDisabled();
+
+    fireEvent.click(decrease);
+    expect(screen.getByRole('slider', { name: /at least 1 on graph/ })).toHaveValue('1');
+    expect(decrease).toBeDisabled();
+  });
+
   describe('source type filter', () => {
     const withBooks = () =>
       vi

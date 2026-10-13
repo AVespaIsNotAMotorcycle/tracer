@@ -2,7 +2,8 @@ import mongoose from 'mongoose';
 
 // Markup on a saved graph: a note now, other kinds (highlights, colours, tags) later. Each one
 // targets either the whole graph or one work (by Tracer ID), so notes on works and on the graph
-// share one list and one shape. Not editable yet; saved graphs start with none.
+// share one list and one shape. The client edits notes on works and saves them with the graph
+// (state.annotations); at most one per target.
 const annotationSchema = new mongoose.Schema(
   {
     target: {

@@ -1,4 +1,4 @@
-import { Pin } from 'lucide-react';
+import { Pin, NotebookPen } from 'lucide-react';
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { getSavedGraph, saveGraph, saveGraphSnapshot, updateGraph } from './api.js';
 import './App.css';
@@ -51,6 +51,14 @@ function outgoingCounts(works) {
   return result;
 }
 
+/** Notes on works from a saved graph's annotations, as Tracer ID → text. */
+const notesFrom = (annotations = []) =>
+  new Map(
+    annotations
+      .filter((a) => a.kind === 'note' && a.target?.type === 'work' && a.body)
+      .map((a) => [a.target.workId, a.body]),
+  );
+
 const short = (text, max = 40) => (text.length > max ? `${text.slice(0, max - 1)}…` : text);
 
 /**
@@ -94,6 +102,17 @@ function GraphPage({ auth }) {
       const next = new Set(prev);
       if (next.has(id)) next.delete(id);
       else next.add(id);
+      return next;
+    });
+  // The user's notes on works (Tracer ID → text). Like pins, kept across re-anchoring and saved
+  // with the graph (as annotations), including notes on works a rebuild has since dropped, so
+  // they're back if the work is.
+  const [notes, setNotes] = useState(() => new Map());
+  const setNote = (id, text) =>
+    setNotes((prev) => {
+      const next = new Map(prev);
+      if (text) next.set(id, text);
+      else next.delete(id);
       return next;
     });
   // The last co-citation search, for one anchor: { anchorId, found, counts, citers } (counts:
@@ -171,6 +190,7 @@ function GraphPage({ auth }) {
     setSelectedId(null);
     setFilters(NO_FILTERS);
     setPinned(new Set(extraIds));
+    setNotes(new Map());
     setCoCitations(null);
     setPathSearch(null);
     setSavedGraph(null);
@@ -216,6 +236,7 @@ function GraphPage({ auth }) {
       });
       setAxisAngle(saved.view?.axisAngle ?? DEFAULT_AXIS_ANGLE);
       setPinned(new Set(saved.view?.pinned ?? []));
+      setNotes(notesFrom(saved.annotations));
       setCoCitations(null);
       setPathSearch(null);
       setSelectedId(null);
@@ -276,6 +297,7 @@ function GraphPage({ auth }) {
       setSelectedId(null);
       setFilters(NO_FILTERS);
       setPinned(new Set());
+      setNotes(new Map());
       setCoCitations(null);
       setSavedGraph(null);
       if (anchor) {
@@ -434,6 +456,11 @@ function GraphPage({ auth }) {
       // Pins of works no longer on the graph (dropped by a re-anchor) aren't worth keeping.
       view: { axisAngle, pinned: [...pinned].filter((id) => view.works.has(id)) },
       expanded: [...graph.sticky],
+      annotations: [...notes].map(([workId, body]) => ({
+        target: { type: 'work', workId },
+        kind: 'note',
+        body,
+      })),
     };
     const snapshot = busy || expanding.size > 0 ? undefined : graphSnapshot(graph, truncated);
     const saved =
@@ -515,6 +542,12 @@ function GraphPage({ auth }) {
               </i>{' '}
               Pinned: always shown
             </span>
+            <span>
+              <i className="swatch noted">
+                <NotebookPen aria-hidden="true" />
+              </i>{' '}
+              Has a note
+            </span>
             <span className="muted small">
               Older works toward the top left, newer toward the bottom right
             </span>
@@ -558,6 +591,7 @@ function GraphPage({ auth }) {
             sizes={sizes}
             expandedIds={expandedIds}
             pinnedIds={pinned}
+            notes={notes}
             coCitedIds={coCited}
             years={years}
             visible={visible}
@@ -596,6 +630,9 @@ function GraphPage({ auth }) {
           onMakeAnchor={() => handleReanchor(selected.id)}
           pinned={pinned.has(selected.id)}
           onTogglePin={() => togglePin(selected.id)}
+          note={notes.get(selected.id) ?? ''}
+          onNoteChange={(text) => setNote(selected.id, text)}
+          signedIn={Boolean(auth.user)}
           coCitedBy={coCited.get(selected.id) ?? null}
           onFindCoCitations={selected.id === graph.anchorId ? handleFindCoCitations : undefined}
           findingCoCitations={findingCoCitations}

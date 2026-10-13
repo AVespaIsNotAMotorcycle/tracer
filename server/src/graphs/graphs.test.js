@@ -119,6 +119,49 @@ describe('saving and opening graphs', () => {
     });
   });
 
+  it('saves notes on works with the graph, replacing them on update', async () => {
+    const agent = await signedIn();
+    const note = (workId, body) => ({ target: { type: 'work', workId }, kind: 'note', body });
+    const { graph } = (
+      await agent.post('/api/graphs').send({
+        state: state({
+          annotations: [note('tracer-a', 'Riots as protest'), note('tracer-b', '  ')],
+        }),
+      })
+    ).body;
+    expect(graph.annotations).toEqual([
+      {
+        id: expect.any(String),
+        target: { type: 'work', workId: 'tracer-a' },
+        kind: 'note',
+        body: 'Riots as protest',
+        createdAt: expect.any(String),
+        updatedAt: expect.any(String),
+      },
+    ]);
+
+    // Without annotations, an update keeps them.
+    const kept = (await agent.put(`/api/graphs/${graph.id}`).send({ state: state() })).body;
+    expect(kept.graph.annotations).toEqual(graph.annotations);
+
+    const updated = (
+      await agent.put(`/api/graphs/${graph.id}`).send({
+        state: state({
+          annotations: [note('tracer-a', 'Riots as protest'), note('tracer-c', 'Compare')],
+        }),
+      })
+    ).body;
+    expect(updated.graph.annotations).toMatchObject([
+      { id: graph.annotations[0].id, body: 'Riots as protest' },
+      { target: { type: 'work', workId: 'tracer-c' }, body: 'Compare' },
+    ]);
+
+    const cleared = (
+      await agent.put(`/api/graphs/${graph.id}`).send({ state: state({ annotations: [] }) })
+    ).body;
+    expect(cleared.graph.annotations).toEqual([]);
+  });
+
   it('deletes a saved graph', async () => {
     const agent = await signedIn();
     const { graph } = (await agent.post('/api/graphs').send({ state: state() })).body;
@@ -287,6 +330,18 @@ describe('validation', () => {
     ['an axis angle out of range', state({ view: { axisAngle: 120 } })],
     ['pinned works that aren’t IDs', state({ view: { axisAngle: 30, pinned: [7] } })],
     ['expanded works that aren’t IDs', state({ expanded: [{ id: 'x' }] })],
+    [
+      'a note without a work',
+      state({ annotations: [{ target: { type: 'work' }, kind: 'note', body: 'x' }] }),
+    ],
+    [
+      'an overlong note',
+      state({
+        annotations: [
+          { target: { type: 'work', workId: 'tracer-a' }, kind: 'note', body: 'x'.repeat(10_001) },
+        ],
+      }),
+    ],
   ])('refuses a graph with %s', async (_, bad) => {
     const agent = await signedIn();
     expect((await agent.post('/api/graphs').send({ state: bad })).status).toBe(400);

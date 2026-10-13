@@ -43,6 +43,9 @@
   --node-expanded: var(--palette-2);
   --node-pin: var(--ink);
   --node-icon-on-pin: var(--paper);
+  /* Resolved on :root, so they follow the pin's colors into dark mode. */
+  --node-note: var(--node-pin);
+  --node-icon-on-note: var(--node-icon-on-pin);
   /* Resolved on :root, so it follows --node-citing into dark mode. */
   --node-co-cited: var(--node-citing);
   --graph-link: color-mix(in srgb, var(--ink) 22%, transparent);
@@ -116,14 +119,16 @@ h3 {
 
 button,
 input,
-select {
+select,
+textarea {
   font: inherit;
   color: inherit;
   accent-color: var(--accent);
 }
 
 input,
-select {
+select,
+textarea {
   background: var(--surface);
   border: 1px solid var(--border);
   border-radius: 6px;
@@ -542,8 +547,9 @@ button.with-icon {
   border: 2px solid var(--node-co-cited);
 }
 
-/* A pin badge, as pinned works carry on the graph. */
-.swatch.pinned {
+/* A pin badge, as pinned works carry on the graph, and the note badge likewise. */
+.swatch.pinned,
+.swatch.noted {
   display: inline-grid;
   place-items: center;
   width: 14px;
@@ -554,7 +560,13 @@ button.with-icon {
   color: var(--node-icon-on-pin);
 }
 
-.swatch.pinned svg {
+.swatch.noted {
+  background: var(--node-note);
+  color: var(--node-icon-on-note);
+}
+
+.swatch.pinned svg,
+.swatch.noted svg {
   width: 9px;
   height: 9px;
 }
@@ -1129,6 +1141,38 @@ button.with-icon {
 
 .details p {
   margin: 0;
+}
+
+/* The user's note on a work. */
+.work-note {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+
+.work-note label {
+  font-size: 0.9rem;
+  font-weight: 600;
+}
+
+.work-note textarea {
+  width: 100%;
+  resize: vertical;
+}
+
+.note-body {
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+  padding: 8px 10px;
+  border-left: 3px solid var(--node-note);
+  background: var(--surface-2);
+  border-radius: 0 6px 6px 0;
+}
+
+.button-row {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
 }
 
 .stats {

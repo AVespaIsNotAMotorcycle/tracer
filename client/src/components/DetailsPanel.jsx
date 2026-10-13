@@ -3,6 +3,7 @@ import { useEffect, useState } from 'react';
 import { getArchiveItems, getCitationMatch } from '../api.js';
 import { canExpand } from '../graph/graphModel.js';
 import { sourceType } from '../graph/sourceTypes.js';
+import WorkNote from './WorkNote.jsx';
 
 const LINK_LABELS = {
   doi: 'DOI',
@@ -58,7 +59,8 @@ const doiLink = (work) => work.links.find((link) => link.kind === 'doi');
  * expanded or made the anchor, so it shows its citation as printed instead. `yearInfo` (from
  * layoutYears) explains a listed year that was set aside as implausible. `onCollapse` is
  * given only for works the user expanded, and undoes that. `pinned` works are always shown,
- * whatever the filters; `onTogglePin` pins or unpins it. The anchor gets `onFindCoCitations`,
+ * whatever the filters; `onTogglePin` pins or unpins it. `note` is the user's note on it, and
+ * `onNoteChange` sets it ('' deletes it). The anchor gets `onFindCoCitations`,
  * with `coCitationControl` ({ value, max, citers, onChange }) for the minimum number of works
  * citing it that must cite a work, and `coCitationResult` ({ minCiters, citers, found, left })
  * once it has run; a work co-cited with the anchor
@@ -151,6 +153,9 @@ export default function DetailsPanel({
   onCollapse,
   pinned = false,
   onTogglePin,
+  note = '',
+  onNoteChange,
+  signedIn = false,
   coCitedBy = null,
   onFindCoCitations,
   coCitationControl = null,
@@ -333,6 +338,10 @@ export default function DetailsPanel({
           )}
           <span>{pinned ? 'Unpin' : 'Pin: always show'}</span>
         </button>
+      )}
+      {onNoteChange && (
+        // Keyed by work, so a draft doesn't carry over to the next work selected.
+        <WorkNote key={work.id} note={note} onChange={onNoteChange} signedIn={signedIn} />
       )}
 
       {(links.length > 0 || archiveItems.length > 0) && (

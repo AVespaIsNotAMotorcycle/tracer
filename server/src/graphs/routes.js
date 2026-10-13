@@ -4,7 +4,7 @@ import { jsonErrors, requireUser, sessionRequestChecks } from '../auth/routes.js
 /**
  * Routes under /api/graphs, all for the signed-in user's own saved graphs:
  * GET / lists them; POST / saves one ({ name?, state }); GET /:id opens one; PUT /:id
- * replaces its contents ({ name?, state }); PATCH /:id renames it ({ name }); DELETE /:id
+ * replaces its contents ({ name?, state }; its notes too if the state has `annotations`); PATCH /:id renames it ({ name }); DELETE /:id
  * deletes it. POST and PUT also take `snapshot`, the graph as built, which GET /:id returns
  * while it's fresh; PUT /:id/snapshot ({ key, snapshot }) stores one for a graph just rebuilt.
  *

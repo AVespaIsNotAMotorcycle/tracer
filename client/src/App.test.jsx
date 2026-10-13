@@ -5,7 +5,7 @@ import App from './App.jsx';
 
 // jsdom has no canvas, so render visible nodes as buttons instead.
 vi.mock('./graph/GraphView.jsx', () => ({
-  default: ({ graph, visible, onSelect, axisAngle, expandedIds, coCitedIds }) => (
+  default: ({ graph, visible, onSelect, axisAngle, expandedIds, coCitedIds, notes }) => (
     <ul aria-label="Graph" data-axis-angle={axisAngle}>
       {[...graph.works.values()]
         .filter((work) => visible.has(work.id))
@@ -16,6 +16,7 @@ vi.mock('./graph/GraphView.jsx', () => ({
               onClick={() => onSelect(work.id)}
               data-expanded={expandedIds?.has(work.id) || undefined}
               data-co-cited={coCitedIds?.has(work.id) || undefined}
+              data-note={notes?.get(work.id)}
             >
               {work.title}
             </button>
@@ -773,6 +774,60 @@ describe('App', () => {
     expect(await within(graph()).findByRole('button', { name: 'Title citer' })).toBeInTheDocument();
   });
 
+  it('adds, edits and deletes a note on a work, marking it on the graph', async () => {
+    await buildFromSearch();
+    const citerNode = () => within(graph()).getByRole('button', { name: 'Title citer' });
+    fireEvent.click(citerNode());
+    fireEvent.click(screen.getByRole('button', { name: 'Add note' }));
+    fireEvent.change(screen.getByLabelText('Note'), { target: { value: 'Read for ch. 3' } });
+    // A draft until saved.
+    expect(citerNode()).not.toHaveAttribute('data-note');
+    fireEvent.click(screen.getByRole('button', { name: 'Save note' }));
+    expect(citerNode()).toHaveAttribute('data-note', 'Read for ch. 3');
+    expect(screen.getByText('Read for ch. 3')).toBeInTheDocument();
+
+    fireEvent.click(screen.getByRole('button', { name: 'Edit note' }));
+    fireEvent.change(screen.getByLabelText('Note'), { target: { value: 'Changed' } });
+    fireEvent.click(screen.getByRole('button', { name: 'Cancel' }));
+    expect(citerNode()).toHaveAttribute('data-note', 'Read for ch. 3');
+
+    // Another work's details start without it.
+    fireEvent.click(within(graph()).getByRole('button', { name: 'Title ref' }));
+    expect(screen.getByRole('button', { name: 'Add note' })).toBeInTheDocument();
+
+    fireEvent.click(citerNode());
+    fireEvent.click(screen.getByRole('button', { name: 'Delete note' }));
+    expect(citerNode()).not.toHaveAttribute('data-note');
+    expect(screen.getByRole('button', { name: 'Add note' })).toBeInTheDocument();
+  });
+
+  it('keeps notes across re-anchoring and clears them on a new search', async () => {
+    await buildFromSearch();
+    fireEvent.click(within(graph()).getByRole('button', { name: 'Title citer' }));
+    fireEvent.click(screen.getByRole('button', { name: 'Add note' }));
+    fireEvent.change(screen.getByLabelText('Note'), { target: { value: 'Key' } });
+    fireEvent.click(screen.getByRole('button', { name: 'Save note' }));
+    fireEvent.click(screen.getByRole('button', { name: 'Make this the anchor' }));
+    await waitFor(() =>
+      expect(screen.getByRole('button', { name: 'Make this the anchor' })).toBeDisabled(),
+    );
+    await waitFor(() =>
+      expect(within(graph()).getByRole('button', { name: 'Title citer' })).toHaveAttribute(
+        'data-note',
+        'Key',
+      ),
+    );
+
+    fireEvent.click(screen.getByRole('button', { name: 'Go' }));
+    const results = await screen.findByRole('list', { name: 'Search results' });
+    fireEvent.click(within(results).getByRole('button', { name: /Title anchor/ }));
+    await waitFor(() =>
+      expect(within(graph()).getByRole('button', { name: 'Title citer' })).not.toHaveAttribute(
+        'data-note',
+      ),
+    );
+  });
+
   it('steps the links filter by one with its − and + buttons', async () => {
     await buildFromSearch();
     const decrease = screen.getByRole('button', { name: 'Decrease minimum links' });
@@ -1287,6 +1342,9 @@ describe('saved graphs', () => {
     fireEvent.click(screen.getByRole('button', { name: 'Expand citing and cited works' }));
     await within(graph()).findByRole('button', { name: 'Title more' });
     fireEvent.click(screen.getByRole('button', { name: 'Pin: always show' }));
+    fireEvent.click(screen.getByRole('button', { name: 'Add note' }));
+    fireEvent.change(screen.getByLabelText('Note'), { target: { value: 'On grain riots' } });
+    fireEvent.click(screen.getByRole('button', { name: 'Save note' }));
     fireEvent.click(screen.getByRole('checkbox', { name: /Article/ }));
 
     fireEvent.click(screen.getByRole('button', { name: 'Save graph' }));
@@ -1305,6 +1363,9 @@ describe('saved graphs', () => {
       filters: { minYear: null, maxYear: null, minConnections: 1, excludedTypes: ['article'] },
       view: { axisAngle: 30, pinned: ['ref'] },
       expanded: ['ref'],
+      annotations: [
+        { target: { type: 'work', workId: 'ref' }, kind: 'note', body: 'On grain riots' },
+      ],
     });
     // With the graph as built, so reopening it needn't fetch anything.
     const snapshot = vi.mocked(api.saveGraph).mock.calls[0][2];
@@ -1387,6 +1448,32 @@ describe('saved graphs', () => {
           .map((b) => b.textContent),
       ).toEqual(['Title anchor', 'Title citer']),
     );
+  });
+
+  it('opens a saved graph with its notes', async () => {
+    vi.mocked(api.getSavedGraph).mockResolvedValue(
+      savedFrom(
+        {
+          anchor: { id: 'anchor', ref: 'Wanchor', title: 'Title anchor' },
+          options: { citingDepth: 1, citedDepth: 1, limit: 20, maxNodes: 300 },
+          filters: { minYear: null, maxYear: null, minConnections: 1, excludedTypes: [] },
+          view: { axisAngle: 30 },
+          expanded: [],
+        },
+        {
+          annotations: [
+            { id: 'a1', target: { type: 'work', workId: 'citer' }, kind: 'note', body: 'Key' },
+          ],
+        },
+      ),
+    );
+    window.history.replaceState(null, '', '/?graph=g1');
+    render(<App />);
+
+    const citerNode = await screen.findByRole('button', { name: 'Title citer' });
+    expect(citerNode).toHaveAttribute('data-note', 'Key');
+    fireEvent.click(citerNode);
+    expect(screen.getByText('Key')).toBeInTheDocument();
   });
 
   const savedState = {

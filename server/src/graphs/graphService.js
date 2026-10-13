@@ -12,6 +12,8 @@ const gunzip = promisify(gunzipCallback);
 export const MAX_NAME_LENGTH = 120;
 export const MAX_GRAPHS_PER_USER = 500;
 const MAX_EXPANDED = 5000;
+const MAX_ANNOTATIONS = 5000;
+const MAX_NOTE_LENGTH = 10_000;
 // How long a snapshot of a built graph is used before reopening the graph rebuilds it, so its
 // works' data (citation counts, newly found citations) doesn't go stale for long.
 export const SNAPSHOT_TTL_MS = 7 * 24 * 60 * 60 * 1000;
@@ -36,8 +38,10 @@ const bad = (message) => new HttpError(400, message);
  * The parts of a graph to save, checked and trimmed to what's stored. Throws 400 if anything
  * is missing or out of range.
  *
+ * `annotations` is optional: without it, an update keeps the graph's annotations.
+ *
  * @param {any} state  { anchor: { id, ref?, title? }, options, filters,
- *   view: { axisAngle, pinned }, expanded }
+ *   view: { axisAngle, pinned }, expanded, annotations? }
  */
 export function checkState(state) {
   if (!state || typeof state !== 'object') throw bad('Missing graph');
@@ -85,7 +89,7 @@ export function checkState(state) {
   ) {
     throw bad('Invalid expanded works');
   }
-  return {
+  const checked = {
     anchor: {
       id: anchor.id,
       ref: typeof anchor.ref === 'string' ? anchor.ref.slice(0, 256) : null,
@@ -101,6 +105,62 @@ export function checkState(state) {
     view: { axisAngle, pinned: [...new Set(pinned)] },
     expanded: [...new Set(expanded)],
   };
+  if (state.annotations !== undefined) checked.annotations = checkAnnotations(state.annotations);
+  return checked;
+}
+
+/**
+ * Notes on the graph or its works: at most one per target (the last given wins), blank ones
+ * dropped. Throws 400 if any is malformed.
+ *
+ * @param {any} annotations  [{ target: { type: 'graph' } | { type: 'work', workId }, kind:
+ *   'note', body }]
+ */
+export function checkAnnotations(annotations) {
+  if (!Array.isArray(annotations) || annotations.length > MAX_ANNOTATIONS) {
+    throw bad('Invalid notes');
+  }
+  const byTarget = new Map();
+  for (const annotation of annotations) {
+    const { target, kind, body } = annotation ?? {};
+    const work = target?.type === 'work';
+    if (
+      (!work && target?.type !== 'graph') ||
+      (work && !isId(target.workId)) ||
+      kind !== 'note' ||
+      typeof body !== 'string'
+    ) {
+      throw bad('Invalid notes');
+    }
+    if (body.length > MAX_NOTE_LENGTH) {
+      throw bad(`Use notes of at most ${MAX_NOTE_LENGTH.toLocaleString('en')} characters`);
+    }
+    const key = work ? `work:${target.workId}` : 'graph';
+    byTarget.delete(key);
+    if (body.trim()) {
+      byTarget.set(key, {
+        target: work ? { type: 'work', workId: target.workId } : { type: 'graph' },
+        kind,
+        body,
+      });
+    }
+  }
+  return [...byTarget.values()];
+}
+
+/**
+ * The graph's annotations replaced by `next`, keeping unchanged ones as they were (with their
+ * IDs and timestamps) and updating in place those whose body changed.
+ */
+function replaceAnnotations(graph, next) {
+  const key = ({ target, kind }) => `${kind}:${target.type}:${target.workId ?? ''}`;
+  const existing = new Map(graph.annotations.map((a) => [key(a), a]));
+  graph.annotations = next.map((annotation) => {
+    const found = existing.get(key(annotation));
+    if (!found) return annotation;
+    if (found.body !== annotation.body) found.body = annotation.body;
+    return found;
+  });
 }
 
 /**
@@ -272,7 +332,8 @@ export function createGraphService({
     },
 
     /**
-     * Replaces what the graph holds (keeping its annotations), and its name if given. A snapshot
+     * Replaces what the graph holds, and its name if given. Its annotations are replaced only
+     * when the state includes them. A snapshot
      * replaces the stored one; without one, a snapshot of the old state is dropped.
      */
     async update(userId, id, { name, state, snapshot }) {
@@ -280,7 +341,9 @@ export function createGraphService({
       const before = stateKey(graph);
       const checked = checkState(state);
       const checkedSnapshot = snapshot == null ? null : checkSnapshot(snapshot, checked.anchor.id);
-      graph.set(checked);
+      const { annotations, ...rest } = checked;
+      graph.set(rest);
+      if (annotations) replaceAnnotations(graph, annotations);
       if (name !== undefined) graph.name = checkName(name, graph.anchor.title);
       await graph.save();
       if (checkedSnapshot) await storeSnapshot(graph, checkedSnapshot);

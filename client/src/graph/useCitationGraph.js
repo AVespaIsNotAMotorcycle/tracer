@@ -1,6 +1,7 @@
 import { useCallback, useEffect, useRef, useState } from 'react';
 import * as defaultApi from '../api.js';
 import {
+  applyCoCitations as applyCoCitationsTo,
   buildGraph,
   collapseWorks,
   emptyGraph,
@@ -244,25 +245,24 @@ export function useCitationGraph(api = defaultApi) {
   );
 
   /**
-   * Finds works co-cited with the anchor (see findCoCitations) and adds those not on the graph.
-   * `targets` are the anchor and its chapters. Resolves to the co-cited works' counts, or null
-   * if it failed or the anchor changed meanwhile.
+   * Looks for works co-cited with the anchor (see findCoCitations), then shows those at least
+   * `minCiters` citing works cite (see applyCoCitations). `targets` are the anchor and its
+   * chapters. Resolves to the search's results (every count of 2 or more), for changing the
+   * minimum later, or null if it failed or the anchor changed meanwhile.
    */
   const findCoCitations = useCallback(
-    async (targets, { limit, maxNodes, minCiters }) => {
+    async (targets, { limit, maxNodes, minCiters, keep }) => {
       const anchorId = graphRef.current.anchorId;
       const progress = track('cocite', 'Finding co-citations', undefined, 3);
       try {
-        const { counts, apply } = await findCoCitationsIn(
-          graphRef.current,
-          targets,
-          { limit, maxNodes, minCiters },
-          api,
-          progress,
-        );
+        const result = await findCoCitationsIn(graphRef.current, targets, { limit }, api, progress);
         if (graphRef.current.anchorId !== anchorId) return null;
-        setGraph((latest) => (latest.anchorId === anchorId ? apply(latest) : latest));
-        return counts;
+        setGraph((latest) =>
+          latest.anchorId === anchorId
+            ? applyCoCitationsTo(latest, result, { minCiters, maxNodes, keep })
+            : latest,
+        );
+        return result;
       } catch (err) {
         setError(err.message);
         return null;
@@ -272,6 +272,11 @@ export function useCitationGraph(api = defaultApi) {
     },
     [api, track, untrack],
   );
+
+  /** Shows the co-citations of an earlier search at a new minimum (see applyCoCitations). */
+  const applyCoCitations = useCallback((result, options) => {
+    setGraph((latest) => applyCoCitationsTo(latest, result, options));
+  }, []);
 
   return {
     graph,
@@ -286,6 +291,7 @@ export function useCitationGraph(api = defaultApi) {
     expand,
     collapse,
     findCoCitations,
+    applyCoCitations,
     reset,
   };
 }

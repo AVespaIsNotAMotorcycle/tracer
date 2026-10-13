@@ -74,6 +74,7 @@ function GraphPage({ auth }) {
     expand,
     collapse,
     findCoCitations,
+    applyCoCitations,
     reset,
   } = useCitationGraph();
   const busy = status === 'loading' || status === 'reanchoring';
@@ -90,8 +91,9 @@ function GraphPage({ auth }) {
       else next.add(id);
       return next;
     });
-  // Works co-cited with the anchor, once looked for: { anchorId, counts } (counts: how many
-  // works citing the anchor cite each). They're highlighted while that's still the anchor.
+  // The last co-citation search, for one anchor: { anchorId, found, counts, citers } (counts:
+  // how many works citing the anchor cite each, from 2 up). Works at or above the minimum
+  // are highlighted while that's still the anchor.
   const [coCitations, setCoCitations] = useState(null);
   const [findingCoCitations, setFindingCoCitations] = useState(false);
   // The minimum citers the user chose for a co-citation, for one anchor ({ anchorId, value });
@@ -286,18 +288,6 @@ function GraphPage({ auth }) {
     return ids;
   }, [view.works, graph, partsOf]);
 
-  // Co-cited works as shown (a chapter as its book), with how many works citing the anchor
-  // cite each; empty unless they were found for the current anchor.
-  const coCited = useMemo(() => {
-    const shown = new Map();
-    if (coCitations?.anchorId !== graph.anchorId) return shown;
-    for (const [id, count] of coCitations.counts) {
-      const viewId = bookOf.get(id) ?? id;
-      if (view.works.has(viewId)) shown.set(viewId, Math.max(count, shown.get(viewId) ?? 0));
-    }
-    return shown;
-  }, [coCitations, graph.anchorId, bookOf, view.works]);
-
   // The anchor and its chapters, and how many works on the graph cite them: the works whose
   // reference lists are searched for co-citations.
   const anchorTargets = useMemo(
@@ -313,19 +303,51 @@ function GraphPage({ auth }) {
       : defaultMinCoCiters(citerCount),
   );
 
+  // Co-cited works as shown (a chapter as its book), with how many works citing the anchor
+  // cite each; empty unless they were found for the current anchor.
+  const coCited = useMemo(() => {
+    const shown = new Map();
+    if (coCitations?.anchorId !== graph.anchorId) return shown;
+    for (const [id, count] of coCitations.counts) {
+      if (count < minCoCiters) continue;
+      const viewId = bookOf.get(id) ?? id;
+      if (view.works.has(viewId)) shown.set(viewId, Math.max(count, shown.get(viewId) ?? 0));
+    }
+    return shown;
+  }, [coCitations, graph.anchorId, minCoCiters, bookOf, view.works]);
+
   // Looks through the reference lists of the works on the graph citing the anchor (or its
   // chapters), adding works at least minCoCiters of them cite, and highlights them.
   const handleFindCoCitations = async () => {
     const anchorId = graph.anchorId;
     const minCiters = minCoCiters;
     setFindingCoCitations(true);
-    const counts = await findCoCitations(anchorTargets, {
+    const result = await findCoCitations(anchorTargets, {
       limit: CO_CITATION_LIMIT,
       maxNodes: (graphOptions ?? options).maxNodes,
       minCiters,
+      keep: pinned,
     });
     setFindingCoCitations(false);
-    if (counts) setCoCitations({ anchorId, counts, minCiters, citers: citerCount });
+    if (!result) return;
+    setCoCitations({ anchorId, ...result, citers: citerCount });
+    // Fixed from here on, so the default following the number of citers (which expanding can
+    // change) doesn't move the minimum out of step with what was added.
+    setMinCoCitersChoice({ anchorId, value: minCiters });
+  };
+
+  // A new minimum. After a search, it applies at once: added works that no longer qualify are
+  // removed, and ones that now do are added, from the search's results.
+  const handleMinCoCitersChange = (value) => {
+    const next = Math.max(2, Math.min(maxCoCiters, value));
+    setMinCoCitersChoice({ anchorId: graph.anchorId, value: next });
+    if (coCitations?.anchorId === graph.anchorId) {
+      applyCoCitations(coCitations, {
+        minCiters: next,
+        maxNodes: (graphOptions ?? options).maxNodes,
+        keep: pinned,
+      });
+    }
   };
 
   const selected = shownId ? view.works.get(shownId) : null;
@@ -507,22 +529,20 @@ function GraphPage({ auth }) {
                   value: minCoCiters,
                   max: maxCoCiters,
                   citers: citerCount,
-                  onChange: (value) =>
-                    setMinCoCitersChoice({
-                      anchorId: graph.anchorId,
-                      value: Math.max(2, Math.min(maxCoCiters, value)),
-                    }),
+                  onChange: handleMinCoCitersChange,
                 }
               : null
           }
           coCitationResult={
             selected.id === graph.anchorId && coCitations?.anchorId === graph.anchorId
               ? {
-                  minCiters: coCitations.minCiters,
+                  minCiters: minCoCiters,
                   citers: coCitations.citers,
-                  found: coCitations.counts.size,
+                  found: [...coCitations.counts.values()].filter((n) => n >= minCoCiters).length,
                   // Works that didn't fit under the max works setting.
-                  left: [...coCitations.counts.keys()].filter((id) => !graph.works.has(id)).length,
+                  left: [...coCitations.counts].filter(
+                    ([id, n]) => n >= minCoCiters && !graph.works.has(id),
+                  ).length,
                 }
               : null
           }

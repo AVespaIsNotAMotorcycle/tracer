@@ -20,6 +20,9 @@ import { REFERENCE_ONLY, sourceTypeKey } from './sourceTypeKeys.js';
  *   Works whose neighbors stay on the graph when the anchor changes: works the user expanded,
  *   and previous anchors. (Works the build traversed on its own are not sticky; they're
  *   rebuilt relative to the new anchor.)
+ * @property {Set<string>} [coCitationAdded]
+ *   Works only on the graph because a co-citation search added them (see applyCoCitations),
+ *   so a higher minimum can take them away again. Rebuilding clears it.
  */
 
 /** @returns {Graph} */
@@ -30,6 +33,7 @@ export function emptyGraph() {
     relations: new Map(),
     expanded: new Map(),
     sticky: new Set(),
+    coCitationAdded: new Set(),
   };
 }
 
@@ -461,7 +465,12 @@ export async function expandWork(graph, id, { limit }, api, progress = noProgres
         markExpanded(addFoundWorks(acc, id, works, direction), id, direction),
       latest,
     );
-    return { ...expanded, sticky: new Set(expanded.sticky).add(id) };
+    // Works this found are on the graph for their own reason now, not only as co-citations.
+    const foundIds = new Set(results.flatMap(({ works }) => works.map((w) => w.id)));
+    const coCitationAdded = new Set(
+      [...(expanded.coCitationAdded ?? [])].filter((other) => !foundIds.has(other)),
+    );
+    return { ...expanded, sticky: new Set(expanded.sticky).add(id), coCitationAdded };
   };
 }
 
@@ -524,34 +533,32 @@ export const defaultMinCoCiters = (citerCount) =>
   Math.max(MIN_CO_CITERS, Math.ceil(Math.sqrt(citerCount)));
 
 /**
- * Finds works co-cited with the anchor: cited by at least `minCiters` of the works on the
- * graph that cite it (`targets`: the anchor, and its chapters if it's a book; see coCiters). Fetches each
- * such work's cited works, up to `limit` (its reference list, as on expanding), and counts how
- * many of them cite each work. Fetching a citer's cited works here doesn't mark it expanded:
- * only the co-cited ones are added.
+ * @typedef {object} CoCitations
+ * @property {Map<string, object[]>} found  Each citing work's cited works, by its ID.
+ * @property {Map<string, number>} counts
+ *   Works cited by at least MIN_CO_CITERS of the citing works, with how many cite each.
+ */
+
+/**
+ * Looks for works co-cited with the anchor: fetches the cited works of each work on the graph
+ * citing it (`targets`: the anchor, and its chapters if it's a book; see coCiters), up to
+ * `limit` (its reference list, as on expanding), and counts how many of them cite each work.
+ * Every count of MIN_CO_CITERS or more is kept, so the minimum can change afterwards without
+ * fetching again (see applyCoCitations).
  *
  * @param {Graph} graph
  * @param {string[]} targets
- * @param {{ limit: number, maxNodes: number, minCiters?: number }} options
+ * @param {{ limit: number }} options
  * @param {GraphApi} api
  * @param {ReturnType<typeof import('./progress.js').createProgressTracker>} [progress]
  *   Planned here, one request per citing work.
- * @returns {Promise<{ counts: Map<string, number>, apply: (graph: Graph) => Graph }>}
- *   Co-cited works with how many citing works cite each, and an updater that adds the ones not
- *   on the graph yet, most co-cited first, up to maxNodes.
+ * @returns {Promise<CoCitations>}
  */
-export async function findCoCitations(
-  graph,
-  targets,
-  { limit, maxNodes, minCiters = MIN_CO_CITERS },
-  api,
-  progress = noProgress,
-) {
+export async function findCoCitations(graph, targets, { limit }, api, progress = noProgress) {
   const targetSet = new Set(targets);
   const citers = coCiters(graph, targets);
-  const requests = citers.map((work) => requestInfo('cited', work.id, work));
   progress.plan(citers.length);
-  progress.queue(requests);
+  progress.queue(citers.map((work) => requestInfo('cited', work.id, work)));
 
   const found = new Map();
   await forEachLimited(citers, CO_CITATION_CONCURRENCY, async (citer) => {
@@ -566,41 +573,72 @@ export async function findCoCitations(
   });
 
   const counts = new Map();
-  const works = new Map();
   for (const cited of found.values()) {
     // Counted once per citing work, even if its list names a work twice.
-    for (const work of new Map(cited.map((w) => [w.id, w])).values()) {
-      if (targetSet.has(work.id)) continue;
-      counts.set(work.id, (counts.get(work.id) ?? 0) + 1);
-      works.set(work.id, work);
+    for (const id of new Set(cited.map((work) => work.id))) {
+      if (!targetSet.has(id)) counts.set(id, (counts.get(id) ?? 0) + 1);
     }
   }
-  const min = Math.max(MIN_CO_CITERS, minCiters);
-  for (const [id, count] of counts) if (count < min) counts.delete(id);
+  for (const [id, count] of counts) if (count < MIN_CO_CITERS) counts.delete(id);
+  return { found, counts };
+}
 
-  const apply = (latest) => {
-    const room = Math.max(0, maxNodes - latest.works.size);
-    const added = new Set(
-      [...counts]
-        .filter(([id]) => !latest.works.has(id))
-        .sort((a, b) => b[1] - a[1])
-        .slice(0, room)
-        .map(([id]) => id),
+/**
+ * Makes the graph show the co-citations cited by at least `minCiters` citing works. Works an
+ * earlier call added (`graph.coCitationAdded`) that no longer qualify are removed, unless the
+ * user has since expanded them (sticky) or they're in `keep` (pinned); works that qualify and
+ * aren't on the graph are added as cited works, most co-cited first, up to maxNodes. Each
+ * citer's references gain its cited list, so edges to the added works draw. Fetching a citer's
+ * cited works here doesn't mark it expanded: only some of them are added.
+ *
+ * @param {Graph} graph
+ * @param {CoCitations} coCitations
+ * @param {{ minCiters: number, maxNodes: number, keep?: Set<string> }} options
+ * @returns {Graph}
+ */
+export function applyCoCitations(
+  graph,
+  { found, counts },
+  { minCiters, maxNodes, keep = new Set() },
+) {
+  const min = Math.max(MIN_CO_CITERS, minCiters);
+  const qualifies = (id) => (counts.get(id) ?? 0) >= min;
+  const previous = graph.coCitationAdded ?? new Set();
+  const drop = new Set(
+    [...previous].filter((id) => !qualifies(id) && !graph.sticky.has(id) && !keep.has(id)),
+  );
+
+  let next = graph;
+  if (drop.size > 0) {
+    const without = (map) => new Map([...map].filter(([id]) => !drop.has(id)));
+    next = {
+      ...graph,
+      works: without(graph.works),
+      relations: without(graph.relations),
+      expanded: without(graph.expanded),
+    };
+  }
+
+  const room = Math.max(0, maxNodes - next.works.size);
+  const adding = new Set(
+    [...counts]
+      .filter(([id, count]) => count >= min && !next.works.has(id))
+      .sort((a, b) => b[1] - a[1])
+      .slice(0, room)
+      .map(([id]) => id),
+  );
+  for (const [citerId, cited] of found) {
+    next = addFoundWorks(
+      next,
+      citerId,
+      cited,
+      'cited',
+      cited.filter((work) => adding.has(work.id)),
     );
-    let next = latest;
-    for (const [citerId, cited] of found) {
-      // Each citer's references gain its cited list, so edges to the co-cited works draw.
-      next = addFoundWorks(
-        next,
-        citerId,
-        cited,
-        'cited',
-        cited.filter((w) => added.has(w.id)),
-      );
-    }
-    return next;
-  };
-  return { counts, apply };
+  }
+  const added = new Set([...previous].filter((id) => !drop.has(id) && next.works.has(id)));
+  for (const id of adding) added.add(id);
+  return { ...next, coCitationAdded: added };
 }
 
 /**
@@ -683,6 +721,8 @@ export function graphFromSnapshot(snapshot) {
       relations: new Map(snapshot.relations),
       expanded: new Map(snapshot.expanded.map(([id, directions]) => [id, new Set(directions)])),
       sticky: new Set(snapshot.sticky),
+      // Co-citation searches aren't saved, so their works are ordinary ones when reopened.
+      coCitationAdded: new Set(),
     },
     truncated: snapshot.truncated === true,
   };

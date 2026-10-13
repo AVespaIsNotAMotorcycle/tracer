@@ -717,15 +717,24 @@ describe('App', () => {
     expect(within(graph()).queryByRole('button', { name: 'Title common' })).toBeNull();
     expect(screen.getByText(/Found 1 work cited by 3 or more of the 5 works/)).toBeInTheDocument();
 
-    // Lowered to 2 and run again, common counts too.
+    // After a search the minimum applies at once. Lowered to 2, common is added, with no new
+    // requests.
+    const requests = vi.mocked(api.getCited).mock.calls.length;
     fireEvent.click(screen.getByRole('button', { name: 'Decrease minimum citing works' }));
     expect(screen.getByRole('button', { name: 'Decrease minimum citing works' })).toBeDisabled();
-    fireEvent.click(screen.getByRole('button', { name: 'Find Co-Citations' }));
     expect(await within(graph()).findByRole('button', { name: 'Title common' })).toHaveAttribute(
       'data-co-cited',
       'true',
     );
     expect(screen.getByText(/Found 2 works cited by 2 or more of the 5 works/)).toBeInTheDocument();
+    expect(api.getCited).toHaveBeenCalledTimes(requests);
+
+    // Raised back to 3, common no longer qualifies; it wasn't on the graph before, so it goes.
+    fireEvent.click(screen.getByRole('button', { name: 'Increase minimum citing works' }));
+    await waitFor(() =>
+      expect(within(graph()).queryByRole('button', { name: 'Title common' })).toBeNull(),
+    );
+    expect(within(graph()).getByRole('button', { name: 'Title classic' })).toBeInTheDocument();
   });
 
   it('always shows pinned works, whatever the filters, until unpinned', async () => {

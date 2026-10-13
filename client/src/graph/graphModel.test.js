@@ -9,6 +9,7 @@ import {
   emptyGraph,
   expandWork,
   expandWorks,
+  applyCoCitations,
   defaultMinCoCiters,
   findCoCitations,
   foldBookParts,
@@ -858,7 +859,7 @@ describe('graphSnapshot', () => {
   });
 });
 
-describe('findCoCitations', () => {
+describe('findCoCitations and applyCoCitations', () => {
   // A is the anchor. C1, C2 and C3 cite it. X is cited by all three, Y by two, Z by one.
   // R (a reference-only work) also cites A, but has no references to fetch.
   const network = {
@@ -873,43 +874,88 @@ describe('findCoCitations', () => {
     graph = addWorks(graph, [{ ...work('R', ['A']), type: 'reference-only' }], 'citing');
     return { ...graph, anchorId: 'A' };
   };
+  const search = (graph = start(), api = fakeApi(network)) =>
+    findCoCitations(graph, ['A'], { limit: 200 }, api);
+  const ids = (graph) => [...graph.works.keys()].sort();
 
-  it('counts works cited by two or more works citing the anchor, and adds them', async () => {
+  it('counts works cited by two or more works citing the anchor', async () => {
     const api = fakeApi(network);
-    const graph = start();
-    const { counts, apply } = await findCoCitations(
-      graph,
-      ['A'],
-      { limit: 200, maxNodes: 100 },
-      api,
-    );
-
+    const { counts, found } = await search(start(), api);
     // A citer listing X twice still counts once.
     expect(Object.fromEntries(counts)).toEqual({ X: 3, Y: 2 });
+    expect([...found.keys()].sort()).toEqual(['C1', 'C2', 'C3']);
     expect(api.getCited).toHaveBeenCalledTimes(3);
     expect(api.getCited).toHaveBeenCalledWith('C1', { limit: 200 });
+  });
 
-    const next = apply(graph);
-    expect([...next.works.keys()].sort()).toEqual(['A', 'C1', 'C2', 'C3', 'R', 'X', 'Y']);
+  it('adds those at the minimum or above, with their edges', async () => {
+    const graph = start();
+    const next = applyCoCitations(graph, await search(graph), { minCiters: 2, maxNodes: 100 });
+    expect(ids(next)).toEqual(['A', 'C1', 'C2', 'C3', 'R', 'X', 'Y']);
     expect(next.relations.get('X')).toBe('cited');
-    // Edges to the co-cited works draw from each citer's references.
+    expect([...next.coCitationAdded].sort()).toEqual(['X', 'Y']);
     expect(deriveEdges(next.works)).toContainEqual({ source: 'C2', target: 'Y' });
     // Fetching a citer's cited works here doesn't count as expanding it.
     expect(next.expanded.has('C1')).toBe(false);
+
+    expect(
+      ids(applyCoCitations(graph, await search(graph), { minCiters: 3, maxNodes: 100 })),
+    ).toEqual(['A', 'C1', 'C2', 'C3', 'R', 'X']);
   });
 
-  it('adds the most co-cited first, up to maxNodes, but counts every one', async () => {
+  it('adds the most co-cited first, up to maxNodes', async () => {
     const graph = start();
-    const { counts, apply } = await findCoCitations(
-      graph,
-      ['A'],
-      { limit: 200, maxNodes: graph.works.size + 1 },
-      fakeApi(network),
-    );
-    expect(counts.size).toBe(2);
-    const next = apply(graph);
+    const next = applyCoCitations(graph, await search(graph), {
+      minCiters: 2,
+      maxNodes: graph.works.size + 1,
+    });
     expect(next.works.has('X')).toBe(true);
     expect(next.works.has('Y')).toBe(false);
+  });
+
+  it('removes works it added once a higher minimum excludes them, and adds them back', async () => {
+    const graph = start();
+    const found = await search(graph);
+    const both = applyCoCitations(graph, found, { minCiters: 2, maxNodes: 100 });
+    const raised = applyCoCitations(both, found, { minCiters: 3, maxNodes: 100 });
+    expect(ids(raised)).toEqual(['A', 'C1', 'C2', 'C3', 'R', 'X']);
+    expect(raised.relations.has('Y')).toBe(false);
+    expect([...raised.coCitationAdded]).toEqual(['X']);
+
+    const lowered = applyCoCitations(raised, found, { minCiters: 2, maxNodes: 100 });
+    expect(ids(lowered)).toEqual(ids(both));
+  });
+
+  it('never removes works that were on the graph before, or that the user expanded or pinned', async () => {
+    let graph = addWorks(start(), [work('Y')], 'cited');
+    const found = await search(graph);
+    const both = applyCoCitations(graph, found, { minCiters: 2, maxNodes: 100 });
+    // Y was already there, so a higher minimum only stops highlighting it.
+    expect(ids(applyCoCitations(both, found, { minCiters: 3, maxNodes: 100 }))).toContain('Y');
+
+    graph = start();
+    const added = applyCoCitations(graph, found, { minCiters: 2, maxNodes: 100 });
+    const expanded = { ...added, sticky: new Set(['Y']) };
+    expect(ids(applyCoCitations(expanded, found, { minCiters: 3, maxNodes: 100 }))).toContain('Y');
+    const pinned = applyCoCitations(added, found, {
+      minCiters: 3,
+      maxNodes: 100,
+      keep: new Set(['Y']),
+    });
+    expect(ids(pinned)).toContain('Y');
+  });
+
+  it('stops treating a work as added once an expansion finds it too', async () => {
+    const graph = start();
+    const found = await search(graph);
+    const both = applyCoCitations(graph, found, { minCiters: 2, maxNodes: 100 });
+    // Expanding C2 finds Y among its cited works.
+    const apply = await expandWork(both, 'C2', { limit: 200 }, fakeApi(network));
+    const afterExpand = apply(both);
+    expect(afterExpand.coCitationAdded.has('Y')).toBe(false);
+    expect(ids(applyCoCitations(afterExpand, found, { minCiters: 3, maxNodes: 100 }))).toContain(
+      'Y',
+    );
   });
 
   it('counts citations of a book’s chapters as citations of the book', async () => {
@@ -920,20 +966,10 @@ describe('findCoCitations', () => {
     const { counts } = await findCoCitations(
       graph,
       ['B', 'B.1'],
-      { limit: 200, maxNodes: 100 },
+      { limit: 200 },
       fakeApi(chapterNetwork),
     );
     expect(Object.fromEntries(counts)).toEqual({ X: 2 });
-  });
-
-  it('takes a higher minimum number of citers', async () => {
-    const { counts } = await findCoCitations(
-      start(),
-      ['A'],
-      { limit: 200, maxNodes: 100, minCiters: 3 },
-      fakeApi(network),
-    );
-    expect(Object.fromEntries(counts)).toEqual({ X: 3 });
   });
 
   it('defaults the minimum to the square root of the citers, rounded up, but at least 2', () => {
@@ -947,7 +983,7 @@ describe('findCoCitations', () => {
       if (id === 'C3') throw new Error('down');
       return getCited(id, opts);
     });
-    const { counts } = await findCoCitations(start(), ['A'], { limit: 200, maxNodes: 100 }, api);
+    const { counts } = await search(start(), api);
     expect(Object.fromEntries(counts)).toEqual({ X: 2, Y: 2 });
   });
 });

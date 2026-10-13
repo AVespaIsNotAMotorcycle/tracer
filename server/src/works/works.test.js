@@ -454,6 +454,110 @@ describe('citation links from OpenCitations', () => {
   });
 });
 
+describe('GET /api/works/:id/archive', () => {
+  const item = (identifier, overrides = {}) => ({
+    identifier,
+    title: 'Work W1',
+    creators: ['Historian, A.'],
+    year: 1972,
+    access: 'borrow',
+    url: `https://archive.org/details/${identifier}`,
+    ...overrides,
+  });
+  let archiveProvider;
+
+  beforeEach(() => {
+    archiveProvider = {
+      name: 'internetarchive',
+      searchTexts: vi.fn(async () => [
+        item('w1-borrow'),
+        item('w1-open', { access: 'open', year: 1990 }),
+        item('other-author', { creators: ['Someone, Else'] }),
+        item('other-title', { title: 'Work W12' }),
+      ]),
+    };
+    const workService = createWorkService({ provider, archiveProvider, now: () => clock });
+    api = request(createApp({ workService }));
+  });
+
+  it('returns the matching items, open ones first, and caches them for 30 days', async () => {
+    const res = await api.get('/api/works/W1/archive');
+    expect(res.status).toBe(200);
+    expect(res.body.items.map((i) => i.identifier)).toEqual(['w1-open', 'w1-borrow']);
+    expect(archiveProvider.searchTexts).toHaveBeenCalledWith(['work', 'w1']);
+
+    await api.get('/api/works/W1/archive');
+    expect(archiveProvider.searchTexts).toHaveBeenCalledTimes(1);
+    advance(DEFAULT_TTLS.archive + 1);
+    await api.get('/api/works/W1/archive');
+    expect(archiveProvider.searchTexts).toHaveBeenCalledTimes(2);
+  });
+
+  it('doesn’t list the Archive among the work’s data providers', async () => {
+    await api.get('/api/works/W1/archive');
+    expect((await api.get('/api/works/W1')).body.work.providers).toEqual(['openalex']);
+  });
+
+  it('checks works not on OpenAlex too, by their deposited citation', async () => {
+    const citation = {
+      doi: null,
+      title: 'Deccani Painting',
+      authors: [{ name: 'Zebrowski', orcid: null }],
+      year: 1983,
+      venue: null,
+      unstructured: null,
+    };
+    const structured = await Source.create({
+      citation,
+      externalIds: { citation: citationKey(citation) },
+    });
+    archiveProvider.searchTexts.mockResolvedValue([
+      item('deccani', { title: 'Deccani painting', creators: ['Zebrowski, Mark'], year: 1983 }),
+    ]);
+
+    const res = await api.get(`/api/works/${structured._id}/archive`);
+    expect(res.status).toBe(200);
+    expect(archiveProvider.searchTexts).toHaveBeenCalledWith(['deccani', 'painting']);
+    expect(res.body.items.map((i) => i.identifier)).toEqual(['deccani']);
+    // Still a reference-only work afterwards.
+    const { work } = (await api.get(`/api/works/${structured._id}`)).body;
+    expect(work).toMatchObject({ type: REFERENCE_ONLY, providers: ['crossref'] });
+  });
+
+  it('skips works known only from a citation printed as text', async () => {
+    const printed = {
+      doi: null,
+      title: null,
+      authors: [],
+      year: 1991,
+      venue: null,
+      unstructured: 'Africa Watch. Evil Days. New York, 1991.',
+    };
+    const source = await Source.create({
+      citation: printed,
+      externalIds: { citation: citationKey(printed) },
+    });
+
+    const res = await api.get(`/api/works/${source._id}/archive`);
+    expect(res.status).toBe(200);
+    expect(res.body.items).toEqual([]);
+    expect(archiveProvider.searchTexts).not.toHaveBeenCalled();
+  });
+
+  it('gives the cached items, or none, when the Archive fails', async () => {
+    vi.spyOn(console, 'error').mockImplementation(() => {});
+    await api.get('/api/works/W1/archive');
+    advance(DEFAULT_TTLS.archive + 1);
+    archiveProvider.searchTexts.mockRejectedValue(new ProviderError('internetarchive', 'down'));
+    const stale = await api.get('/api/works/W1/archive');
+    expect(stale.body.items).toHaveLength(2);
+
+    const none = await api.get('/api/works/W2/archive');
+    expect(none.status).toBe(200);
+    expect(none.body.items).toEqual([]);
+  });
+});
+
 describe('citationKey', () => {
   it('ignores case, punctuation and accents, preferring DOI, then title, then the citation', () => {
     const base = { doi: null, authors: [{ name: 'Zebrowski' }], year: 1983, unstructured: null };

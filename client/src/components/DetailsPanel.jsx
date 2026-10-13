@@ -1,3 +1,5 @@
+import { useEffect, useState } from 'react';
+import { getArchiveItems } from '../api.js';
 import { canExpand } from '../graph/graphModel.js';
 import { sourceType } from '../graph/sourceTypes.js';
 
@@ -7,6 +9,29 @@ const LINK_LABELS = {
   pdf: 'Open-access PDF',
   provider: 'OpenAlex',
 };
+
+// Who can read an Internet Archive copy.
+const ARCHIVE_ACCESS = {
+  open: 'free to read',
+  borrow: 'borrow',
+  'print-disabled': 'print-disabled access only',
+};
+
+/**
+ * Copies of the work on the Internet Archive, looked up when it's selected (the server caches
+ * them). Empty until they arrive, and if the lookup fails: they're only extra links.
+ */
+function useArchiveItems(id) {
+  const [found, setFound] = useState({ id: null, items: [] });
+  useEffect(() => {
+    const controller = new AbortController();
+    getArchiveItems(id, { signal: controller.signal })
+      .then((items) => setFound({ id, items: items ?? [] }))
+      .catch(() => {});
+    return () => controller.abort();
+  }, [id]);
+  return found.id === id ? found.items : [];
+}
 
 const RELATION_LABELS = {
   anchor: 'Anchor',
@@ -50,6 +75,7 @@ export default function DetailsPanel({
   const byline = [year, work.venue].filter(Boolean).join(' · ');
   const { label: typeLabel, Icon: TypeIcon } = sourceType(work.type);
   const expandable = canExpand(work);
+  const archiveItems = useArchiveItems(work.id);
 
   return (
     <aside className="details" aria-labelledby="details-title">
@@ -126,7 +152,7 @@ export default function DetailsPanel({
         </button>
       )}
 
-      {work.links.length > 0 && (
+      {(work.links.length > 0 || archiveItems.length > 0) && (
         <>
           <h3>Links</h3>
           <ul className="links">
@@ -135,6 +161,16 @@ export default function DetailsPanel({
                 <a href={link.url} target="_blank" rel="noopener noreferrer">
                   {LINK_LABELS[link.kind] ?? link.kind}
                 </a>
+              </li>
+            ))}
+            {archiveItems.map((item) => (
+              <li key={item.url}>
+                <a href={item.url} target="_blank" rel="noopener noreferrer">
+                  Internet Archive
+                </a>{' '}
+                <span className="muted small">
+                  {[item.year, ARCHIVE_ACCESS[item.access]].filter(Boolean).join(' · ')}
+                </span>
               </li>
             ))}
           </ul>

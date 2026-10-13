@@ -30,6 +30,7 @@ vi.mock('./api.js', async (importOriginal) => ({
   getWork: vi.fn(),
   getCiting: vi.fn(),
   getCited: vi.fn(),
+  getArchiveItems: vi.fn(),
   getCurrentUser: vi.fn(),
   signUp: vi.fn(),
   logIn: vi.fn(),
@@ -78,6 +79,7 @@ beforeEach(() => {
   vi.mocked(api.getWork).mockResolvedValue(anchor);
   vi.mocked(api.getCiting).mockImplementation(async (id) => (id === 'anchor' ? [citer] : [more]));
   vi.mocked(api.getCited).mockImplementation(async (id) => (id === 'anchor' ? [ref] : []));
+  vi.mocked(api.getArchiveItems).mockResolvedValue([]);
 });
 
 async function buildFromSearch(expectedNodes = 3) {
@@ -318,6 +320,36 @@ describe('App', () => {
       'target',
       '_blank',
     );
+  });
+
+  it('links to copies of a selected work on the Internet Archive', async () => {
+    vi.mocked(api.getArchiveItems).mockImplementation(async (id) =>
+      id === 'ref'
+        ? [
+            {
+              identifier: 'refscan',
+              title: 'Title ref',
+              creators: ['Thompson, E. P.'],
+              year: 1906,
+              access: 'open',
+              url: 'https://archive.org/details/refscan',
+            },
+          ]
+        : [],
+    );
+    await buildFromSearch();
+    fireEvent.click(within(graph()).getByRole('button', { name: 'Title ref' }));
+
+    const details = screen.getByRole('complementary', { name: 'Title ref' });
+    const link = await within(details).findByRole('link', { name: 'Internet Archive' });
+    expect(link).toHaveAttribute('href', 'https://archive.org/details/refscan');
+    expect(link.parentElement).toHaveTextContent('1906 · free to read');
+    expect(api.getArchiveItems).toHaveBeenCalledWith('ref', expect.anything());
+
+    // Another work's details don't keep the previous work's links.
+    fireEvent.click(within(graph()).getByRole('button', { name: 'Title citer' }));
+    const other = screen.getByRole('complementary', { name: 'Title citer' });
+    expect(within(other).queryByRole('link', { name: 'Internet Archive' })).toBeNull();
   });
 
   it('expands a selected work', async () => {

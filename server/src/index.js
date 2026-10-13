@@ -3,6 +3,7 @@ import { createApp } from './app.js';
 import { createAuthService } from './auth/authService.js';
 import { connectWithRetry } from './db.js';
 import { createCrossrefProvider } from './providers/crossref.js';
+import { createInternetArchiveProvider } from './providers/internetarchive.js';
 import { createOpenAlexProvider } from './providers/openalex.js';
 import { createOpenCitationsProvider } from './providers/opencitations.js';
 import { createWorkService } from './works/workService.js';
@@ -24,8 +25,10 @@ const referenceProvider = createCrossrefProvider({ mailto: process.env.CROSSREF_
 const linkProvider = createOpenCitationsProvider({
   accessToken: process.env.OPENCITATIONS_ACCESS_TOKEN,
 });
+// The Internet Archive: scanned copies of works, linked from their details.
+const archiveProvider = createInternetArchiveProvider();
 const app = createApp({
-  workService: createWorkService({ provider, referenceProvider, linkProvider }),
+  workService: createWorkService({ provider, referenceProvider, linkProvider, archiveProvider }),
   authService: createAuthService(),
   // Session cookies only over HTTPS in production (Heroku serves HTTPS).
   authOptions: { secureCookies: process.env.NODE_ENV === 'production' },

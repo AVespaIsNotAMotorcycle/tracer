@@ -2,6 +2,7 @@ import { CacheEntry } from '../models/CacheEntry.js';
 import { Source } from '../models/Source.js';
 import { normalizeDoi } from '../providers/ids.js';
 import { toOpenAlexId } from '../providers/openalex.js';
+import { matchArchiveItems, searchWords } from './archiveMatch.js';
 import { HttpError } from './errors.js';
 
 /** @typedef {import('../providers/types.js').Provider} Provider */
@@ -22,7 +23,10 @@ export const DEFAULT_TTLS = {
   citing: 7 * DAY_MS,
   search: 1 * DAY_MS,
   references: 30 * DAY_MS,
+  archive: 30 * DAY_MS,
 };
+// Most Internet Archive items returned per work (editions and copies of a book).
+const MAX_ARCHIVE_ITEMS = 5;
 
 /**
  * A work as the client sees it. IDs are Tracer IDs; provider IDs only appear in externalIds.
@@ -95,6 +99,7 @@ export function citationKey(reference) {
  * @param {Provider} options.provider
  * @param {ReturnType<typeof import('../providers/crossref.js').createCrossrefProvider>} [options.referenceProvider]
  * @param {ReturnType<typeof import('../providers/opencitations.js').createOpenCitationsProvider>} [options.linkProvider]
+ * @param {ReturnType<typeof import('../providers/internetarchive.js').createInternetArchiveProvider>} [options.archiveProvider]
  * @param {Partial<typeof DEFAULT_TTLS>} [options.ttls]
  * @param {() => Date} [options.now]  Injected for tests.
  */
@@ -102,6 +107,7 @@ export function createWorkService({
   provider,
   referenceProvider,
   linkProvider,
+  archiveProvider,
   ttls = {},
   now = () => new Date(),
 }) {
@@ -226,7 +232,10 @@ export function createWorkService({
           ...fromReferenceList,
         ]),
         links: data.links,
-        providers: Object.keys(source.records ?? {}),
+        // The Archive lookup is stored as a record too, but none of the work's data is from it.
+        providers: Object.keys(source.records ?? {}).filter(
+          (name) => name !== archiveProvider?.name,
+        ),
       };
     });
   }
@@ -487,6 +496,43 @@ export function createWorkService({
     async getWork(id) {
       const [work] = await toWorks([await loadSource(id)]);
       return work;
+    },
+
+    /**
+     * Copies of `id` on the Internet Archive (editions of a book, usually), best first: found
+     * by title and author (matchArchiveItems), and cached on its Source. A failed lookup is
+     * logged and gives the cached items, if any, or none: they're extra links, not worth an
+     * error.
+     *
+     * @returns {Promise<import('../providers/internetarchive.js').ArchiveItem[]>}
+     */
+    async getArchiveItems(id) {
+      if (!archiveProvider) return [];
+      const source = await loadSource(id);
+      const field = `records.${archiveProvider.name}`;
+      const cached = source.records?.[archiveProvider.name];
+      if (cached && now() - cached.fetchedAt < ttl.archive) return cached.data.items;
+      // A reference deposited only as printed text has no title of its own to search for
+      // (its "title" is the whole citation), so it couldn't match.
+      if (isReferenceOnly(source) && !source.citation.title) return [];
+      const [work] = await toWorks([source]);
+      const words = searchWords(work.title);
+      if (words.length === 0) return [];
+      let items;
+      try {
+        items = matchArchiveItems(work, await archiveProvider.searchTexts(words)).slice(
+          0,
+          MAX_ARCHIVE_ITEMS,
+        );
+      } catch (err) {
+        console.error(err);
+        return cached?.data.items ?? [];
+      }
+      await Source.updateOne(
+        { _id: source._id },
+        { $set: { [field]: { data: { items }, fetchedAt: now() } } },
+      );
+      return items;
     },
 
     /** Works that cite `id`, most-cited first. @returns {Promise<Work[]>} */

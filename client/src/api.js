@@ -36,6 +36,11 @@ export async function getCited(id, { limit, signal } = {}) {
   return (await get(`${workPath(id)}/cited?limit=${limit}`, { signal })).works;
 }
 
+/** Copies of the work on the Internet Archive (editions of a book, usually), best first. */
+export async function getArchiveItems(id, { signal } = {}) {
+  return (await get(`${workPath(id)}/archive`, { signal })).items;
+}
+
 // Accounts. The session lives in an httpOnly cookie the browser sends with same-origin
 // requests; the server requires JSON for anything that changes state.
 async function post(path, body = {}) {

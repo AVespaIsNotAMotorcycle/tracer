@@ -54,6 +54,10 @@ export function createWorksRouter(workService) {
     res.json({ works: await workService.getCitedWorks(req.params.id, { limit }) });
   });
 
+  router.get('/:id/archive', async (req, res) => {
+    res.json({ items: await workService.getArchiveItems(req.params.id) });
+  });
+
   // eslint-disable-next-line no-unused-vars -- Express identifies error handlers by arity.
   router.use((err, req, res, next) => {
     if (err instanceof HttpError) {

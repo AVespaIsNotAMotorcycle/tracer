@@ -85,6 +85,8 @@ export default function DetailsPanel({
   const archiveItems = useWorkLookup(getArchiveItems, work.id, NO_ITEMS);
   const match = useWorkLookup(getCitationMatch, work.id, null, !expandable && !work.links.length);
   const links = [...work.links, ...(match?.links ?? [])];
+  // Known only from a citation printed as text, which is shown as its title.
+  const printedOnly = !expandable && Boolean(work.citation) && work.title === work.citation;
 
   return (
     <aside className="details" aria-labelledby="details-title">
@@ -185,6 +187,8 @@ export default function DetailsPanel({
                 <a href={item.url} target="_blank" rel="noopener noreferrer">
                   Internet Archive
                 </a>{' '}
+                {/* A printed citation may cite several works, so say which one this is. */}
+                {printedOnly && <span>{item.title} </span>}
                 <span className="muted small">
                   {[item.year, ARCHIVE_ACCESS[item.access]].filter(Boolean).join(' · ')}
                 </span>

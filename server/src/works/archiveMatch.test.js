@@ -1,5 +1,10 @@
 import { describe, expect, it } from 'vitest';
-import { matchArchiveItems, searchWords } from './archiveMatch.js';
+import {
+  matchArchiveItems,
+  matchArchiveItemsInText,
+  printedSearchWords,
+  searchWords,
+} from './archiveMatch.js';
 import { mainTitle, surname } from './textMatch.js';
 
 const item = (identifier, title, creators = [], overrides = {}) => ({
@@ -98,5 +103,46 @@ describe('surname', () => {
     ['Zebrowski', 'zebrowski'],
   ])('%s', (name, expected) => {
     expect(surname(name)).toBe(expected);
+  });
+});
+
+describe('citations printed as text', () => {
+  const slicher =
+    'B.H. Slicher van Bath, The Agrarian History of Western Europe, A.D. 500–1850, (London, 1963), pp. 207–208.';
+
+  it('searches on the distinctive words, without places, pages or numbers', () => {
+    expect(printedSearchWords(slicher)).toEqual([
+      'slicher',
+      'van',
+      'bath',
+      'agrarian',
+      'history',
+      'western',
+      'europe',
+    ]);
+    expect(printedSearchWords('Ibid., p. 173.')).toEqual([]);
+  });
+
+  it('matches items whose title and a creator both appear in the text', () => {
+    const matches = matchArchiveItemsInText(slicher, 1963, [
+      item(
+        'later',
+        'The agrarian history of Western Europe, A.D. 500-1850',
+        ['B.H. Slicher Van Bath'],
+        { year: 1966 },
+      ),
+      item(
+        'first',
+        'The agrarian history of Western Europe : A.D. 500-1850',
+        ['Slicher van Bath, B. H'],
+        { year: 1963 },
+      ),
+      item('other-author', 'The agrarian history of Western Europe', ['Smith, J.']),
+      item('no-creator', 'The agrarian history of Western Europe'),
+      item('other-title', 'Agrarian conditions in modern European history', ['Warner, Charles K.']),
+      // A short title found in the text by chance.
+      item('short', 'Europe', ['Bath, A.']),
+    ]);
+    expect(matches.map((m) => m.identifier)).toEqual(['first', 'later']);
   });
 });

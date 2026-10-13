@@ -47,6 +47,15 @@ describe('searchTexts', () => {
     expect(url.searchParams.getAll('fl[]')).toContain('lending___status');
   });
 
+  it('searches all metadata fields when asked', async () => {
+    const fetch = vi.fn(async () => json({ response: { docs: [] } }));
+    await createInternetArchiveProvider({ fetch }).searchTexts(['slicher', 'agrarian'], {
+      anyField: true,
+    });
+    const url = new URL(fetch.mock.calls[0][0]);
+    expect(url.searchParams.get('q')).toBe('(slicher AND agrarian) AND mediatype:texts');
+  });
+
   it('fails on an error, even one sent as 200', async () => {
     const down = createInternetArchiveProvider({ fetch: async () => json({}, 503) });
     await expect(down.searchTexts(['x'])).rejects.toBeInstanceOf(ProviderError);

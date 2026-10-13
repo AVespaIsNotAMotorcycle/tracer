@@ -296,6 +296,43 @@ describe('App', () => {
     expect(api.getCitationMatch).toHaveBeenCalledTimes(1);
   });
 
+  it('names the Internet Archive item found for a citation printed as text', async () => {
+    const printed = 'B.H. Slicher van Bath, The Agrarian History of Western Europe (London, 1963).';
+    const note = work('note', {
+      type: 'reference-only',
+      title: printed,
+      authors: [],
+      year: 1963,
+      citedByCount: null,
+      links: [],
+      providers: ['crossref'],
+      citation: printed,
+    });
+    vi.mocked(api.getCited).mockImplementation(async (id) => (id === 'anchor' ? [ref, note] : []));
+    vi.mocked(api.getArchiveItems).mockImplementation(async (id) =>
+      id === 'note'
+        ? [
+            {
+              identifier: 'agrarianhistoryo0000slic',
+              title: 'The agrarian history of Western Europe, A.D. 500-1850',
+              creators: ['Slicher van Bath, B. H'],
+              year: 1963,
+              access: 'borrow',
+              url: 'https://archive.org/details/agrarianhistoryo0000slic',
+            },
+          ]
+        : [],
+    );
+    await buildFromSearch(4);
+
+    fireEvent.click(within(graph()).getByRole('button', { name: printed }));
+    const details = screen.getByRole('complementary', { name: printed });
+    const link = await within(details).findByRole('link', { name: 'Internet Archive' });
+    expect(link.parentElement).toHaveTextContent(
+      'Internet Archive The agrarian history of Western Europe, A.D. 500-1850 1963 · borrow',
+    );
+  });
+
   it('explains a listed year that its citers predate', async () => {
     const reprint = work('anchor', { year: 2003, references: [] });
     vi.mocked(api.searchWorks).mockResolvedValue([reprint]);

@@ -2,7 +2,12 @@ import { CacheEntry } from '../models/CacheEntry.js';
 import { Source } from '../models/Source.js';
 import { normalizeDoi } from '../providers/ids.js';
 import { toOpenAlexId } from '../providers/openalex.js';
-import { matchArchiveItems, searchWords } from './archiveMatch.js';
+import {
+  matchArchiveItems,
+  matchArchiveItemsInText,
+  printedSearchWords,
+  searchWords,
+} from './archiveMatch.js';
 import { citationQuery, doiLinks, matchCitation } from './citationMatch.js';
 import { HttpError } from './errors.js';
 
@@ -502,7 +507,8 @@ export function createWorkService({
 
     /**
      * Copies of `id` on the Internet Archive (editions of a book, usually), best first: found
-     * by title and author (matchArchiveItems), and cached on its Source. A failed lookup is
+     * by title and author (matchArchiveItems), or for a reference printed as text, by its
+     * words (matchArchiveItemsInText), and cached on its Source. A failed lookup is
      * logged and gives the cached items, if any, or none: they're extra links, not worth an
      * error.
      *
@@ -514,18 +520,22 @@ export function createWorkService({
       const field = `records.${archiveProvider.name}`;
       const cached = source.records?.[archiveProvider.name];
       if (cached && now() - cached.fetchedAt < ttl.archive) return cached.data.items;
-      // A reference deposited only as printed text has no title of its own to search for
-      // (its "title" is the whole citation), so it couldn't match.
-      if (isReferenceOnly(source) && !source.citation.title) return [];
+      // A reference deposited only as printed text has no title of its own (its "title" is the
+      // whole citation), so it's searched by its words and matched against its text.
+      const printed = isReferenceOnly(source) && !source.citation.title;
       const [work] = await toWorks([source]);
-      const words = searchWords(work.title);
-      if (words.length === 0) return [];
+      const words = printed
+        ? printedSearchWords(source.citation.unstructured)
+        : searchWords(work.title);
+      if (words.length < (printed ? 2 : 1)) return [];
       let items;
       try {
-        items = matchArchiveItems(work, await archiveProvider.searchTexts(words)).slice(
-          0,
-          MAX_ARCHIVE_ITEMS,
-        );
+        const found = await archiveProvider.searchTexts(words, { anyField: printed });
+        items = (
+          printed
+            ? matchArchiveItemsInText(source.citation.unstructured, source.citation.year, found)
+            : matchArchiveItems(work, found)
+        ).slice(0, MAX_ARCHIVE_ITEMS);
       } catch (err) {
         console.error(err);
         return cached?.data.items ?? [];

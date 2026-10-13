@@ -76,16 +76,17 @@ export function createInternetArchiveProvider({
     name: NAME,
 
     /**
-     * Texts whose title contains all of `words`.
+     * Texts whose title (or, with `anyField`, whose metadata: title, creator, publisher, …)
+     * contains all of `words`.
      *
      * @param {string[]} words  Plain words (no search syntax).
-     * @param {{ rows?: number }} [options]
+     * @param {{ rows?: number, anyField?: boolean }} [options]
      * @returns {Promise<ArchiveItem[]>}
      */
-    async searchTexts(words, { rows = 50 } = {}) {
+    async searchTexts(words, { rows = 50, anyField = false } = {}) {
       if (words.length === 0) return [];
       const params = new URLSearchParams({
-        q: `title:(${words.join(' AND ')}) AND mediatype:texts`,
+        q: `${anyField ? '' : 'title:'}(${words.join(' AND ')}) AND mediatype:texts`,
         rows: String(rows),
         output: 'json',
       });

@@ -484,7 +484,7 @@ describe('GET /api/works/:id/archive', () => {
     const res = await api.get('/api/works/W1/archive');
     expect(res.status).toBe(200);
     expect(res.body.items.map((i) => i.identifier)).toEqual(['w1-open', 'w1-borrow']);
-    expect(archiveProvider.searchTexts).toHaveBeenCalledWith(['work', 'w1']);
+    expect(archiveProvider.searchTexts).toHaveBeenCalledWith(['work', 'w1'], { anyField: false });
 
     await api.get('/api/works/W1/archive');
     expect(archiveProvider.searchTexts).toHaveBeenCalledTimes(1);
@@ -517,31 +517,47 @@ describe('GET /api/works/:id/archive', () => {
 
     const res = await api.get(`/api/works/${structured._id}/archive`);
     expect(res.status).toBe(200);
-    expect(archiveProvider.searchTexts).toHaveBeenCalledWith(['deccani', 'painting']);
+    expect(archiveProvider.searchTexts).toHaveBeenCalledWith(['deccani', 'painting'], {
+      anyField: false,
+    });
     expect(res.body.items.map((i) => i.identifier)).toEqual(['deccani']);
     // Still a reference-only work afterwards.
     const { work } = (await api.get(`/api/works/${structured._id}`)).body;
     expect(work).toMatchObject({ type: REFERENCE_ONLY, providers: ['crossref'] });
   });
 
-  it('skips works known only from a citation printed as text', async () => {
+  it('searches a citation printed as text by its words, matching against the text', async () => {
     const printed = {
       doi: null,
       title: null,
       authors: [],
-      year: 1991,
+      year: 1963,
       venue: null,
-      unstructured: 'Africa Watch. Evil Days. New York, 1991.',
+      unstructured:
+        'B.H. Slicher van Bath, The Agrarian History of Western Europe, A.D. 500–1850, (London, 1963), pp. 207–208.',
     };
     const source = await Source.create({
       citation: printed,
       externalIds: { citation: citationKey(printed) },
     });
+    archiveProvider.searchTexts.mockResolvedValue([
+      item('agrarianhistoryo0000slic', {
+        title: 'The agrarian history of Western Europe, A.D. 500-1850',
+        creators: ['Slicher van Bath, B. H'],
+        year: 1963,
+      }),
+      item('agrarianconditio0000warn', {
+        title: 'Agrarian conditions in modern European history',
+        creators: ['Warner, Charles K.'],
+      }),
+    ]);
 
     const res = await api.get(`/api/works/${source._id}/archive`);
-    expect(res.status).toBe(200);
-    expect(res.body.items).toEqual([]);
-    expect(archiveProvider.searchTexts).not.toHaveBeenCalled();
+    expect(res.body.items.map((i) => i.identifier)).toEqual(['agrarianhistoryo0000slic']);
+    expect(archiveProvider.searchTexts).toHaveBeenCalledWith(
+      ['slicher', 'van', 'bath', 'agrarian', 'history', 'western', 'europe'],
+      { anyField: true },
+    );
   });
 
   it('gives the cached items, or none, when the Archive fails', async () => {

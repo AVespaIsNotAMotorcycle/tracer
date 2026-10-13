@@ -15,6 +15,9 @@ import { DEFAULT_AXIS_ANGLE } from './graph/axis.js';
 import GraphView from './graph/GraphView.jsx';
 import {
   deriveEdges,
+  CO_CITATION_LIMIT,
+  coCiters,
+  defaultMinCoCiters,
   foldBookParts,
   graphSnapshot,
   inGraphCitationCounts,
@@ -70,6 +73,7 @@ function GraphPage({ auth }) {
     reanchor,
     expand,
     collapse,
+    findCoCitations,
     reset,
   } = useCitationGraph();
   const busy = status === 'loading' || status === 'reanchoring';
@@ -86,6 +90,13 @@ function GraphPage({ auth }) {
       else next.add(id);
       return next;
     });
+  // Works co-cited with the anchor, once looked for: { anchorId, counts } (counts: how many
+  // works citing the anchor cite each). They're highlighted while that's still the anchor.
+  const [coCitations, setCoCitations] = useState(null);
+  const [findingCoCitations, setFindingCoCitations] = useState(false);
+  // The minimum citers the user chose for a co-citation, for one anchor ({ anchorId, value });
+  // otherwise it's defaultMinCoCiters.
+  const [minCoCitersChoice, setMinCoCitersChoice] = useState(null);
   const [selectedId, setSelectedId] = useState(null);
   const [axisAngle, setAxisAngle] = useState(DEFAULT_AXIS_ANGLE);
   // Counts runs (builds, re-anchors, options changes), so the view re-fits after each one.
@@ -137,6 +148,7 @@ function GraphPage({ auth }) {
     setSelectedId(null);
     setFilters(NO_FILTERS);
     setPinned(new Set());
+    setCoCitations(null);
     setSavedGraph(null);
     setOpenError(null);
     pendingUrl.current = { mode: 'push', options };
@@ -169,6 +181,7 @@ function GraphPage({ auth }) {
       });
       setAxisAngle(saved.view?.axisAngle ?? DEFAULT_AXIS_ANGLE);
       setPinned(new Set(saved.view?.pinned ?? []));
+      setCoCitations(null);
       setSelectedId(null);
       setSavedGraph({ id: saved.id, name: saved.name });
       setOpenError(null);
@@ -227,6 +240,7 @@ function GraphPage({ auth }) {
       setSelectedId(null);
       setFilters(NO_FILTERS);
       setPinned(new Set());
+      setCoCitations(null);
       setSavedGraph(null);
       if (anchor) {
         pendingUrl.current = { mode: 'replace', options: urlOptions };
@@ -271,6 +285,48 @@ function GraphPage({ auth }) {
     }
     return ids;
   }, [view.works, graph, partsOf]);
+
+  // Co-cited works as shown (a chapter as its book), with how many works citing the anchor
+  // cite each; empty unless they were found for the current anchor.
+  const coCited = useMemo(() => {
+    const shown = new Map();
+    if (coCitations?.anchorId !== graph.anchorId) return shown;
+    for (const [id, count] of coCitations.counts) {
+      const viewId = bookOf.get(id) ?? id;
+      if (view.works.has(viewId)) shown.set(viewId, Math.max(count, shown.get(viewId) ?? 0));
+    }
+    return shown;
+  }, [coCitations, graph.anchorId, bookOf, view.works]);
+
+  // The anchor and its chapters, and how many works on the graph cite them: the works whose
+  // reference lists are searched for co-citations.
+  const anchorTargets = useMemo(
+    () => [graph.anchorId, ...(partsOf.get(graph.anchorId) ?? []).map((part) => part.id)],
+    [graph.anchorId, partsOf],
+  );
+  const citerCount = useMemo(() => coCiters(graph, anchorTargets).length, [graph, anchorTargets]);
+  const maxCoCiters = Math.max(2, citerCount);
+  const minCoCiters = Math.min(
+    maxCoCiters,
+    minCoCitersChoice?.anchorId === graph.anchorId
+      ? minCoCitersChoice.value
+      : defaultMinCoCiters(citerCount),
+  );
+
+  // Looks through the reference lists of the works on the graph citing the anchor (or its
+  // chapters), adding works at least minCoCiters of them cite, and highlights them.
+  const handleFindCoCitations = async () => {
+    const anchorId = graph.anchorId;
+    const minCiters = minCoCiters;
+    setFindingCoCitations(true);
+    const counts = await findCoCitations(anchorTargets, {
+      limit: CO_CITATION_LIMIT,
+      maxNodes: (graphOptions ?? options).maxNodes,
+      minCiters,
+    });
+    setFindingCoCitations(false);
+    if (counts) setCoCitations({ anchorId, counts, minCiters, citers: citerCount });
+  };
 
   const selected = shownId ? view.works.get(shownId) : null;
   const parts = selected
@@ -350,6 +406,11 @@ function GraphPage({ auth }) {
             <span>
               <i className="swatch expanded" /> Expanded
             </span>
+            {coCited.size > 0 && (
+              <span>
+                <i className="swatch co-cited" /> Co-cited with the anchor
+              </span>
+            )}
             <span>
               <i className="swatch pinned">
                 <Pin aria-hidden="true" />
@@ -399,6 +460,7 @@ function GraphPage({ auth }) {
             sizes={sizes}
             expandedIds={expandedIds}
             pinnedIds={pinned}
+            coCitedIds={coCited}
             years={years}
             visible={visible}
             selectedId={shownId}
@@ -436,6 +498,34 @@ function GraphPage({ auth }) {
           onMakeAnchor={() => handleReanchor(selected.id)}
           pinned={pinned.has(selected.id)}
           onTogglePin={() => togglePin(selected.id)}
+          coCitedBy={coCited.get(selected.id) ?? null}
+          onFindCoCitations={selected.id === graph.anchorId ? handleFindCoCitations : undefined}
+          findingCoCitations={findingCoCitations}
+          coCitationControl={
+            selected.id === graph.anchorId
+              ? {
+                  value: minCoCiters,
+                  max: maxCoCiters,
+                  citers: citerCount,
+                  onChange: (value) =>
+                    setMinCoCitersChoice({
+                      anchorId: graph.anchorId,
+                      value: Math.max(2, Math.min(maxCoCiters, value)),
+                    }),
+                }
+              : null
+          }
+          coCitationResult={
+            selected.id === graph.anchorId && coCitations?.anchorId === graph.anchorId
+              ? {
+                  minCiters: coCitations.minCiters,
+                  citers: coCitations.citers,
+                  found: coCitations.counts.size,
+                  // Works that didn't fit under the max works setting.
+                  left: [...coCitations.counts.keys()].filter((id) => !graph.works.has(id)).length,
+                }
+              : null
+          }
           onCollapse={
             // Only works the user expanded (or earlier anchors) can be collapsed; the build's
             // own expansions would just come back.

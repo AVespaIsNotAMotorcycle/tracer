@@ -9,6 +9,8 @@ import {
   emptyGraph,
   expandWork,
   expandWorks,
+  defaultMinCoCiters,
+  findCoCitations,
   foldBookParts,
   graphFromSnapshot,
   graphSnapshot,
@@ -853,5 +855,99 @@ describe('graphSnapshot', () => {
 
     const sent = JSON.parse(JSON.stringify(graphSnapshot(graph, true)));
     expect(graphFromSnapshot(sent)).toEqual({ graph, truncated: true });
+  });
+});
+
+describe('findCoCitations', () => {
+  // A is the anchor. C1, C2 and C3 cite it. X is cited by all three, Y by two, Z by one.
+  // R (a reference-only work) also cites A, but has no references to fetch.
+  const network = {
+    A: [],
+    C1: ['A', 'X', 'Y', 'Z', 'X'],
+    C2: ['A', 'X', 'Y'],
+    C3: ['A', 'X'],
+  };
+  const start = () => {
+    let graph = addWorks(emptyGraph(), [work('A')], 'anchor');
+    graph = addWorks(graph, [work('C1', ['A']), work('C2', ['A']), work('C3', ['A'])], 'citing');
+    graph = addWorks(graph, [{ ...work('R', ['A']), type: 'reference-only' }], 'citing');
+    return { ...graph, anchorId: 'A' };
+  };
+
+  it('counts works cited by two or more works citing the anchor, and adds them', async () => {
+    const api = fakeApi(network);
+    const graph = start();
+    const { counts, apply } = await findCoCitations(
+      graph,
+      ['A'],
+      { limit: 200, maxNodes: 100 },
+      api,
+    );
+
+    // A citer listing X twice still counts once.
+    expect(Object.fromEntries(counts)).toEqual({ X: 3, Y: 2 });
+    expect(api.getCited).toHaveBeenCalledTimes(3);
+    expect(api.getCited).toHaveBeenCalledWith('C1', { limit: 200 });
+
+    const next = apply(graph);
+    expect([...next.works.keys()].sort()).toEqual(['A', 'C1', 'C2', 'C3', 'R', 'X', 'Y']);
+    expect(next.relations.get('X')).toBe('cited');
+    // Edges to the co-cited works draw from each citer's references.
+    expect(deriveEdges(next.works)).toContainEqual({ source: 'C2', target: 'Y' });
+    // Fetching a citer's cited works here doesn't count as expanding it.
+    expect(next.expanded.has('C1')).toBe(false);
+  });
+
+  it('adds the most co-cited first, up to maxNodes, but counts every one', async () => {
+    const graph = start();
+    const { counts, apply } = await findCoCitations(
+      graph,
+      ['A'],
+      { limit: 200, maxNodes: graph.works.size + 1 },
+      fakeApi(network),
+    );
+    expect(counts.size).toBe(2);
+    const next = apply(graph);
+    expect(next.works.has('X')).toBe(true);
+    expect(next.works.has('Y')).toBe(false);
+  });
+
+  it('counts citations of a book’s chapters as citations of the book', async () => {
+    const chapterNetwork = { B: [], 'B.1': [], C1: ['B.1', 'X'], C2: ['B', 'X'] };
+    let graph = addWorks(emptyGraph(), [work('B')], 'anchor');
+    graph = addWorks(graph, [work('C1', ['B.1']), work('C2', ['B'])], 'citing');
+    graph = { ...graph, anchorId: 'B' };
+    const { counts } = await findCoCitations(
+      graph,
+      ['B', 'B.1'],
+      { limit: 200, maxNodes: 100 },
+      fakeApi(chapterNetwork),
+    );
+    expect(Object.fromEntries(counts)).toEqual({ X: 2 });
+  });
+
+  it('takes a higher minimum number of citers', async () => {
+    const { counts } = await findCoCitations(
+      start(),
+      ['A'],
+      { limit: 200, maxNodes: 100, minCiters: 3 },
+      fakeApi(network),
+    );
+    expect(Object.fromEntries(counts)).toEqual({ X: 3 });
+  });
+
+  it('defaults the minimum to the square root of the citers, rounded up, but at least 2', () => {
+    expect([1, 2, 4, 5, 9, 10, 20, 100].map(defaultMinCoCiters)).toEqual([2, 2, 2, 3, 3, 4, 5, 10]);
+  });
+
+  it('keeps going when one reference list fails', async () => {
+    const api = fakeApi(network);
+    const getCited = api.getCited.getMockImplementation();
+    api.getCited.mockImplementation(async (id, opts) => {
+      if (id === 'C3') throw new Error('down');
+      return getCited(id, opts);
+    });
+    const { counts } = await findCoCitations(start(), ['A'], { limit: 200, maxNodes: 100 }, api);
+    expect(Object.fromEntries(counts)).toEqual({ X: 2, Y: 2 });
   });
 });

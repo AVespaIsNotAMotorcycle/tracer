@@ -28,6 +28,11 @@ const NODE_GROWTH = 6;
 const EXPANDED_RING_WIDTH = 2;
 const EXPANDED_RING_GAP = 3.5;
 
+// Ring around works co-cited with the anchor, in screen pixels: as wide as the expanded ring,
+// at the same gap, or just outside the expanded ring on a work that has both.
+const CO_CITED_RING_WIDTH = 2;
+const CO_CITED_RING_GAP_OUTSIDE_EXPANDED = EXPANDED_RING_GAP + EXPANDED_RING_WIDTH + 2;
+
 // Badge on pinned works, in screen pixels: its radius, and its pin icon's size. It sits on the
 // circle's top right edge and stays the same size at any zoom, so pins stay noticeable.
 const PIN_BADGE_RADIUS = 9;
@@ -142,6 +147,7 @@ const COLOR_VARS = {
   selected: '--node-selected',
   expanded: '--node-expanded',
   pin: '--node-pin',
+  coCited: '--node-co-cited',
   iconOnPin: '--node-icon-on-pin',
   outline: '--node-outline',
   iconOnAnchor: '--node-icon-on-anchor',
@@ -271,6 +277,7 @@ export default function GraphView({
   sizes,
   expandedIds = new Set(),
   pinnedIds = new Set(),
+  coCitedIds = new Map(),
   years,
   visible,
   selectedId,
@@ -527,6 +534,16 @@ export default function GraphView({
       ctx.arc(node.x, node.y, r + EXPANDED_RING_GAP / scale, 0, 2 * Math.PI);
       ctx.lineWidth = EXPANDED_RING_WIDTH / scale;
       ctx.strokeStyle = colors.expanded;
+      ctx.stroke();
+    }
+
+    // Works co-cited with the anchor get a thin ring in the citing works' color.
+    if (coCitedIds.has(node.id)) {
+      const gap = expandedIds.has(node.id) ? CO_CITED_RING_GAP_OUTSIDE_EXPANDED : EXPANDED_RING_GAP;
+      ctx.beginPath();
+      ctx.arc(node.x, node.y, r + gap / scale, 0, 2 * Math.PI);
+      ctx.lineWidth = CO_CITED_RING_WIDTH / scale;
+      ctx.strokeStyle = colors.coCited;
       ctx.stroke();
     }
 

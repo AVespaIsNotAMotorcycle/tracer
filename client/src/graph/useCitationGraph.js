@@ -5,6 +5,7 @@ import {
   collapseWorks,
   emptyGraph,
   expandWorks,
+  findCoCitations as findCoCitationsIn,
   graphFromSnapshot,
   reanchorGraph,
   restoreGraph,
@@ -242,6 +243,36 @@ export function useCitationGraph(api = defaultApi) {
     [api, track, untrack],
   );
 
+  /**
+   * Finds works co-cited with the anchor (see findCoCitations) and adds those not on the graph.
+   * `targets` are the anchor and its chapters. Resolves to the co-cited works' counts, or null
+   * if it failed or the anchor changed meanwhile.
+   */
+  const findCoCitations = useCallback(
+    async (targets, { limit, maxNodes, minCiters }) => {
+      const anchorId = graphRef.current.anchorId;
+      const progress = track('cocite', 'Finding co-citations', undefined, 3);
+      try {
+        const { counts, apply } = await findCoCitationsIn(
+          graphRef.current,
+          targets,
+          { limit, maxNodes, minCiters },
+          api,
+          progress,
+        );
+        if (graphRef.current.anchorId !== anchorId) return null;
+        setGraph((latest) => (latest.anchorId === anchorId ? apply(latest) : latest));
+        return counts;
+      } catch (err) {
+        setError(err.message);
+        return null;
+      } finally {
+        untrack('cocite');
+      }
+    },
+    [api, track, untrack],
+  );
+
   return {
     graph,
     status,
@@ -254,6 +285,7 @@ export function useCitationGraph(api = defaultApi) {
     reanchor,
     expand,
     collapse,
+    findCoCitations,
     reset,
   };
 }

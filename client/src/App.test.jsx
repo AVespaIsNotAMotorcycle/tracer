@@ -5,7 +5,7 @@ import App from './App.jsx';
 
 // jsdom has no canvas, so render visible nodes as buttons instead.
 vi.mock('./graph/GraphView.jsx', () => ({
-  default: ({ graph, visible, onSelect, axisAngle, expandedIds }) => (
+  default: ({ graph, visible, onSelect, axisAngle, expandedIds, coCitedIds }) => (
     <ul aria-label="Graph" data-axis-angle={axisAngle}>
       {[...graph.works.values()]
         .filter((work) => visible.has(work.id))
@@ -15,6 +15,7 @@ vi.mock('./graph/GraphView.jsx', () => ({
               type="button"
               onClick={() => onSelect(work.id)}
               data-expanded={expandedIds?.has(work.id) || undefined}
+              data-co-cited={coCitedIds?.has(work.id) || undefined}
             >
               {work.title}
             </button>
@@ -632,6 +633,99 @@ describe('App', () => {
 
     expect(screen.getByRole('slider', { name: /at least 1 on graph/ })).toHaveAttribute('max', '1');
     expect(screen.getByRole('button', { name: 'Increase minimum links' })).toBeDisabled();
+  });
+
+  it('finds works co-cited with the anchor, adding and highlighting them', async () => {
+    // citer and second both cite the anchor; both cite ref (on the graph) and classic (not).
+    const classic = work('classic', { year: 1900 });
+    const second = work('second', { references: ['anchor', 'ref', 'classic'], year: 1999 });
+    vi.mocked(api.getCiting).mockImplementation(async (id) =>
+      id === 'anchor' ? [citer, second] : [],
+    );
+    vi.mocked(api.getCited).mockImplementation(async (id) => {
+      if (id === 'anchor') return [ref];
+      if (id === 'citer') return [anchor, ref, classic];
+      if (id === 'second') return [anchor, ref, classic];
+      return [];
+    });
+    await buildFromSearch(4);
+
+    // Only the anchor's details offer it.
+    fireEvent.click(within(graph()).getByRole('button', { name: 'Title citer' }));
+    expect(screen.queryByRole('button', { name: 'Find Co-Citations' })).toBeNull();
+    fireEvent.click(within(graph()).getByRole('button', { name: 'Title anchor' }));
+    fireEvent.click(screen.getByRole('button', { name: 'Find Co-Citations' }));
+
+    expect(await within(graph()).findByRole('button', { name: 'Title classic' })).toHaveAttribute(
+      'data-co-cited',
+      'true',
+    );
+    expect(within(graph()).getByRole('button', { name: 'Title ref' })).toHaveAttribute(
+      'data-co-cited',
+      'true',
+    );
+    expect(within(graph()).getByRole('button', { name: 'Title citer' })).not.toHaveAttribute(
+      'data-co-cited',
+    );
+    expect(api.getCited).toHaveBeenCalledWith('second', expect.objectContaining({ limit: 200 }));
+    expect(
+      screen.getByText(
+        /Found 2 works cited by 2 or more of the 2 works on the graph citing this one/,
+      ),
+    ).toBeInTheDocument();
+    expect(screen.getByText('Co-cited with the anchor')).toBeInTheDocument();
+
+    fireEvent.click(within(graph()).getByRole('button', { name: 'Title classic' }));
+    expect(screen.getByText(/Co-cited with the anchor: 2 works/)).toBeInTheDocument();
+
+    // Making another work the anchor drops the highlights: they were relative to the old one.
+    fireEvent.click(screen.getByRole('button', { name: 'Make this the anchor' }));
+    await waitFor(() =>
+      expect(within(graph()).getByRole('button', { name: 'Title classic' })).not.toHaveAttribute(
+        'data-co-cited',
+      ),
+    );
+  });
+
+  it('sets the minimum citing works for co-citations, from the square root of how many', async () => {
+    // Five works cite the anchor: the default minimum is ⌈√5⌉ = 3. classic is cited by four of
+    // them and common by two.
+    const citers = ['c1', 'c2', 'c3', 'c4', 'c5'].map((id, i) =>
+      work(id, { references: ['anchor'], year: 1990 + i }),
+    );
+    const citedBy = {
+      c1: ['classic', 'common'],
+      c2: ['classic', 'common'],
+      c3: ['classic'],
+      c4: ['classic'],
+      c5: [],
+    };
+    vi.mocked(api.getCiting).mockImplementation(async (id) => (id === 'anchor' ? citers : []));
+    vi.mocked(api.getCited).mockImplementation(async (id) =>
+      id === 'anchor' ? [ref] : (citedBy[id] ?? []).map((citedId) => work(citedId, { year: 1900 })),
+    );
+    await buildFromSearch(7);
+    fireEvent.click(within(graph()).getByRole('button', { name: 'Title anchor' }));
+
+    const slider = screen.getByRole('slider', {
+      name: 'Cited by at least 3 of the 5 works on the graph citing this one',
+    });
+    expect(slider).toHaveAttribute('min', '2');
+    expect(slider).toHaveAttribute('max', '5');
+    fireEvent.click(screen.getByRole('button', { name: 'Find Co-Citations' }));
+    await within(graph()).findByRole('button', { name: 'Title classic' });
+    expect(within(graph()).queryByRole('button', { name: 'Title common' })).toBeNull();
+    expect(screen.getByText(/Found 1 work cited by 3 or more of the 5 works/)).toBeInTheDocument();
+
+    // Lowered to 2 and run again, common counts too.
+    fireEvent.click(screen.getByRole('button', { name: 'Decrease minimum citing works' }));
+    expect(screen.getByRole('button', { name: 'Decrease minimum citing works' })).toBeDisabled();
+    fireEvent.click(screen.getByRole('button', { name: 'Find Co-Citations' }));
+    expect(await within(graph()).findByRole('button', { name: 'Title common' })).toHaveAttribute(
+      'data-co-cited',
+      'true',
+    );
+    expect(screen.getByText(/Found 2 works cited by 2 or more of the 5 works/)).toBeInTheDocument();
   });
 
   it('always shows pinned works, whatever the filters, until unpinned', async () => {

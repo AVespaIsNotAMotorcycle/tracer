@@ -1,4 +1,4 @@
-import { Pin, PinOff } from 'lucide-react';
+import { Minus, Pin, PinOff, Plus } from 'lucide-react';
 import { useEffect, useState } from 'react';
 import { getArchiveItems, getCitationMatch } from '../api.js';
 import { canExpand } from '../graph/graphModel.js';
@@ -58,7 +58,11 @@ const doiLink = (work) => work.links.find((link) => link.kind === 'doi');
  * expanded or made the anchor, so it shows its citation as printed instead. `yearInfo` (from
  * layoutYears) explains a listed year that was set aside as implausible. `onCollapse` is
  * given only for works the user expanded, and undoes that. `pinned` works are always shown,
- * whatever the filters; `onTogglePin` pins or unpins it.
+ * whatever the filters; `onTogglePin` pins or unpins it. The anchor gets `onFindCoCitations`,
+ * with `coCitationControl` ({ value, max, citers, onChange }) for the minimum number of works
+ * citing it that must cite a work, and `coCitationResult` ({ minCiters, citers, found, left })
+ * once it has run; a work co-cited with the anchor
+ * has `coCitedBy`, how many works citing the anchor cite it.
  */
 export default function DetailsPanel({
   work,
@@ -75,6 +79,11 @@ export default function DetailsPanel({
   onCollapse,
   pinned = false,
   onTogglePin,
+  coCitedBy = null,
+  onFindCoCitations,
+  coCitationControl = null,
+  findingCoCitations = false,
+  coCitationResult = null,
   onClose,
 }) {
   const fullyExpanded = expanded.has('citing') && expanded.has('cited');
@@ -173,6 +182,71 @@ export default function DetailsPanel({
         <button type="button" onClick={onMakeAnchor} disabled={busy}>
           Make this the anchor
         </button>
+      )}
+
+      {onFindCoCitations && coCitationControl && (
+        <div className="co-citations">
+          {coCitationControl.citers < 2 ? (
+            <p className="muted small">
+              Finding co-citations needs at least two works on the graph citing this one.
+            </p>
+          ) : (
+            <div className="filter-range">
+              <span id="co-citers-label">
+                Cited by at least {coCitationControl.value} of the {coCitationControl.citers} works
+                on the graph citing this one
+              </span>
+              <div className="stepper">
+                <button
+                  type="button"
+                  onClick={() => coCitationControl.onChange(coCitationControl.value - 1)}
+                  disabled={coCitationControl.value <= 2}
+                  aria-label="Decrease minimum citing works"
+                >
+                  <Minus className="icon" aria-hidden="true" />
+                </button>
+                <input
+                  type="range"
+                  min={2}
+                  max={coCitationControl.max}
+                  value={coCitationControl.value}
+                  onChange={(event) => coCitationControl.onChange(Number(event.target.value))}
+                  aria-labelledby="co-citers-label"
+                />
+                <button
+                  type="button"
+                  onClick={() => coCitationControl.onChange(coCitationControl.value + 1)}
+                  disabled={coCitationControl.value >= coCitationControl.max}
+                  aria-label="Increase minimum citing works"
+                >
+                  <Plus className="icon" aria-hidden="true" />
+                </button>
+              </div>
+            </div>
+          )}
+          <button
+            type="button"
+            onClick={onFindCoCitations}
+            disabled={busy || findingCoCitations || coCitationControl.citers < 2}
+          >
+            {findingCoCitations ? 'Finding co-citations…' : 'Find Co-Citations'}
+          </button>
+          {coCitationResult && (
+            <p className="muted small">
+              {coCitationResult.found === 0
+                ? `No work is cited by ${coCitationResult.minCiters} or more of the ${coCitationResult.citers} works on the graph citing this one.`
+                : `Found ${coCitationResult.found} ${coCitationResult.found === 1 ? 'work' : 'works'} cited by ${coCitationResult.minCiters} or more of the ${coCitationResult.citers} works on the graph citing this one, ringed on the graph.`}
+              {coCitationResult.left > 0 &&
+                ` ${coCitationResult.left} didn’t fit under the max works setting.`}
+            </p>
+          )}
+        </div>
+      )}
+      {coCitedBy != null && (
+        <p className="muted small">
+          Co-cited with the anchor: {coCitedBy} works on the graph citing the anchor cite this one
+          too.
+        </p>
       )}
 
       {onTogglePin && (

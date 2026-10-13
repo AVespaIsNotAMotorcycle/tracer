@@ -491,6 +491,118 @@ export async function expandWorks(graph, ids, options, api, progress = noProgres
   return (latest) => updaters.reduce((acc, apply) => apply(acc), latest);
 }
 
+// Citing works whose reference lists are fetched at once when finding co-citations.
+const CO_CITATION_CONCURRENCY = 3;
+// Cited works fetched per citing work when finding co-citations: the API's maximum, so a
+// small "works per node" setting doesn't hide co-citations further down a reference list.
+export const CO_CITATION_LIMIT = 200;
+// Fewest works on the graph citing the anchor that can make a co-citation: two works citing
+// the same thing is what co-citation means.
+export const MIN_CO_CITERS = 2;
+
+/**
+ * The works on the graph citing any of `targets` (the anchor, and its chapters if it's a
+ * book) whose reference lists can be fetched: those whose co-citations are counted.
+ *
+ * @param {Graph} graph
+ * @param {string[]} targets
+ */
+export function coCiters(graph, targets) {
+  const targetSet = new Set(targets);
+  return [...graph.works.values()].filter(
+    (work) =>
+      canExpand(work) && !targetSet.has(work.id) && work.references.some((id) => targetSet.has(id)),
+  );
+}
+
+/**
+ * The default minimum number of citers for a co-citation: the square root of how many there
+ * are, rounded up, so it grows with the graph without becoming unreachable, but never below
+ * MIN_CO_CITERS.
+ */
+export const defaultMinCoCiters = (citerCount) =>
+  Math.max(MIN_CO_CITERS, Math.ceil(Math.sqrt(citerCount)));
+
+/**
+ * Finds works co-cited with the anchor: cited by at least `minCiters` of the works on the
+ * graph that cite it (`targets`: the anchor, and its chapters if it's a book; see coCiters). Fetches each
+ * such work's cited works, up to `limit` (its reference list, as on expanding), and counts how
+ * many of them cite each work. Fetching a citer's cited works here doesn't mark it expanded:
+ * only the co-cited ones are added.
+ *
+ * @param {Graph} graph
+ * @param {string[]} targets
+ * @param {{ limit: number, maxNodes: number, minCiters?: number }} options
+ * @param {GraphApi} api
+ * @param {ReturnType<typeof import('./progress.js').createProgressTracker>} [progress]
+ *   Planned here, one request per citing work.
+ * @returns {Promise<{ counts: Map<string, number>, apply: (graph: Graph) => Graph }>}
+ *   Co-cited works with how many citing works cite each, and an updater that adds the ones not
+ *   on the graph yet, most co-cited first, up to maxNodes.
+ */
+export async function findCoCitations(
+  graph,
+  targets,
+  { limit, maxNodes, minCiters = MIN_CO_CITERS },
+  api,
+  progress = noProgress,
+) {
+  const targetSet = new Set(targets);
+  const citers = coCiters(graph, targets);
+  const requests = citers.map((work) => requestInfo('cited', work.id, work));
+  progress.plan(citers.length);
+  progress.queue(requests);
+
+  const found = new Map();
+  await forEachLimited(citers, CO_CITATION_CONCURRENCY, async (citer) => {
+    const finish = progress.begin(requestInfo('cited', citer.id, citer));
+    try {
+      found.set(citer.id, await api.getCited(citer.id, { limit }));
+    } catch {
+      // One reference list failing shouldn't lose the others.
+    } finally {
+      finish();
+    }
+  });
+
+  const counts = new Map();
+  const works = new Map();
+  for (const cited of found.values()) {
+    // Counted once per citing work, even if its list names a work twice.
+    for (const work of new Map(cited.map((w) => [w.id, w])).values()) {
+      if (targetSet.has(work.id)) continue;
+      counts.set(work.id, (counts.get(work.id) ?? 0) + 1);
+      works.set(work.id, work);
+    }
+  }
+  const min = Math.max(MIN_CO_CITERS, minCiters);
+  for (const [id, count] of counts) if (count < min) counts.delete(id);
+
+  const apply = (latest) => {
+    const room = Math.max(0, maxNodes - latest.works.size);
+    const added = new Set(
+      [...counts]
+        .filter(([id]) => !latest.works.has(id))
+        .sort((a, b) => b[1] - a[1])
+        .slice(0, room)
+        .map(([id]) => id),
+    );
+    let next = latest;
+    for (const [citerId, cited] of found) {
+      // Each citer's references gain its cited list, so edges to the co-cited works draw.
+      next = addFoundWorks(
+        next,
+        citerId,
+        cited,
+        'cited',
+        cited.filter((w) => added.has(w.id)),
+      );
+    }
+    return next;
+  };
+  return { counts, apply };
+}
+
 /**
  * Relation for a kept work relative to a new anchor, when it wasn't reached by the new build:
  * direct citations decide it, otherwise publication order.

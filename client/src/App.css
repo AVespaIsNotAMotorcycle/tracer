@@ -43,6 +43,8 @@
   --node-expanded: var(--palette-2);
   --node-pin: var(--ink);
   --node-icon-on-pin: var(--paper);
+  /* Resolved on :root, so it follows --node-citing into dark mode. */
+  --node-co-cited: var(--node-citing);
   --graph-link: color-mix(in srgb, var(--ink) 22%, transparent);
   --graph-link-active: var(--palette-2);
   --graph-axis: color-mix(in srgb, var(--ink) 12%, transparent);
@@ -409,6 +411,13 @@ button.with-icon {
   font-size: 0.85em;
 }
 
+/* The anchor's co-citation search: its minimum-citers control, button and result. */
+.co-citations {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+
 /* The connections slider, with − and + buttons that step it by one. */
 .stepper {
   display: flex;
@@ -526,6 +535,11 @@ button.with-icon {
 .swatch.expanded {
   background: none;
   border: 2px solid var(--node-expanded);
+}
+
+.swatch.co-cited {
+  background: none;
+  border: 2px solid var(--node-co-cited);
 }
 
 /* A pin badge, as pinned works carry on the graph. */

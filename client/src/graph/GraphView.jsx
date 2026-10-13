@@ -16,6 +16,7 @@ import {
 } from './linkRouting.js';
 import { REFERENCE_ONLY } from './sourceTypeKeys.js';
 import { iconPath2D, iconPathData } from './sourceTypes.js';
+import { connectedComponents, laneCenters } from './lanes.js';
 import { layoutSpread } from './spacing.js';
 
 // Node radius = NODE_MIN_RADIUS + NODE_GROWTH * log10(1 + total citations). Totals run from 0
@@ -59,12 +60,25 @@ const radiusOf = (val) => Math.sqrt(val);
 // between circles are scaled by layoutSpread. Year spacing isn't: stretching the axis also
 // stretches empty decades, and fitting that shrinks every circle. (Repulsion scaled by the
 // factor's square spread works so far that fitted circles became dots.)
+//
+// Repulsion grows more slowly than the spread factor (CHARGE_GROWTH, CHARGE_RANGE_GROWTH):
+// small graphs span decades along the axis but little across it, so they get strong
+// repulsion, while large ones already fill the view across it. Measured: Manchus and Han
+// (41 works) went from 4.2 times as long along the axis as across to 2.7, Thompson's 21
+// citing works from a median gap of 0.4 radii to 1.2; a 288-work graph is about as before
+// (stronger repulsion there halved the size circles are shown at).
 const YEAR_SPACING = 15; // Distance between consecutive years along the axis.
 const YEAR_PULL = 0.5; // How firmly works hold their year's position.
-const ACROSS_PULL = 0.008; // Gentle pull back toward the axis, so the graph doesn't drift.
-const CHARGE = -90; // Repulsion between works. Mostly spreads works across the axis,
-const CHARGE_RANGE = 200; // because YEAR_PULL resists movement along it.
+const ACROSS_PULL = 0.004; // Gentle pull back toward the axis, so the graph doesn't drift.
+const CHARGE = -150; // Repulsion between works. Mostly spreads works across the axis,
+const CHARGE_RANGE = 300; // because YEAR_PULL resists movement along it.
+const CHARGE_GROWTH = 0.4; // Strength grows with spread ** this,
+const CHARGE_RANGE_GROWTH = 0.5; // and range with spread ** this.
 const COLLIDE_PADDING = 4; // Minimum gap between circles.
+// Parts of the graph with no path between them (see lanes.js) sit in separate bands across the
+// axis, this far apart (scaled by layoutSpread), each pulled there as a whole.
+const LANE_GAP = 80;
+const LANE_PULL = 0.15;
 
 // Link widths. Links to the anchor stand out from links between other works; links to the
 // selected work are highlighted by adding LINK_SELECTED_EXTRA to either.
@@ -109,26 +123,49 @@ function paintArrow(ctx, point, dx, dy, back, length) {
 
 /**
  * Pulls each node toward its year's position along the time axis (node.targetU). Movement
- * across the axis gets only a gentle pull toward it, so works from the same period spread out
- * side by side. `getGeometry` returns the current axisGeometry, so rotating the axis doesn't
- * require replacing the force.
+ * across the axis gets only a gentle pull toward its lane's center, so works from the same
+ * period spread out side by side. `getGeometry` returns the current axisGeometry, so rotating
+ * the axis doesn't require replacing the force.
+ *
+ * `getLanes` returns the graph's connected components as node arrays, the anchor's first, and
+ * the gap between them. The anchor's component is centered on the axis; each other one has its
+ * own band beside it (laneCenters), and is moved there as a whole (`laneStrength`), so parts
+ * of the graph with no path between them don't interleave.
  */
-function yearForce(getGeometry, strength, acrossStrength) {
-  let nodes = [];
+function yearForce(getGeometry, getLanes, { strength, acrossStrength, laneStrength }) {
   const force = (alpha) => {
     const { toU, toV, alongAcross } = getGeometry();
-    for (const node of nodes) {
-      const across = -toV(node.x, node.y) * acrossStrength * alpha;
-      const along =
-        node.targetU == null ? 0 : (node.targetU - toU(node.x, node.y)) * strength * alpha;
-      const { vx, vy } = alongAcross(along, across);
-      node.vx += vx;
-      node.vy += vy;
-    }
+    const { components, gap } = getLanes();
+    const vs = components.map((members) =>
+      members.map((node) => (node.x == null ? 0 : toV(node.x, node.y))),
+    );
+    const extents = components.map((members, i) => {
+      let min = Infinity;
+      let max = -Infinity;
+      members.forEach((node, j) => {
+        const r = radiusOf(node.val);
+        min = Math.min(min, vs[i][j] - r);
+        max = Math.max(max, vs[i][j] + r);
+      });
+      return { min, max };
+    });
+    const targets = laneCenters(extents, gap);
+    components.forEach((members, i) => {
+      const center = (extents[i].min + extents[i].max) / 2;
+      // A single component (the usual case) keeps only the per-work pull toward the axis.
+      const shift = i === 0 ? 0 : (targets[i] - center) * laneStrength;
+      members.forEach((node, j) => {
+        if (node.x == null) return;
+        const across = ((targets[i] - vs[i][j]) * acrossStrength + shift) * alpha;
+        const along =
+          node.targetU == null ? 0 : (node.targetU - toU(node.x, node.y)) * strength * alpha;
+        const { vx, vy } = alongAcross(along, across);
+        node.vx += vx;
+        node.vy += vy;
+      });
+    });
   };
-  force.initialize = (n) => {
-    nodes = n;
-  };
+  force.initialize = () => {};
   return force;
 }
 
@@ -323,23 +360,58 @@ export default function GraphView({
   );
   const data = useMemo(() => {
     for (const id of nodeCache.keys()) if (!graph.works.has(id)) nodeCache.delete(id);
+    const links = deriveEdges(graph.works);
+    const componentIds = connectedComponents(graph.works.keys(), links, graph.anchorId);
+    // Where each component's placed works are across the axis, to start its new works there.
+    const placedV = (ids) =>
+      ids
+        .map((id) => nodeCache.get(id))
+        .filter((node) => node?.x != null)
+        .map((node) => geometry.toV(node.x, node.y));
+    const allPlaced = placedV([...nodeCache.keys()]);
+    let outermost = allPlaced.length ? Math.max(...allPlaced) : 0;
+    const startV = new Map();
+    componentIds.forEach((ids, index) => {
+      const placed = placedV(ids);
+      let base;
+      if (placed.length) base = placed.reduce((a, b) => a + b, 0) / placed.length;
+      else if (index === 0) base = 0;
+      else {
+        // A new part with no path to the rest: start it beside everything, in a lane of its
+        // own, rather than on the axis among works it isn't related to.
+        base = outermost + LANE_GAP * spread + 30 * spread;
+        outermost = base + 30 * spread;
+      }
+      for (const id of ids) startV.set(id, base);
+    });
+    const byId = new Map();
     const nodes = [...graph.works.values()].map((work) => {
       let node = nodeCache.get(work.id);
       const year = years.get(work.id)?.year;
       const targetU = year == null ? null : positions.get(year);
       if (!node) {
         // Start new works at their year, so they don't fly across the graph to get there.
-        node = { id: work.id, ...geometry.fromUV(targetU ?? 0, jitter(work.id) * 60 * spread) };
+        node = {
+          id: work.id,
+          ...geometry.fromUV(targetU ?? 0, startV.get(work.id) + jitter(work.id) * 60 * spread),
+        };
         nodeCache.set(work.id, node);
       }
       node.work = work;
       node.relation = graph.relations.get(work.id);
       node.val = nodeVal(sizes.get(work.id) ?? 0);
       node.targetU = targetU;
+      byId.set(work.id, node);
       return node;
     });
-    return { nodes, links: deriveEdges(graph.works) };
+    const components = componentIds.map((ids) => ids.map((id) => byId.get(id)));
+    return { nodes, links, components };
   }, [graph, sizes, years, positions, nodeCache, geometry, spread]);
+  // The force reads the current components and gap through a ref, like the geometry.
+  const lanesRef = useRef({ components: [], gap: 0 });
+  useEffect(() => {
+    lanesRef.current = { components: data.components, gap: LANE_GAP * spread };
+  }, [data, spread]);
 
   // Year ticks: whole publication years only, not inferred midpoints.
   const ticks = useMemo(
@@ -356,7 +428,11 @@ export default function GraphView({
     fg.d3Force('center', null);
     fg.d3Force(
       'year',
-      yearForce(() => geometryRef.current, YEAR_PULL, ACROSS_PULL),
+      yearForce(
+        () => geometryRef.current,
+        () => lanesRef.current,
+        { strength: YEAR_PULL, acrossStrength: ACROSS_PULL, laneStrength: LANE_PULL },
+      ),
     );
     fg.d3Force(
       'collide',
@@ -368,8 +444,8 @@ export default function GraphView({
     // Limit repulsion to nearby works: otherwise many works on one side (e.g. all the works
     // citing the anchor) push a node off its year.
     fg.d3Force('charge')
-      .strength(CHARGE * spread)
-      .distanceMax(CHARGE_RANGE * spread);
+      .strength(CHARGE * spread ** CHARGE_GROWTH)
+      .distanceMax(CHARGE_RANGE * spread ** CHARGE_RANGE_GROWTH);
     fg.d3ReheatSimulation();
   }, [ready, spread]);
 
@@ -438,6 +514,20 @@ export default function GraphView({
         );
         return Math.round(performance.now() - start);
       },
+      // Each work's place along (u) and across (v) the time axis, in graph units, where its
+      // year is along it (targetU), and which connected component (lane) it's in: 0 is the
+      // anchor's.
+      layout: () =>
+        data.components.flatMap((members, component) =>
+          members.map((node) => ({
+            id: node.id,
+            component,
+            u: Math.round(geometry.toU(node.x, node.y)),
+            targetU: node.targetU == null ? null : Math.round(node.targetU),
+            v: Math.round(geometry.toV(node.x, node.y)),
+            r: Math.round(radiusOf(node.val)),
+          })),
+        ),
       crossings: () => {
         const found = findCrossings(
           data.links,
@@ -476,7 +566,7 @@ export default function GraphView({
     return () => {
       delete window.__tracerAutomation;
     };
-  }, [data, visible]);
+  }, [data, visible, geometry]);
 
   // Fit the view once the first layout settles after each run (a build, re-anchor, or options
   // change), identified by `fitKey`. Expansions don't change it, so they don't move the view.

@@ -152,6 +152,12 @@ export function createWorksRouter(workService) {
     res.json({ match: await workService.getCitationMatch(req.params.id) });
   });
 
+  router.get('/:id/path', async (req, res) => {
+    const to = single(req.query.to);
+    if (!to) throw new HttpError(400, 'to is required');
+    res.json(await workService.findPath(req.params.id, to));
+  });
+
   router.get('/:id/archive', async (req, res) => {
     res.json({ items: await workService.getArchiveItems(req.params.id) });
   });

@@ -3,6 +3,7 @@ import * as defaultApi from '../api.js';
 import {
   addExpandedWorks,
   applyCoCitations as applyCoCitationsTo,
+  applyPath,
   buildGraph,
   collapseWorks,
   emptyGraph,
@@ -309,6 +310,40 @@ export function useCitationGraph(api = defaultApi) {
     [api, track, untrack],
   );
 
+  /**
+   * Asks the server for the shortest path of citations from `fromId` to the anchor (see
+   * findPath in api.js) and adds its works to the graph. Resolves to the search's result, or
+   * null if it failed or the anchor changed meanwhile.
+   */
+  const findPath = useCallback(
+    async (fromId) => {
+      const anchorId = graphRef.current.anchorId;
+      const title = graphRef.current.works.get(fromId)?.title ?? 'work';
+      const short = title.length > 40 ? `${title.slice(0, 39)}…` : title;
+      // One request, searched in batches on the server.
+      const progress = track('path', `Finding a path from “${short}”`, undefined, 1);
+      progress.plan(1);
+      const finish = progress.begin({ key: `path:${fromId}`, label: 'Searching citations' });
+      try {
+        const result = await api.findPath(fromId, anchorId);
+        if (graphRef.current.anchorId !== anchorId) return null;
+        if (result.path) {
+          setGraph((latest) =>
+            latest.anchorId === anchorId ? applyPath(latest, result.path) : latest,
+          );
+        }
+        return result;
+      } catch (err) {
+        setError(err.message);
+        return null;
+      } finally {
+        finish();
+        untrack('path');
+      }
+    },
+    [api, track, untrack],
+  );
+
   /** Shows the co-citations of an earlier search at a new minimum (see applyCoCitations). */
   const applyCoCitations = useCallback((result, options) => {
     setGraph((latest) => applyCoCitationsTo(latest, result, options));
@@ -329,6 +364,7 @@ export function useCitationGraph(api = defaultApi) {
     addWorks,
     findCoCitations,
     applyCoCitations,
+    findPath,
     reset,
   };
 }

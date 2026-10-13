@@ -10,6 +10,10 @@ const DEFAULT_LIMIT = 100;
 
 // OpenAlex caps per_page at 100 and the number of OR'd values in one filter at 100.
 const MAX_PER_PAGE = 100;
+// Neighbor lookups ask for only IDs and counts, so they use the larger pages OpenAlex allows.
+const NEIGHBOR_PER_PAGE = 200;
+// Most citing works one neighbor lookup collects, most-cited first: about 15 requests.
+const DEFAULT_MAX_CITING = 3000;
 const MAX_FILTER_VALUES = 100;
 
 // Only request the fields normalizeWork() reads. Responses are much smaller this way.
@@ -319,6 +323,91 @@ export function createOpenAlexProvider({
   }
 
   /**
+   * For each of `ids`, the works it cites and the works citing it, as OpenAlex IDs, with the
+   * citation counts it learns along the way. Batched: one request per 100 works for their
+   * references, and pages of up to 200 citing works for 100 works at a time, most-cited
+   * first, up to `maxCiting` in all (beyond that `complete` is false). Only works OpenAlex
+   * links are included. IDs OpenAlex has no record for (reference lists still name some
+   * deleted or merged works) come back as `missing`, and are left out of the citing lookup:
+   * `cites:` with such an ID matches nearly every work.
+   *
+   * @param {string[]} ids  OpenAlex IDs.
+   * @returns {Promise<import('../works/pathSearch.js').Neighbors>}
+   */
+  async function getNeighborIds(ids, { maxCiting = DEFAULT_MAX_CITING } = {}) {
+    const asked = new Set(ids);
+    const links = new Map(ids.map((id) => [id, []]));
+    const counts = new Map();
+    const select = 'id,referenced_works,cited_by_count';
+    for (const batch of chunk(ids, MAX_FILTER_VALUES)) {
+      const data = await request('/works', {
+        filter: `openalex:${batch.join('|')}`,
+        select,
+        per_page: MAX_FILTER_VALUES,
+      });
+      for (const raw of data?.results ?? []) {
+        const id = toOpenAlexId(raw.id);
+        if (!links.has(id)) continue;
+        counts.set(id, raw.cited_by_count ?? 0);
+        for (const ref of raw.referenced_works ?? []) {
+          const other = toOpenAlexId(ref);
+          if (other && other !== id) links.get(id).push({ id: other, link: 'cites' });
+        }
+      }
+    }
+    const existing = ids.filter((id) => counts.has(id));
+    let citing = 0;
+    let complete = true;
+    for (const batch of chunk(existing, MAX_FILTER_VALUES)) {
+      let cursor = '*';
+      while (cursor) {
+        if (citing >= maxCiting) {
+          complete = false;
+          break;
+        }
+        const data = await request('/works', {
+          filter: `cites:${batch.join('|')}`,
+          sort: 'cited_by_count:desc',
+          select,
+          per_page: NEIGHBOR_PER_PAGE,
+          cursor,
+        });
+        const results = data?.results ?? [];
+        for (const raw of results) {
+          const id = toOpenAlexId(raw.id);
+          citing++;
+          counts.set(id, raw.cited_by_count ?? 0);
+          // Which of the batch it cites: it can cite several.
+          for (const ref of raw.referenced_works ?? []) {
+            const cited = toOpenAlexId(ref);
+            if (asked.has(cited) && cited !== id) {
+              links.get(cited).push({ id, link: 'cited-by' });
+            }
+          }
+        }
+        cursor = results.length > 0 ? data.meta?.next_cursor : null;
+      }
+    }
+    return { links, counts, complete, missing: ids.filter((id) => !counts.has(id)) };
+  }
+
+  /** Citation counts for OpenAlex IDs, one request per 100. */
+  async function getCitationCounts(ids) {
+    const counts = new Map();
+    for (const batch of chunk([...new Set(ids)], MAX_FILTER_VALUES)) {
+      const data = await request('/works', {
+        filter: `openalex:${batch.join('|')}`,
+        select: 'id,cited_by_count',
+        per_page: MAX_FILTER_VALUES,
+      });
+      for (const raw of data?.results ?? []) {
+        counts.set(toOpenAlexId(raw.id), raw.cited_by_count ?? 0);
+      }
+    }
+    return counts;
+  }
+
+  /**
    * Venues ('venue': journals, book series) or publishers ('publisher') whose names match
    * `query`, for picking one to search within. Autocomplete requests are free.
    *
@@ -346,5 +435,7 @@ export function createOpenAlexProvider({
     searchWorks,
     searchWorksAdvanced,
     suggest,
+    getNeighborIds,
+    getCitationCounts,
   };
 }

@@ -62,8 +62,80 @@ const doiLink = (work) => work.links.find((link) => link.kind === 'doi');
  * with `coCitationControl` ({ value, max, citers, onChange }) for the minimum number of works
  * citing it that must cite a work, and `coCitationResult` ({ minCiters, citers, found, left })
  * once it has run; a work co-cited with the anchor
- * has `coCitedBy`, how many works citing the anchor cite it.
+ * has `coCitedBy`, how many works citing the anchor cite it. A work with no path of citations
+ * on the graph to the anchor gets `pathControl` ({ disconnected, finding, result, onFind,
+ * onSelect }) to look for the shortest one; `result` (see findPath in api.js) stays shown once
+ * found, with each step selectable.
  */
+const yearOf = (work) => (work.year == null ? '' : ` (${work.year})`);
+
+/** Looking for, and showing, the shortest path of citations from a work to the anchor. */
+function PathToAnchor({ disconnected, finding, result, onFind, onSelect }) {
+  const path = result?.path;
+  return (
+    <div className="path-to-anchor">
+      {path ? (
+        <>
+          <p className="small">
+            Connected to the anchor in {path.length - 1} step{path.length === 2 ? '' : 's'}:
+          </p>
+          <ol className="path-steps" aria-label="Path to the anchor">
+            {path.map(({ work, link }, index) => (
+              <li key={work.id}>
+                {link && (
+                  <span className="muted small">
+                    {link === 'cites' ? 'which cites ' : 'which is cited by '}
+                  </span>
+                )}
+                {index === 0 ? (
+                  <span>{work.title ?? 'Untitled'}</span>
+                ) : (
+                  <button type="button" className="link-button" onClick={() => onSelect(work.id)}>
+                    {work.title ?? 'Untitled'}
+                  </button>
+                )}
+                <span className="muted small">
+                  {yearOf(work)}
+                  {index === path.length - 1 ? ', the anchor' : ''}
+                </span>
+              </li>
+            ))}
+          </ol>
+          {!result.complete && (
+            <p className="muted small">
+              Some much-cited works&rsquo; citing works were only partly searched, so a shorter path
+              is possible.
+            </p>
+          )}
+        </>
+      ) : (
+        disconnected && (
+          <>
+            <p className="muted small">
+              No citations on the graph link this work to the anchor&rsquo;s.
+            </p>
+            <button type="button" onClick={onFind} disabled={finding}>
+              {finding ? 'Finding a path…' : 'Find shortest path to the anchor'}
+            </button>
+            {result?.outcome === 'none' && (
+              <p className="muted small">
+                There&rsquo;s no path on OpenAlex: none of the {result.searched.toLocaleString()}{' '}
+                works linked to this one, however distantly, reaches the anchor.
+              </p>
+            )}
+            {result?.outcome === 'budget' && (
+              <p className="muted small">
+                No path found before the search reached its limit (
+                {result.searched.toLocaleString()} works searched). Any path is long.
+              </p>
+            )}
+          </>
+        )
+      )}
+    </div>
+  );
+}
+
 export default function DetailsPanel({
   work,
   relation,
@@ -84,6 +156,7 @@ export default function DetailsPanel({
   coCitationControl = null,
   findingCoCitations = false,
   coCitationResult = null,
+  pathControl = null,
   onClose,
   inert = false,
 }) {
@@ -243,6 +316,7 @@ export default function DetailsPanel({
           )}
         </div>
       )}
+      {pathControl && <PathToAnchor {...pathControl} />}
       {coCitedBy != null && (
         <p className="muted small">
           Co-cited with the anchor: {coCitedBy} works on the graph citing the anchor cite this one

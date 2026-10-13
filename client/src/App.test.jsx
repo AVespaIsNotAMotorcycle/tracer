@@ -30,6 +30,7 @@ vi.mock('./api.js', async (importOriginal) => ({
   searchWorks: vi.fn(),
   advancedSearch: vi.fn(),
   suggest: vi.fn(),
+  findPath: vi.fn(),
   getWork: vi.fn(),
   getCiting: vi.fn(),
   getCited: vi.fn(),
@@ -1108,6 +1109,94 @@ describe('advanced search', () => {
     expect(api.getCiting).toHaveBeenCalledWith('book', expect.anything());
     expect(api.getCited).toHaveBeenCalledWith('book', expect.anything());
     expect(screen.getByText(/Showing \d+ of \d+ · 1 pinned/)).toBeInTheDocument();
+  });
+});
+
+describe('path to the anchor', () => {
+  // lone is cited by b1. Adding lone brings in b1, but nothing on the graph links them to the
+  // anchor's works. On OpenAlex, b2 cites b1 and the anchor.
+  const lone = work('lone', { year: 1990 });
+  const b1 = work('b1', { references: ['lone'], year: 2000 });
+  const b2 = work('b2', { references: ['b1', 'anchor'], year: 2010 });
+
+  beforeEach(() => {
+    vi.mocked(api.getWork).mockImplementation(async (id) => (id === 'lone' ? lone : anchor));
+    vi.mocked(api.getCiting).mockImplementation(
+      async (id) => ({ anchor: [citer], lone: [b1] })[id] ?? [],
+    );
+    vi.mocked(api.getCited).mockImplementation(async (id) => (id === 'anchor' ? [ref] : []));
+    vi.mocked(api.advancedSearch).mockResolvedValue({ works: [lone], total: 1 });
+    vi.mocked(api.findPath).mockResolvedValue({
+      path: [
+        { work: lone, link: null },
+        { work: b1, link: 'cited-by' },
+        { work: b2, link: 'cited-by' },
+        { work: anchor, link: 'cites' },
+      ],
+      searched: 40,
+      outcome: 'found',
+      complete: true,
+    });
+  });
+
+  async function addLone() {
+    await buildFromSearch();
+    fireEvent.click(screen.getByRole('button', { name: 'Advanced search' }));
+    const page = screen.getByRole('region', { name: 'Advanced search' });
+    fireEvent.change(within(page).getByLabelText('Title'), { target: { value: 'lone' } });
+    fireEvent.click(within(page).getByRole('button', { name: 'Search' }));
+    const list = await screen.findByRole('list', { name: 'Advanced search results' });
+    fireEvent.click(within(list).getByRole('checkbox', { name: /Title lone/ }));
+    fireEvent.click(within(page).getByRole('button', { name: 'Add to current graph' }));
+    await waitFor(() =>
+      expect(within(graph()).getByRole('button', { name: 'Title b1' })).toBeInTheDocument(),
+    );
+    fireEvent.click(within(graph()).getByRole('button', { name: 'Title lone' }));
+    return screen.getByRole('complementary', { name: 'Title lone' });
+  }
+
+  it('finds the shortest path from a disconnected work and adds it to the graph', async () => {
+    const details = await addLone();
+    fireEvent.click(
+      within(details).getByRole('button', { name: 'Find shortest path to the anchor' }),
+    );
+
+    expect(await within(details).findByText(/Connected to the anchor in 3 steps/)).toBeVisible();
+    expect(api.findPath).toHaveBeenCalledWith('lone', 'anchor');
+    const steps = within(details).getByRole('list', { name: 'Path to the anchor' });
+    expect(steps).toHaveTextContent(
+      'Title lone (1990)which is cited by Title b1 (2000)which is cited by Title b2 (2010)which cites Title anchor (1971), the anchor',
+    );
+    expect(within(graph()).getByRole('button', { name: 'Title b2' })).toBeInTheDocument();
+    // Now it's connected, so there's nothing more to find.
+    expect(
+      within(details).queryByRole('button', { name: 'Find shortest path to the anchor' }),
+    ).not.toBeInTheDocument();
+
+    // Each step can be selected.
+    fireEvent.click(within(steps).getByRole('button', { name: 'Title b2' }));
+    expect(screen.getByRole('complementary', { name: 'Title b2' })).toBeInTheDocument();
+  });
+
+  it('isn’t offered for works linked to the anchor', async () => {
+    await buildFromSearch();
+    fireEvent.click(within(graph()).getByRole('button', { name: 'Title citer' }));
+    expect(
+      screen.queryByRole('button', { name: 'Find shortest path to the anchor' }),
+    ).not.toBeInTheDocument();
+  });
+
+  it('says when nothing links the work to the anchor, or the search gave up', async () => {
+    vi.mocked(api.findPath)
+      .mockResolvedValueOnce({ path: null, searched: 12, outcome: 'none', complete: true })
+      .mockResolvedValueOnce({ path: null, searched: 4800, outcome: 'budget', complete: true });
+    const details = await addLone();
+    const find = within(details).getByRole('button', { name: 'Find shortest path to the anchor' });
+
+    fireEvent.click(find);
+    expect(await within(details).findByText(/There’s no path on OpenAlex/)).toBeInTheDocument();
+    fireEvent.click(find);
+    expect(await within(details).findByText(/4,800 works searched/)).toBeInTheDocument();
   });
 });
 

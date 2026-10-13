@@ -15,6 +15,7 @@ import ViewPanel from './components/ViewPanel.jsx';
 import { DEFAULT_AXIS_ANGLE } from './graph/axis.js';
 import GraphView from './graph/GraphView.jsx';
 import {
+  canExpand,
   deriveEdges,
   CO_CITATION_LIMIT,
   coCiters,
@@ -28,6 +29,7 @@ import {
   NO_FILTERS,
   visibleIds,
 } from './graph/graphModel.js';
+import { connectedComponents } from './graph/lanes.js';
 import { useCitationGraph } from './graph/useCitationGraph.js';
 import { readUrlState, shareableId, withSavedGraph, writeUrlState } from './urlState.js';
 
@@ -77,6 +79,7 @@ function GraphPage({ auth }) {
     addWorks,
     findCoCitations,
     applyCoCitations,
+    findPath,
     reset,
   } = useCitationGraph();
   const busy = status === 'loading' || status === 'reanchoring';
@@ -101,6 +104,10 @@ function GraphPage({ auth }) {
   // The minimum citers the user chose for a co-citation, for one anchor ({ anchorId, value });
   // otherwise it's defaultMinCoCiters.
   const [minCoCitersChoice, setMinCoCitersChoice] = useState(null);
+  // The last path search from a work to the anchor: { anchorId, fromId, result } (see
+  // findPathToAnchor), and the work being searched from, if one is.
+  const [pathSearch, setPathSearch] = useState(null);
+  const [findingPathFrom, setFindingPathFrom] = useState(null);
   const [selectedId, setSelectedId] = useState(null);
   const [axisAngle, setAxisAngle] = useState(DEFAULT_AXIS_ANGLE);
   // Counts runs (builds, re-anchors, options changes), so the view re-fits after each one.
@@ -165,6 +172,7 @@ function GraphPage({ auth }) {
     setFilters(NO_FILTERS);
     setPinned(new Set(extraIds));
     setCoCitations(null);
+    setPathSearch(null);
     setSavedGraph(null);
     setOpenError(null);
     pendingUrl.current = { mode: 'push', options };
@@ -209,6 +217,7 @@ function GraphPage({ auth }) {
       setAxisAngle(saved.view?.axisAngle ?? DEFAULT_AXIS_ANGLE);
       setPinned(new Set(saved.view?.pinned ?? []));
       setCoCitations(null);
+      setPathSearch(null);
       setSelectedId(null);
       setSavedGraph({ id: saved.id, name: saved.name });
       setOpenError(null);
@@ -375,7 +384,30 @@ function GraphPage({ auth }) {
     }
   };
 
+  // Works joined to the anchor by citations on the graph, either way. Others (brought in by
+  // expanding or adding a work) can look for a path to it.
+  const anchorComponent = useMemo(
+    () =>
+      new Set(connectedComponents(view.works.keys(), deriveEdges(view.works), view.anchorId)[0]),
+    [view],
+  );
+
+  const handleFindPath = async (fromId) => {
+    const anchorId = graph.anchorId;
+    setFindingPathFrom(fromId);
+    const result = await findPath(fromId);
+    setFindingPathFrom(null);
+    if (result) setPathSearch({ anchorId, fromId, result });
+  };
+
   const selected = shownId ? view.works.get(shownId) : null;
+  const shownPath =
+    selected && pathSearch?.fromId === selected.id && pathSearch.anchorId === graph.anchorId
+      ? pathSearch.result
+      : null;
+  const disconnected = Boolean(
+    selected && !anchorComponent.has(selected.id) && canExpand(selected),
+  );
   const parts = selected
     ? (partsOf.get(selected.id) ?? []).map((work) => ({
         work,
@@ -587,6 +619,17 @@ function GraphPage({ auth }) {
                   left: [...coCitations.counts].filter(
                     ([id, n]) => n >= minCoCiters && !graph.works.has(id),
                   ).length,
+                }
+              : null
+          }
+          pathControl={
+            disconnected || shownPath?.path
+              ? {
+                  disconnected,
+                  finding: findingPathFrom === selected.id,
+                  result: shownPath,
+                  onFind: () => handleFindPath(selected.id),
+                  onSelect: setSelectedId,
                 }
               : null
           }

@@ -61,6 +61,18 @@ export async function getCited(id, { limit, signal } = {}) {
   return (await get(`${workPath(id)}/cited?limit=${limit}`, { signal })).works;
 }
 
+/**
+ * The shortest path of citations, either way, from work `id` to work `to`, most-cited first
+ * among equally short ones: { path: [{ work, link }] | null, searched, outcome, complete }.
+ * `link` says how the step before relates to each work ('cites' or 'cited-by'); `outcome` is
+ * 'found', 'none' (nothing links them) or 'budget' (the search stopped at its limits), and
+ * `complete` is false if a much-cited work's citing list was cut short.
+ */
+export async function findPath(id, to, { signal } = {}) {
+  const params = new URLSearchParams({ to });
+  return get(`${workPath(id)}/path?${params}`, { signal });
+}
+
 /** Copies of the work on the Internet Archive (editions of a book, usually), best first. */
 export async function getArchiveItems(id, { signal } = {}) {
   return (await get(`${workPath(id)}/archive`, { signal })).items;

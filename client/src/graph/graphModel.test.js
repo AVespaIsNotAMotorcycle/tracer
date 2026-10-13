@@ -10,6 +10,7 @@ import {
   expandWork,
   expandWorks,
   applyCoCitations,
+  applyPath,
   defaultMinCoCiters,
   findCoCitations,
   foldBookParts,
@@ -985,5 +986,35 @@ describe('findCoCitations and applyCoCitations', () => {
     });
     const { counts } = await search(start(), api);
     expect(Object.fromEntries(counts)).toEqual({ X: 2, Y: 2 });
+  });
+});
+
+describe('applyPath', () => {
+  it('adds the path’s works and citations to the graph, connecting the work', () => {
+    const graph = {
+      ...addWorks(emptyGraph(), [work('R'), work('X')], 'cited'),
+      anchorId: 'R',
+    };
+    // X is cited by B, which cites A, which R cites. B's record lacks X, and R's lacks A, as
+    // when a link came from another source; the path's links supply them.
+    const path = [
+      { work: work('X'), link: null },
+      { work: work('B', ['A']), link: 'cited-by' },
+      { work: work('A'), link: 'cites' },
+      { work: work('R'), link: 'cited-by' },
+    ];
+
+    const next = applyPath(graph, path);
+
+    expect([...next.works.keys()].sort()).toEqual(['A', 'B', 'R', 'X']);
+    expect(deriveEdges(next.works)).toEqual(
+      expect.arrayContaining([
+        { source: 'R', target: 'A' },
+        { source: 'B', target: 'A' },
+        { source: 'B', target: 'X' },
+      ]),
+    );
+    // Only the path was added; none of it is marked expanded.
+    expect(next.expanded.size).toBe(0);
   });
 });

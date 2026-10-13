@@ -119,6 +119,11 @@
  *   One page of works matching every field of `criteria`, and how many match in all.
  * @property {(kind: 'venue' | 'publisher', query: string) => Promise<Suggestion[]>} [suggest]
  *   Venues or publishers whose names match `query`.
+ * @property {(ids: string[], options?: { maxCiting?: number }) =>
+ *   Promise<import('../works/pathSearch.js').Neighbors>} [getNeighborIds]
+ *   For each work, the provider IDs of the works it cites and is cited by, batched. Used to
+ *   search for paths between works without fetching their records.
+ * @property {(ids: string[]) => Promise<Map<string, number>>} [getCitationCounts]
  */
 
 export {};

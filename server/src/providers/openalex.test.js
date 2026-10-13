@@ -339,6 +339,83 @@ describe('createOpenAlexProvider', () => {
     });
   });
 
+  describe('getNeighborIds', () => {
+    it('batches references and citing works, noting which work each citing one cites', async () => {
+      const { provider, requestedUrl } = setup(
+        jsonResponse({
+          results: [
+            {
+              id: 'https://openalex.org/W1',
+              referenced_works: ['https://openalex.org/W9'],
+              cited_by_count: 4,
+            },
+            { id: 'https://openalex.org/W2', referenced_works: [], cited_by_count: 1 },
+          ],
+        }),
+        jsonResponse({
+          meta: { next_cursor: null },
+          results: [
+            {
+              id: 'https://openalex.org/W7',
+              referenced_works: [
+                'https://openalex.org/W1',
+                'https://openalex.org/W2',
+                'https://openalex.org/W5',
+              ],
+              cited_by_count: 30,
+            },
+          ],
+        }),
+      );
+
+      const { links, counts, complete } = await provider.getNeighborIds(['W1', 'W2']);
+
+      expect(links.get('W1')).toEqual([
+        { id: 'W9', link: 'cites' },
+        { id: 'W7', link: 'cited-by' },
+      ]);
+      expect(links.get('W2')).toEqual([{ id: 'W7', link: 'cited-by' }]);
+      expect(counts).toEqual(
+        new Map([
+          ['W1', 4],
+          ['W2', 1],
+          ['W7', 30],
+        ]),
+      );
+      expect(complete).toBe(true);
+      expect(requestedUrl(0).searchParams.get('filter')).toBe('openalex:W1|W2');
+      expect(requestedUrl(1).searchParams.get('filter')).toBe('cites:W1|W2');
+      expect(requestedUrl(1).searchParams.get('per_page')).toBe('200');
+    });
+
+    it('reports works with no record, leaving them out of the citing lookup', async () => {
+      // `cites:` with an ID OpenAlex doesn't have matches nearly every work.
+      const { provider, requestedUrl } = setup(
+        jsonResponse({ results: [{ id: 'https://openalex.org/W1', referenced_works: [] }] }),
+        jsonResponse({ meta: { next_cursor: null }, results: [] }),
+      );
+      const { missing } = await provider.getNeighborIds(['W1', 'W404']);
+      expect(missing).toEqual(['W404']);
+      expect(requestedUrl(1).searchParams.get('filter')).toBe('cites:W1');
+    });
+
+    it('stops collecting citing works at maxCiting', async () => {
+      const citing = (n) => ({
+        id: `https://openalex.org/W${n}`,
+        referenced_works: ['https://openalex.org/W1'],
+        cited_by_count: 0,
+      });
+      const { provider, fetch } = setup(
+        jsonResponse({ results: [{ id: 'https://openalex.org/W1', referenced_works: [] }] }),
+        jsonResponse({ meta: { next_cursor: 'next' }, results: [citing(2), citing(3)] }),
+      );
+      const { links, complete } = await provider.getNeighborIds(['W1'], { maxCiting: 2 });
+      expect(links.get('W1')).toHaveLength(2);
+      expect(complete).toBe(false);
+      expect(fetch).toHaveBeenCalledTimes(2);
+    });
+  });
+
   describe('suggest', () => {
     it('autocompletes venues as short IDs', async () => {
       const { provider, requestedUrl } = setup(

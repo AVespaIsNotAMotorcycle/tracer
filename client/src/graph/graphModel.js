@@ -642,6 +642,43 @@ export function applyCoCitations(
 }
 
 /**
+ * @typedef {object} PathStep  One step of a path of citations (see findPath in api.js).
+ * @property {object} work
+ * @property {'cites' | 'cited-by' | null} link  How the step before relates to this one: it
+ *   `cites` this work, or is `cited-by` it. Null on the first step.
+ */
+
+/**
+ * Adds a path's works to the graph (as citing or cited works, by how they relate to the
+ * anchor) and its citations to their references, so its edges draw. The works aren't marked
+ * expanded: only the path was added, not their other neighbors.
+ *
+ * @param {Graph} graph
+ * @param {PathStep[]} path
+ * @returns {Graph}
+ */
+export function applyPath(graph, path) {
+  const anchor = graph.works.get(graph.anchorId);
+  let next = graph;
+  for (const { work } of path) {
+    if (!next.works.has(work.id)) next = addWorks(next, [work], relationTo(anchor, work));
+  }
+  const works = new Map(next.works);
+  path.forEach(({ link }, i) => {
+    if (i === 0) return;
+    const [citing, cited] =
+      link === 'cites'
+        ? [path[i - 1].work.id, path[i].work.id]
+        : [path[i].work.id, path[i - 1].work.id];
+    const work = works.get(citing);
+    if (work && !work.references.includes(cited)) {
+      works.set(citing, { ...work, references: [...work.references, cited] });
+    }
+  });
+  return { ...next, works };
+}
+
+/**
  * Relation for a kept work relative to a new anchor, when it wasn't reached by the new build:
  * direct citations decide it, otherwise publication order.
  */

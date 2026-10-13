@@ -937,6 +937,30 @@ button.with-icon {
   }
 }
 
+/* A work's shortest path of citations to the anchor (in its details). */
+.path-to-anchor {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+
+.path-to-anchor p {
+  margin: 0;
+}
+
+.path-steps {
+  margin: 0;
+  padding-left: 1.4em;
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  font-size: 0.9em;
+}
+
+.path-steps .link-button {
+  text-align: left;
+}
+
 /* Canvas */
 
 .graph-view {

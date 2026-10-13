@@ -60,6 +60,22 @@ function fakeProvider() {
       total: catalog.size,
     })),
     suggest: vi.fn(async () => [{ id: 'S1', name: 'Past & Present', hint: null, worksCount: 1 }]),
+    // Links straight from the catalog's references, both ways.
+    getNeighborIds: vi.fn(async (ids) => {
+      const links = new Map();
+      for (const id of ids) {
+        links.set(id, [
+          ...(catalog.get(id)?.referencedIds ?? []).map((other) => ({ id: other, link: 'cites' })),
+          ...[...catalog.values()]
+            .filter((w) => w.referencedIds.includes(id))
+            .map((w) => ({ id: w.providerId, link: 'cited-by' })),
+        ]);
+      }
+      return { links, counts: new Map(), complete: true };
+    }),
+    getCitationCounts: vi.fn(
+      async (ids) => new Map(ids.map((id) => [id, catalog.get(id)?.citedByCount ?? 0])),
+    ),
   };
 }
 
@@ -758,6 +774,27 @@ describe('GET /api/works/suggest/:kind', () => {
   it('rejects unknown kinds and a missing query', async () => {
     expect((await api.get('/api/works/suggest/author?q=x')).status).toBe(404);
     expect((await api.get('/api/works/suggest/venue')).status).toBe(400);
+  });
+});
+
+describe('GET /api/works/:id/path', () => {
+  it('returns the shortest path as works with Tracer IDs, and how each step links', async () => {
+    // W2 is cited by W1, which is cited by W5 (and W4, cited less).
+    const res = await api.get('/api/works/W2/path?to=W5');
+
+    expect(res.status).toBe(200);
+    expect(res.body.outcome).toBe('found');
+    expect(res.body.path.map((step) => [step.work.externalIds.openalex, step.link])).toEqual([
+      ['W2', null],
+      ['W1', 'cited-by'],
+      ['W5', 'cited-by'],
+    ]);
+    expect(res.body.path[1].work.id).toBe(await tracerIdOf('W1'));
+  });
+
+  it('needs a work to find a path to, other than the work itself', async () => {
+    expect((await api.get('/api/works/W1/path')).status).toBe(400);
+    expect((await api.get('/api/works/W1/path?to=W1')).status).toBe(400);
   });
 });
 

@@ -10,6 +10,7 @@ import {
 } from './archiveMatch.js';
 import { citationQuery, doiLinks, matchCitation } from './citationMatch.js';
 import { HttpError } from './errors.js';
+import { shortestPath } from './pathSearch.js';
 
 /** @typedef {import('../providers/types.js').Provider} Provider */
 /** @typedef {import('../providers/types.js').ProviderWork} ProviderWork */
@@ -32,6 +33,11 @@ export const DEFAULT_TTLS = {
   archive: 30 * DAY_MS,
   citationMatch: 30 * DAY_MS,
 };
+// Path searches (see findPath) stop starting new levels after this long, well inside Heroku's
+// 30-second request limit; one level takes a few seconds at most.
+const PATH_TIME_MS = 18_000;
+export const PATH_MAX_STEPS = 8;
+export const PATH_MAX_WORKS = 5000;
 // Most Internet Archive items returned per work (editions and copies of a book).
 const MAX_ARCHIVE_ITEMS = 5;
 
@@ -693,6 +699,46 @@ export function createWorkService({
     async suggest(kind, query) {
       if (!provider.suggest) return [];
       return provider.suggest(kind, query);
+    },
+
+    /**
+     * The shortest chain of citations, either way, from `fromId` to `toId` (see shortestPath),
+     * most-cited first among equally short ones, searched through the provider's links in
+     * batches. Each step is a Work, with how the step before relates to it (`link`: 'cites' or
+     * 'cited-by'). Works not on the provider have no links to search.
+     *
+     * @returns {Promise<{ path: { work: Work, link: string | null }[] | null, searched: number,
+     *   outcome: 'found' | 'none' | 'budget', complete: boolean }>}
+     */
+    async findPath(fromId, toId) {
+      if (!provider.getNeighborIds) throw new HttpError(501, 'Path search unavailable');
+      const [from, to] = await Promise.all([loadSource(fromId), loadSource(toId)]);
+      const fromKey = from.externalIds?.[providerName];
+      const toKey = to.externalIds?.[providerName];
+      if (!fromKey || !toKey || isReferenceOnly(from) || isReferenceOnly(to)) {
+        return { path: null, searched: 0, outcome: 'none', complete: true };
+      }
+      if (fromKey === toKey) throw new HttpError(400, 'A path needs two different works');
+      const deadline = now().getTime() + PATH_TIME_MS;
+      const result = await shortestPath(fromKey, toKey, {
+        neighbors: (ids) => provider.getNeighborIds(ids),
+        citationCounts: (ids) => provider.getCitationCounts(ids),
+        maxSteps: PATH_MAX_STEPS,
+        maxWorks: PATH_MAX_WORKS,
+        deadline,
+        now: () => now().getTime(),
+      });
+      if (!result.path) return result;
+      const works = await worksForProviderIds(result.path.map((step) => step.id));
+      const byProviderId = new Map(works.map((work) => [work.externalIds[providerName], work]));
+      const path = result.path.map((step) => ({
+        work: byProviderId.get(step.id),
+        link: step.link,
+      }));
+      if (path.some((step) => !step.work)) {
+        throw new HttpError(502, 'A work on the path could not be loaded');
+      }
+      return { ...result, path };
     },
 
     /** @returns {Promise<Work[]>} */

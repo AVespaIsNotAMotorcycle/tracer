@@ -618,6 +618,22 @@ describe('App', () => {
     ).toEqual(['Title anchor', 'Title ref']);
   });
 
+  it('ends the links slider at the most links of any work but the anchor', async () => {
+    // The anchor cites three works and is cited by citer: 4 links. Every other work has 1 or 2.
+    const cites = ['ref', 'second', 'third'];
+    vi.mocked(api.searchWorks).mockResolvedValue([work('anchor', { references: cites })]);
+    vi.mocked(api.getCiting).mockImplementation(async (id) =>
+      id === 'anchor' ? [work('citer', { references: ['anchor'], year: 1995 })] : [],
+    );
+    vi.mocked(api.getCited).mockImplementation(async (id) =>
+      id === 'anchor' ? cites.map((citedId) => work(citedId, { year: 1930 })) : [],
+    );
+    await buildFromSearch(5);
+
+    expect(screen.getByRole('slider', { name: /at least 1 on graph/ })).toHaveAttribute('max', '1');
+    expect(screen.getByRole('button', { name: 'Increase minimum links' })).toBeDisabled();
+  });
+
   it('steps the links filter by one with its − and + buttons', async () => {
     await buildFromSearch();
     const decrease = screen.getByRole('button', { name: 'Decrease minimum links' });

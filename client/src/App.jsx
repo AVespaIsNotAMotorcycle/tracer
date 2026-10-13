@@ -109,7 +109,12 @@ function GraphPage({ auth }) {
     () => (partsOf.size ? outgoingCounts(graph.works) : null),
     [graph.works, partsOf],
   );
-  const maxConnections = useMemo(() => Math.max(1, ...connections.values()), [connections]);
+  // The links slider's upper end: the most links of any work but the anchor, which is always
+  // shown and linked to nearly everything, so counting it would leave most of the range empty.
+  const maxConnections = useMemo(
+    () => Math.max(1, ...[...connections].filter(([id]) => id !== view.anchorId).map(([, n]) => n)),
+    [connections, view.anchorId],
+  );
 
   // How the next completed build or re-anchor updates the URL: 'push' a history entry when the
   // user started it (so Back returns to the previous anchor), 'replace' when it came from the

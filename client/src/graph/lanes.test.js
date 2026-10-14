@@ -12,12 +12,24 @@ describe('connectedComponents', () => {
       { source: 'q', target: 's' },
     ];
     expect(
-      connectedComponents(['a', 'b', 'c', 'x', 'y', 'p', 'q', 'r', 's', 'z'], links, 'x'),
+      connectedComponents(['a', 'b', 'c', 'x', 'y', 'p', 'q', 'r', 's', 'z'], links, ['x']),
     ).toEqual([['x', 'y'], ['p', 'q', 'r', 's'], ['a', 'b', 'c'], ['z']]);
   });
 
+  it('puts components holding anchors first, in anchor order', () => {
+    const links = [
+      { source: 'a', target: 'b' },
+      { source: 'x', target: 'y' },
+      { source: 'p', target: 'q' },
+      { source: 'q', target: 'r' },
+    ];
+    expect(
+      connectedComponents(['a', 'b', 'p', 'q', 'r', 'x', 'y', 'z'], links, ['x', 'a']),
+    ).toEqual([['x', 'y'], ['a', 'b'], ['p', 'q', 'r'], ['z']]);
+  });
+
   it('ignores links to works not listed', () => {
-    expect(connectedComponents(['a', 'b'], [{ source: 'a', target: 'gone' }], 'a')).toEqual([
+    expect(connectedComponents(['a', 'b'], [{ source: 'a', target: 'gone' }], ['a'])).toEqual([
       ['a'],
       ['b'],
     ]);

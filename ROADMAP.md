@@ -17,6 +17,7 @@ Each entry lists:
 - **Fielded search** (advanced search across title, author, venue, publisher, year, type, language, citation count, open access). Done.
 - **Notes on works**, saved with the graph as `annotations`. Done. Reading status is still to do (see 7).
 - **Shortest path to the anchor.** Done. Generalizing it is still to do (see 17).
+- **Multiple anchors** (1): a graph built around several works, colored by anchor with shared works split between their colors; 2 anchors free, 6 on Scholar. Saved graphs are version 2 (`anchors`).
 - **Entitlements layer** (groundwork): `can(user, feature)` / `limitFor(user, limit)` in `server/src/entitlements/`, checked by the gated routes and controls, with every tier including everything for now. Billing (Stripe) waits for launch.
 
 ---
@@ -30,13 +31,6 @@ These aren't features, but each one gets harder to add later.
 ---
 
 ## Phase 1: Core model
-
-### 1. Multiple anchors
-**Tier:** Free for 2 anchors, Paid for more · **Size:** L
-
-Build a graph around two or more works at once. Each anchor's neighborhood is colored separately, and works that connect to more than one anchor stand out, so a debate's camps and their shared ground are visible.
-
-**Why here:** the single-anchor assumption (`anchorId`) is used about 90 times across the client and server: layout focus, link widths, re-anchoring, collapsing, co-citation, lanes, path search, URL state and saved graphs. Every new feature adds more. Changing `anchorId` to `anchorIds` now is a contained refactor; in two months it touches everything. Saved graphs need a `version` bump and a migration from `anchor` to `anchors`.
 
 ### 2. Duplicate merging and stable IDs
 **Tier:** Free · **Size:** L

@@ -1,4 +1,5 @@
-// The shortest chain of citations between two works, in either direction. Works in provider IDs;
+// The shortest chain of citations between two works (or from one to the nearest of several),
+// in either direction. Works in provider IDs;
 // the provider's batched lookups (see getNeighborIds in openalex.js) do the fetching.
 
 /**
@@ -19,7 +20,8 @@
 
 /**
  * @typedef {object} PathResult
- * @property {{ id: string, link: PathLink | null }[] | null} path  From `fromId` to `toId`;
+ * @property {{ id: string, link: PathLink | null }[] | null} path  From `fromId` to one of
+ *   `toIds`;
  *   each step's `link` says how the step before relates to it (null on the first). Null if no
  *   path was found.
  * @property {number} searched  Works whose neighbors were looked up.
@@ -35,10 +37,11 @@
  * paths of that length it picks the one whose works are cited most in total: every work on
  * any shortest path is collected (both sides keep all of a work's parents one level nearer
  * their start), their counts are looked up where unknown, and each side keeps its most-cited
- * way to each work.
+ * way to each work. With several `toIds` (a graph's anchors), that side starts from all of
+ * them at once, so the path ends at whichever is nearest.
  *
  * @param {string} fromId
- * @param {string} toId
+ * @param {string | string[]} toIds
  * @param {object} options
  * @param {(ids: string[]) => Promise<Neighbors>} options.neighbors
  * @param {(ids: string[]) => Promise<Map<string, number>>} options.citationCounts
@@ -50,19 +53,21 @@
  */
 export async function shortestPath(
   fromId,
-  toId,
+  toIds,
   { neighbors, citationCounts, maxSteps = 8, maxWorks = 5000, deadline = Infinity, now = Date.now },
 ) {
   const counts = new Map();
-  const side = (start) => ({
-    start,
-    dist: new Map([[start, 0]]),
-    parents: new Map([[start, []]]),
-    frontier: [start],
+  const side = (starts) => ({
+    dist: new Map(starts.map((id) => [id, 0])),
+    parents: new Map(starts.map((id) => [id, []])),
+    frontier: [...starts],
     depth: 0,
   });
-  const from = side(fromId);
-  const to = side(toId);
+  const targets = [...new Set([toIds].flat())];
+  const from = side([fromId]);
+  const to = side(targets);
+  // The ends are never dropped as missing: they were looked up before the search.
+  const ends = new Set([fromId, ...targets]);
   let searched = 0;
   let complete = true;
 
@@ -120,7 +125,7 @@ export async function shortestPath(
       if (unknown.length) {
         const found = await citationCounts(unknown);
         for (const [id, count] of found) counts.set(id, count);
-        const gone = unknown.filter((id) => !found.has(id) && id !== fromId && id !== toId);
+        const gone = unknown.filter((id) => !found.has(id) && !ends.has(id));
         if (gone.length) {
           gone.forEach(drop);
           continue;
@@ -144,7 +149,7 @@ export async function shortestPath(
     const found = await neighbors(grow.frontier);
     for (const [id, count] of found.counts) counts.set(id, count);
     if (found.complete === false) complete = false;
-    for (const id of found.missing ?? []) if (id !== fromId && id !== toId) drop(id);
+    for (const id of found.missing ?? []) if (!ends.has(id)) drop(id);
     searched += grow.frontier.length;
 
     const depth = grow.depth + 1;
@@ -189,7 +194,7 @@ export async function shortestPath(
   const score = (id) => fromBest.total.get(id) + toBest.total.get(id) - cites(id);
   for (const id of meet) if (score(id) > score(middle)) middle = id;
 
-  // From the start to the meeting point, then on to the other end. Toward `toId`, each choice
+  // From the start to the meeting point, then on to the other end. Toward the targets, each choice
   // records how the next work relates to the current one, so the link is turned around.
   const path = [];
   for (let id = middle; id != null; id = fromBest.choice.get(id)?.id) {

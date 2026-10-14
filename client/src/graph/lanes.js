@@ -1,19 +1,20 @@
 // Lanes across the time axis for parts of the graph with no path between them. A work the user
-// expanded (or added from a search) can bring in works with no citation path to the anchor's;
+// expanded (or added from a search) can bring in works with no citation path to the anchors';
 // without lanes, the year force lays both groups along the same stretch of the axis, and they
 // interleave as if related. Each connected component gets its own band across the axis
 // instead. Pure, so it's testable without a canvas.
 
 /**
- * The graph's connected components, ignoring citation direction: arrays of IDs, the one
- * holding `anchorId` first, then the rest by size (largest first), ties by first ID.
+ * The graph's connected components, ignoring citation direction: arrays of IDs. Those holding
+ * anchors come first, in the order of their first anchor (so the primary anchor's is first),
+ * then the rest by size (largest first), ties by first ID.
  *
  * @param {Iterable<string>} ids
  * @param {{ source: string | { id: string }, target: string | { id: string } }[]} links
- * @param {string | null} anchorId
+ * @param {string[]} [anchorIds]
  * @returns {string[][]}
  */
-export function connectedComponents(ids, links, anchorId) {
+export function connectedComponents(ids, links, anchorIds = []) {
   const parent = new Map();
   for (const id of ids) parent.set(id, id);
   const find = (id) => {
@@ -43,10 +44,16 @@ export function connectedComponents(ids, links, anchorId) {
     groups.get(root).push(id);
   }
   const components = [...groups.values()].map((members) => members.sort());
+  // The position of a component's first anchor, or Infinity for one without.
+  const anchorOrder = (members) => {
+    const index = anchorIds.findIndex((id) => members.includes(id));
+    return index === -1 ? Infinity : index;
+  };
+  const order = new Map(components.map((members) => [members, anchorOrder(members)]));
   return components.sort((a, b) => {
-    const anchorA = anchorId != null && a.includes(anchorId);
-    const anchorB = anchorId != null && b.includes(anchorId);
-    if (anchorA !== anchorB) return anchorA ? -1 : 1;
+    const anchorA = order.get(a);
+    const anchorB = order.get(b);
+    if (anchorA !== anchorB) return anchorA < anchorB ? -1 : 1;
     return b.length - a.length || (a[0] < b[0] ? -1 : 1);
   });
 }

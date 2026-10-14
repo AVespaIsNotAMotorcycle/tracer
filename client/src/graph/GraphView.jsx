@@ -182,6 +182,9 @@ function jitter(id) {
   return ((hash >>> 0) % 2000) / 1000 - 1;
 }
 
+// Distinct anchor colors (--anchor-1 … 6); more anchors than that reuse them in order.
+const ANCHOR_COLORS = 6;
+
 const COLOR_VARS = {
   anchor: '--node-anchor',
   citing: '--node-citing',
@@ -205,6 +208,17 @@ const COLOR_VARS = {
   labelBg: '--surface',
   axis: '--graph-axis',
   axisLabel: '--muted',
+  iconOnAnchorHue: '--node-icon-on-anchor-hue',
+  iconOnAnchorTint: '--node-icon-on-anchor-tint',
+  unlinked: '--node-unlinked',
+  iconOnUnlinked: '--node-icon-on-unlinked',
+  // Each anchor's hue and the tint of it for works near it (see App.css).
+  ...Object.fromEntries(
+    Array.from({ length: ANCHOR_COLORS }, (_, i) => [
+      [`anchorHue${i}`, `--anchor-${i + 1}`],
+      [`anchorTint${i}`, `--anchor-${i + 1}-tint`],
+    ]).flat(),
+  ),
 };
 
 /**
@@ -316,6 +330,10 @@ const escapeHtml = (text) =>
  *
  * Every work stays in the simulation; filtered-out works are only hidden (nodeVisibility),
  * so filtering doesn't reshuffle the layout.
+ *
+ * With several anchors, `neighborhoods` (see anchorNeighborhoods) colors works by anchor
+ * instead of by relation: each anchor in its hue, works near one in its tint, works near
+ * several in wedges of each, and works near none in a neutral color.
  */
 export default function GraphView({
   graph,
@@ -324,13 +342,14 @@ export default function GraphView({
   pinnedIds = new Set(),
   notes = new Map(),
   coCitedIds = new Map(),
+  neighborhoods = null,
   years,
   visible,
   selectedId,
   onSelect,
   building = false,
   axisAngle = DEFAULT_AXIS_ANGLE,
-  fitKey = graph.anchorId,
+  fitKey = graph.anchorIds.join(' '),
 }) {
   const containerRef = useRef(null);
   const graphRef = useRef(null);
@@ -356,21 +375,24 @@ export default function GraphView({
   const [nodeCache] = useState(() => new Map());
   // More works need more room, or they pack edge to edge with no space for links between them.
   const spread = layoutSpread(graph.works.size);
-  // Years near the anchor's are spaced further apart than distant ones.
-  const anchorYear = years.get(graph.anchorId)?.year ?? null;
+  // Years near the anchors' are spaced further apart than distant ones.
+  const anchorYears = graph.anchorIds
+    .map((id) => years.get(id)?.year)
+    .filter((year) => year != null)
+    .join(',');
   const positions = useMemo(
     () =>
       yearPositions(
         [...years.values()].map((y) => y.year).filter((y) => y != null),
         YEAR_SPACING,
-        anchorYear,
+        anchorYears ? anchorYears.split(',').map(Number) : [],
       ),
-    [years, anchorYear],
+    [years, anchorYears],
   );
   const data = useMemo(() => {
     for (const id of nodeCache.keys()) if (!graph.works.has(id)) nodeCache.delete(id);
     const links = deriveEdges(graph.works);
-    const componentIds = connectedComponents(graph.works.keys(), links, graph.anchorId);
+    const componentIds = connectedComponents(graph.works.keys(), links, graph.anchorIds);
     // Where each component's placed works are across the axis, to start its new works there.
     const placedV = (ids) =>
       ids
@@ -408,6 +430,10 @@ export default function GraphView({
       }
       node.work = work;
       node.relation = graph.relations.get(work.id);
+      node.anchorIndex = graph.anchorIds.indexOf(work.id);
+      // The anchors it's near (IDs), and their places among the anchors, which pick colors.
+      node.near = neighborhoods ? (neighborhoods.get(work.id) ?? []) : null;
+      node.anchors = node.near?.map((id) => graph.anchorIds.indexOf(id)) ?? null;
       node.val = nodeVal(sizes.get(work.id) ?? 0);
       node.targetU = targetU;
       byId.set(work.id, node);
@@ -415,7 +441,7 @@ export default function GraphView({
     });
     const components = componentIds.map((ids) => ids.map((id) => byId.get(id)));
     return { nodes, links, components };
-  }, [graph, sizes, years, positions, nodeCache, geometry, spread]);
+  }, [graph, sizes, years, positions, nodeCache, geometry, spread, neighborhoods]);
   // The force reads the current components and gap through a ref, like the geometry.
   const lanesRef = useRef({ components: [], gap: 0 });
   useEffect(() => {
@@ -560,6 +586,7 @@ export default function GraphView({
             return {
               id: node.id,
               relation: node.relation,
+              anchors: node.near,
               title: node.work.title,
               type: node.work.type,
               x: rect.left + point.x,
@@ -591,22 +618,23 @@ export default function GraphView({
     setSettled((n) => n + 1);
     // Wait for the whole build: the graph arrives in stages, and fitting to an early stage
     // (say, just the anchor) leaves the view zoomed in on a small part of the time axis.
-    if (building || !graph.anchorId || fitted.current === fitKey) return;
+    if (building || graph.anchorIds.length === 0 || fitted.current === fitKey) return;
     fitted.current = fitKey;
     graphRef.current?.zoomToFit(400, 40);
   };
 
+  const hasAnchor = graph.anchorIds.length > 0;
   // When a build finishes, restart the simulation so it settles once more and fits the view
   // above; the last progress update may already have settled.
   useEffect(() => {
-    if (!building && graph.anchorId && fitted.current !== fitKey) {
+    if (!building && hasAnchor && fitted.current !== fitKey) {
       graphRef.current?.d3ReheatSimulation();
     }
-  }, [building, graph.anchorId, fitKey]);
+  }, [building, hasAnchor, fitKey]);
 
   const endId = (end) => (typeof end === 'object' ? end.id : end);
   const isAnchorLink = (link) =>
-    endId(link.source) === graph.anchorId || endId(link.target) === graph.anchorId;
+    graph.anchorIds.includes(endId(link.source)) || graph.anchorIds.includes(endId(link.target));
   const isActiveLink = (link) =>
     selectedId != null && (endId(link.source) === selectedId || endId(link.target) === selectedId);
 
@@ -632,15 +660,59 @@ export default function GraphView({
     ctx.restore();
   };
 
+  // How a node is filled: `fill`, or `wedges` (one tint per anchor it's near, clockwise from
+  // the top), and the color of the icon on it.
+  const nodeColors = (node) => {
+    // Works not on OpenAlex are grey whichever way they joined the graph.
+    if (node.work.type === REFERENCE_ONLY) {
+      return { fill: colors.referenceOnly, icon: colors.iconOnReferenceOnly };
+    }
+    if (!node.anchors) {
+      return {
+        fill: colors[node.relation] ?? colors.cited,
+        icon:
+          node.relation === 'anchor'
+            ? colors.iconOnAnchor
+            : node.relation === 'citing'
+              ? colors.iconOnCiting
+              : colors.iconOnCited,
+      };
+    }
+    const slot = (index) => index % ANCHOR_COLORS;
+    if (node.anchorIndex >= 0) {
+      return { fill: colors[`anchorHue${slot(node.anchorIndex)}`], icon: colors.iconOnAnchorHue };
+    }
+    if (node.anchors.length === 0) return { fill: colors.unlinked, icon: colors.iconOnUnlinked };
+    const tints = node.anchors.map((index) => colors[`anchorTint${slot(index)}`]);
+    return tints.length === 1
+      ? { fill: tints[0], icon: colors.iconOnAnchorTint }
+      : { wedges: tints, icon: colors.iconOnAnchorTint };
+  };
+
   const paintNode = (node, ctx, scale) => {
     const r = radiusOf(node.val);
     const isSelected = node.id === selectedId;
-    ctx.beginPath();
-    ctx.arc(node.x, node.y, r, 0, 2 * Math.PI);
-    // Works not on OpenAlex are grey whichever way they joined the graph.
-    const referenceOnly = node.work.type === REFERENCE_ONLY;
-    ctx.fillStyle = referenceOnly ? colors.referenceOnly : (colors[node.relation] ?? colors.cited);
-    ctx.fill();
+    const { fill, wedges, icon: iconColor } = nodeColors(node);
+    if (wedges) {
+      // A work near several anchors: equal wedges, one per anchor.
+      const step = (2 * Math.PI) / wedges.length;
+      wedges.forEach((color, i) => {
+        const start = -Math.PI / 2 + i * step;
+        ctx.beginPath();
+        ctx.moveTo(node.x, node.y);
+        ctx.arc(node.x, node.y, r, start, start + step);
+        ctx.closePath();
+        ctx.fillStyle = color;
+        ctx.fill();
+      });
+      ctx.beginPath();
+      ctx.arc(node.x, node.y, r, 0, 2 * Math.PI);
+    } else {
+      ctx.beginPath();
+      ctx.arc(node.x, node.y, r, 0, 2 * Math.PI);
+      ctx.fillStyle = fill;
+      ctx.fill();
+    }
     ctx.lineWidth = 1 / scale;
     ctx.strokeStyle = colors.outline;
     ctx.stroke();
@@ -678,13 +750,7 @@ export default function GraphView({
       ctx.lineWidth = 2;
       ctx.lineCap = 'round';
       ctx.lineJoin = 'round';
-      ctx.strokeStyle = referenceOnly
-        ? colors.iconOnReferenceOnly
-        : node.relation === 'anchor'
-          ? colors.iconOnAnchor
-          : node.relation === 'citing'
-            ? colors.iconOnCiting
-            : colors.iconOnCited;
+      ctx.strokeStyle = iconColor;
       ctx.stroke(icon);
       ctx.restore();
     }

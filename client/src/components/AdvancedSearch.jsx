@@ -100,7 +100,8 @@ const preview = (text) =>
 /**
  * Searches works by many fields at once, filling the page below the header. Results are
  * picked with checkboxes; the picks (kept across searches) then build a graph, the first as
- * its anchor and the rest added and expanded, or join the graph on screen.
+ * its anchor and the rest added and expanded, or all of them as anchors (`onBuild(ids,
+ * { asAnchors: true })`, up to `anchorLimit`), or join the graph on screen.
  *
  * Stays mounted while hidden, so the form, results and picks are still there when it's
  * reopened.
@@ -111,6 +112,7 @@ export default function AdvancedSearch({
   onClose,
   onBuild,
   onAdd,
+  anchorLimit = 2,
   hasGraph,
   onGraph,
   busy,
@@ -221,8 +223,11 @@ export default function AdvancedSearch({
   const makeAnchor = (id) =>
     setPicked((prev) => [prev.find((p) => p.id === id), ...prev.filter((p) => p.id !== id)]);
 
-  const finish = (action) => {
-    action(picked.map((work) => work.id));
+  const finish = (action, extra) => {
+    action(
+      picked.map((work) => work.id),
+      extra,
+    );
     setPicked([]);
   };
 
@@ -509,6 +514,20 @@ export default function AdvancedSearch({
                 Add to current graph
               </button>
             )}
+            {picked.length > 1 && (
+              <button
+                type="button"
+                onClick={() => finish(onBuild, { asAnchors: true })}
+                disabled={busy || picked.length > anchorLimit}
+                title={
+                  picked.length > anchorLimit
+                    ? `Your plan allows up to ${anchorLimit} anchors`
+                    : undefined
+                }
+              >
+                Build with these as anchors
+              </button>
+            )}
             <button
               type="button"
               className="primary"
@@ -518,6 +537,12 @@ export default function AdvancedSearch({
               {hasGraph ? 'Build new graph' : 'Build graph'}
             </button>
           </div>
+          {picked.length > 1 && picked.length > anchorLimit && (
+            <p className="muted small">
+              Your plan allows up to {anchorLimit} anchors: choose fewer to build with them all as
+              anchors.
+            </p>
+          )}
         </div>
       )}
     </section>

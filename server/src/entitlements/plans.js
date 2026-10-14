@@ -1,7 +1,7 @@
 // What each plan includes: features (on or off) and limits (numbers). The one place a plan's
 // contents are defined; routes ask through entitlements.js, never read these directly.
 //
-// Every tier currently includes everything that exists, so nothing is gated in practice yet.
+// Every tier includes every feature that exists; only the number of anchors differs so far.
 // A new paid feature adds its key here (and to the client's ANONYMOUS copy in
 // client/src/auth/entitlements.js, if signed-out visitors get it).
 
@@ -30,6 +30,8 @@ const EVERYTHING = {
     maxNodes: 2000,
     // Saved graphs per account.
     savedGraphs: 500,
+    // Anchors a graph can be built around at once.
+    anchors: 2,
   },
 };
 
@@ -40,7 +42,8 @@ export const PLANS = {
     limits: { ...EVERYTHING.limits, savedGraphs: 0 },
   },
   free: EVERYTHING,
-  scholar: EVERYTHING,
+  // Six anchors: as many as there are distinct anchor colors (--anchor-1 … 6 in App.css).
+  scholar: { features: EVERYTHING.features, limits: { ...EVERYTHING.limits, anchors: 6 } },
 };
 
 export const FEATURES = Object.keys(EVERYTHING.features);

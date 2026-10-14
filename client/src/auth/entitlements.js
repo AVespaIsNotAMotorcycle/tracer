@@ -13,7 +13,7 @@ export const ANONYMOUS = {
     pathSearch: true,
     advancedSearch: true,
   },
-  limits: { depth: 3, perNode: 200, maxNodes: 2000, savedGraphs: 0 },
+  limits: { depth: 3, perNode: 200, maxNodes: 2000, savedGraphs: 0, anchors: 2 },
 };
 
 /** Shown beside a control the plan doesn't include. */

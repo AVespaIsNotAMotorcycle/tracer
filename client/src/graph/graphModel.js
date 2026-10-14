@@ -11,13 +11,16 @@ import { REFERENCE_ONLY, sourceTypeKey } from './sourceTypeKeys.js';
 
 /**
  * @typedef {object} Graph
- * @property {string | null} anchorId
+ * @property {string[]} anchorIds
+ *   The works the graph is built around, in the order they were added. The first is the
+ *   primary anchor (first in the URL, centered lane, default name).
  * @property {Map<string, object>} works          Work objects from the API, by Tracer ID.
  * @property {Map<string, 'anchor' | Direction>} relations
- *   How each work joined the graph: the anchor, found as a citing work, or found as a cited work.
+ *   How each work joined the graph: an anchor, found as a citing work, or found as a cited work
+ *   (relative to the anchor it was first reached from).
  * @property {Map<string, Set<Direction>>} expanded  Directions already fetched for each work.
  * @property {Set<string>} sticky
- *   Works whose neighbors stay on the graph when the anchor changes: works the user expanded,
+ *   Works whose neighbors stay on the graph when the anchors change: works the user expanded,
  *   and previous anchors. (Works the build traversed on its own are not sticky; they're
  *   rebuilt relative to the new anchor.)
  * @property {Set<string>} [coCitationAdded]
@@ -28,7 +31,7 @@ import { REFERENCE_ONLY, sourceTypeKey } from './sourceTypeKeys.js';
 /** @returns {Graph} */
 export function emptyGraph() {
   return {
-    anchorId: null,
+    anchorIds: [],
     works: new Map(),
     relations: new Map(),
     expanded: new Map(),
@@ -36,6 +39,15 @@ export function emptyGraph() {
     coCitationAdded: new Set(),
   };
 }
+
+/** Whether `id` is one of the graph's anchors. */
+export const isAnchor = (graph, id) => graph.anchorIds.includes(id);
+
+/** Whether two lists of anchors are the same, in the same order. */
+export const sameAnchors = (a, b) => a.length === b.length && a.every((id, i) => id === b[i]);
+
+/** The graph's anchor works, in order (any not on it are skipped). */
+const anchorWorks = (graph) => graph.anchorIds.map((id) => graph.works.get(id)).filter(Boolean);
 
 /**
  * Returns a new graph with `works` added. Existing works keep their relation; their data is
@@ -127,7 +139,7 @@ const PART_SEPARATOR = /[._\-/]/;
  * The view of the graph with each book's parts (chapters, front matter) folded into the book:
  * a work whose DOI is a book's DOI plus a suffix (`10.1017/9781108647403.005` is part of
  * `10.1017/9781108647403`) isn't a node of its own when that book is on the graph. Citations to
- * and from a part count as citations to and from its book. The anchor is never folded away.
+ * and from a part count as citations to and from its book. Anchors are never folded away.
  *
  * Like filters, this only changes what is shown: the graph itself keeps every part, so
  * fetching, expansion and re-anchoring are unaffected.
@@ -147,7 +159,7 @@ export function foldBookParts(graph) {
   if (bookByDoi.size > 0) {
     for (const work of graph.works.values()) {
       const doi = work.externalIds?.doi;
-      if (!doi || work.type === 'book' || work.id === graph.anchorId) continue;
+      if (!doi || work.type === 'book' || isAnchor(graph, work.id)) continue;
       // The longest book DOI this DOI extends, if any.
       for (let i = doi.length - 1; i > 0; i--) {
         if (!PART_SEPARATOR.test(doi[i])) continue;
@@ -235,7 +247,7 @@ export function inGraphConnectionCounts(works) {
 export const NO_FILTERS = { minYear: null, maxYear: null, minConnections: 1, excludedTypes: [] };
 
 /**
- * IDs of works that pass the filters. The anchor and any `alwaysShow` IDs (e.g. the selection)
+ * IDs of works that pass the filters. The anchors and any `alwaysShow` IDs (e.g. the selection)
  * stay visible regardless.
  *
  * @param {Graph} graph
@@ -247,7 +259,7 @@ export const NO_FILTERS = { minYear: null, maxYear: null, minConnections: 1, exc
  * @returns {Set<string>}
  */
 export function visibleIds(graph, filters, connections, alwaysShow = [], years = null) {
-  const keep = new Set([graph.anchorId, ...alwaysShow].filter(Boolean));
+  const keep = new Set([...graph.anchorIds, ...alwaysShow].filter(Boolean));
   const excluded = new Set(filters.excludedTypes ?? []);
   const visible = new Set();
   for (const work of graph.works.values()) {
@@ -302,26 +314,29 @@ const requestInfo = (direction, id, work) => ({
 });
 
 /**
- * Builds a graph breadth-first from an anchor work. Each direction follows only its own
- * direction (citing works of citing works, cited works of cited works), to its own depth.
- * Levels alternate between directions so maxNodes doesn't starve one of them.
+ * Builds a graph breadth-first from one or more anchor works. Each direction follows only its
+ * own direction (citing works of citing works, cited works of cited works), to its own depth.
+ * Levels alternate between directions so maxNodes doesn't starve one of them. With several
+ * anchors, the first level holds them all, so depth is measured from the nearest anchor and
+ * maxNodes is one budget for the whole graph.
  *
- * @param {string} anchorId  Any ID the API accepts (Tracer ID, DOI, OpenAlex ID).
+ * @param {string[]} anchorIds  Any IDs the API accepts (Tracer ID, DOI, OpenAlex ID).
  * @param {BuildOptions} options
  * @param {GraphApi} api
  * @param {(graph: Graph) => void} [onProgress]  Called with each intermediate graph.
  * @param {ReturnType<typeof import('./progress.js').createProgressTracker>} [progress]
  *   Receives planned, completed, and projected request counts.
- * @param {object | null} [knownAnchor]  The anchor's work, if already loaded (skips the lookup).
+ * @param {object[]} [knownAnchors]  Anchor works already loaded, by Tracer ID (skips their
+ *   lookups).
  * @returns {Promise<{ graph: Graph, truncated: boolean }>}
  */
 export async function buildGraph(
-  anchorId,
+  anchorIds,
   options,
   api,
   onProgress = () => {},
   progress = noProgress,
-  knownAnchor = null,
+  knownAnchors = [],
 ) {
   const { citingDepth, citedDepth, limit, maxNodes, concurrency = 4 } = options;
   const directions = /** @type {Direction[]} */ (['citing', 'cited']);
@@ -361,19 +376,31 @@ export async function buildGraph(
     progress.setWorks(graph.works.size, graph.works.size + newWorks);
   };
 
-  let anchor = knownAnchor;
-  if (!anchor) {
-    progress.plan(1);
-    const finish = progress.begin({ key: 'anchor', label: `Looking up ${anchorId}` });
-    anchor = await api.getWork(anchorId);
-    finish();
-  }
-  let graph = addWorks({ ...emptyGraph(), anchorId: anchor.id }, [anchor], 'anchor');
+  const known = new Map(knownAnchors.map((work) => [work.id, work]));
+  const missing = anchorIds.filter((id) => !known.has(id));
+  progress.plan(missing.length);
+  const looked = await Promise.all(
+    missing.map(async (id) => {
+      const finish = progress.begin({ key: `anchor:${id}`, label: `Looking up ${id}` });
+      const work = await api.getWork(id);
+      finish();
+      return [id, work];
+    }),
+  );
+  const found = new Map(looked);
+  // Two IDs (a DOI and an OpenAlex ID, say) can name one work.
+  const anchors = [
+    ...new Map(
+      anchorIds.map((id) => known.get(id) ?? found.get(id)).map((w) => [w.id, w]),
+    ).values(),
+  ];
+  const ids = anchors.map((work) => work.id);
+  let graph = addWorks({ ...emptyGraph(), anchorIds: ids }, anchors, 'anchor');
   onProgress(graph);
 
   let truncated = false;
-  const frontiers = { citing: [anchor.id], cited: [anchor.id] };
-  report(0, { citing: 1, cited: 1 });
+  const frontiers = { citing: [...ids], cited: [...ids] };
+  report(0, { citing: ids.length, cited: ids.length });
 
   for (let level = 1; level <= Math.max(citingDepth, citedDepth); level++) {
     const active = directions.filter((d) => level <= depths[d]);
@@ -650,7 +677,7 @@ export function applyCoCitations(
 
 /**
  * Adds a path's works to the graph (as citing or cited works, by how they relate to the
- * anchor) and its citations to their references, so its edges draw. The works aren't marked
+ * anchors) and its citations to their references, so its edges draw. The works aren't marked
  * expanded: only the path was added, not their other neighbors.
  *
  * @param {Graph} graph
@@ -658,10 +685,10 @@ export function applyCoCitations(
  * @returns {Graph}
  */
 export function applyPath(graph, path) {
-  const anchor = graph.works.get(graph.anchorId);
+  const anchors = anchorWorks(graph);
   let next = graph;
   for (const { work } of path) {
-    if (!next.works.has(work.id)) next = addWorks(next, [work], relationTo(anchor, work));
+    if (!next.works.has(work.id)) next = addWorks(next, [work], relationTo(anchors, work));
   }
   const works = new Map(next.works);
   path.forEach(({ link }, i) => {
@@ -679,41 +706,48 @@ export function applyPath(graph, path) {
 }
 
 /**
- * Relation for a kept work relative to a new anchor, when it wasn't reached by the new build:
- * direct citations decide it, otherwise publication order.
+ * Relation for a kept work relative to the anchors, when the build didn't reach it: a direct
+ * citation of or by the first anchor that has one decides it, otherwise publication order
+ * relative to the primary anchor.
+ *
+ * @param {object[]} anchors  The anchor works, primary first.
+ * @param {object} work
  */
-function relationTo(anchor, work) {
-  if (anchor.references.includes(work.id)) return 'cited';
-  if (work.references.includes(anchor.id)) return 'citing';
-  if (work.year != null && anchor.year != null)
-    return work.year <= anchor.year ? 'cited' : 'citing';
+function relationTo(anchors, work) {
+  for (const anchor of anchors) {
+    if (anchor.references.includes(work.id)) return 'cited';
+    if (work.references.includes(anchor.id)) return 'citing';
+  }
+  const primary = anchors[0];
+  if (work.year != null && primary?.year != null)
+    return work.year <= primary.year ? 'cited' : 'citing';
   return 'cited';
 }
 
 /**
- * Rebuilds a saved graph: a build from its anchor at its options, then the expansions the user
+ * Rebuilds a saved graph: a build from its anchors at its options, then the expansions the user
  * made, in the order they were made (a later expansion can depend on works an earlier one
  * brought in). An expanded work the build didn't reach is fetched first. Expanded works become
  * sticky, as they were when saved.
  *
- * @param {{ anchorId: string, options: BuildOptions, expanded: string[] }} saved
+ * @param {{ anchorIds: string[], options: BuildOptions, expanded: string[] }} saved
  * @param {GraphApi} api
  * @param {(graph: Graph) => void} [onProgress]
  * @param {ReturnType<typeof import('./progress.js').createProgressTracker>} [progress]
  * @returns {Promise<{ graph: Graph, truncated: boolean }>}
  */
 export async function restoreGraph(saved, api, onProgress = () => {}, progress = noProgress) {
-  const { anchorId, options, expanded } = saved;
-  const ids = expanded.filter((id) => id !== anchorId);
+  const { anchorIds, options, expanded } = saved;
+  const ids = expanded.filter((id) => !anchorIds.includes(id));
   progress.plan(ids.length * 2);
-  const built = await buildGraph(anchorId, options, api, onProgress, progress);
+  const built = await buildGraph(anchorIds, options, api, onProgress, progress);
   const graph = await addExpandedWorks(built.graph, ids, options, api, onProgress, progress);
   return { graph, truncated: built.truncated };
 }
 
 /**
  * Adds works to the graph and expands each, in order, as if the user had: works not on it yet
- * are fetched first, colored by how they relate to the anchor. One that can't be fetched is
+ * are fetched first, colored by how they relate to the anchors. One that can't be fetched is
  * skipped. They become sticky.
  *
  * @param {Graph} graph
@@ -733,7 +767,7 @@ export async function addExpandedWorks(
   onProgress = () => {},
   progress = noProgress,
 ) {
-  const anchor = graph.works.get(graph.anchorId);
+  const anchors = anchorWorks(graph);
   for (const id of ids) {
     if (!graph.works.has(id)) {
       let work;
@@ -744,7 +778,7 @@ export async function addExpandedWorks(
         progress.complete(2);
         continue;
       }
-      graph = addWorks(graph, [work], relationTo(anchor, work));
+      graph = addWorks(graph, [work], relationTo(anchors, work));
     }
     graph = (await expandWork(graph, id, { limit }, api, progress))(graph);
     progress.setWorks(graph.works.size);
@@ -762,7 +796,7 @@ export async function addExpandedWorks(
  */
 export function graphSnapshot(graph, truncated) {
   return {
-    anchorId: graph.anchorId,
+    anchorIds: [...graph.anchorIds],
     works: [...graph.works.values()],
     relations: [...graph.relations],
     expanded: [...graph.expanded].map(([id, directions]) => [id, [...directions]]),
@@ -778,7 +812,8 @@ export function graphSnapshot(graph, truncated) {
 export function graphFromSnapshot(snapshot) {
   return {
     graph: {
-      anchorId: snapshot.anchorId,
+      // Snapshots from before multiple anchors have one `anchorId`.
+      anchorIds: snapshot.anchorIds ?? [snapshot.anchorId],
       works: new Map(snapshot.works.map((work) => [work.id, work])),
       relations: new Map(snapshot.relations),
       expanded: new Map(snapshot.expanded.map(([id, directions]) => [id, new Set(directions)])),
@@ -791,7 +826,7 @@ export function graphFromSnapshot(snapshot) {
 }
 
 /**
- * Returns `graph` with `ids` no longer sticky, ready for reanchorGraph on the same anchor:
+ * Returns `graph` with `ids` no longer sticky, ready for reanchorGraph on the same anchors:
  * the rebuild then keeps their neighbors only if the build (or another sticky work) reaches
  * them. This is how a user expansion is collapsed.
  *
@@ -804,34 +839,42 @@ export function collapseWorks(graph, ids) {
 }
 
 /**
- * Rebuilds the graph around a different work already on it.
+ * Rebuilds the graph around new anchors, all works already on it: a different work, the
+ * anchors plus or minus one, or the same anchors (to apply options, or after a collapse).
  *
- * The new anchor gets a fresh build at `options` depths, so depth is measured from it. Sticky
- * works (the previous anchor, works the user expanded, and earlier anchors) stay, along with
+ * The anchors get a fresh build at `options` depths, so depth is measured from them. Sticky
+ * works (earlier anchors no longer anchors, and works the user expanded) stay, along with
  * their citing and cited works, as if still expanded. Everything else the old build reached
- * is dropped unless the new build reaches it too.
+ * is dropped unless the new build reaches it too. Works in `unstick` (an anchor being
+ * removed) don't become sticky, so their neighbors go too.
  *
  * Neighbor lists are fetched again rather than tracked; the server caches them.
  *
  * @param {Graph} graph
- * @param {string} anchorId  Tracer ID of a work on `graph`.
+ * @param {string[]} anchorIds  Tracer IDs of works on `graph`.
  * @param {BuildOptions} options
  * @param {GraphApi} api
  * @param {(graph: Graph) => void} [onProgress]
  * @param {ReturnType<typeof import('./progress.js').createProgressTracker>} [progress]
+ * @param {{ unstick?: string[] }} [extra]
  * @returns {Promise<{ graph: Graph, truncated: boolean }>}
  */
 export async function reanchorGraph(
   graph,
-  anchorId,
+  anchorIds,
   options,
   api,
   onProgress = () => {},
   progress = noProgress,
+  { unstick = [] } = {},
 ) {
-  const anchor = graph.works.get(anchorId);
-  if (!anchor) throw new Error(`Work ${anchorId} is not on the graph`);
-  const sticky = new Set([...graph.sticky, graph.anchorId].filter((id) => id && id !== anchorId));
+  const anchors = anchorIds.map((id) => {
+    const work = graph.works.get(id);
+    if (!work) throw new Error(`Work ${id} is not on the graph`);
+    return work;
+  });
+  const skip = new Set([...anchorIds, ...unstick]);
+  const sticky = new Set([...graph.sticky, ...graph.anchorIds].filter((id) => !skip.has(id)));
   // Two requests per sticky work (citing and cited) are known up front.
   progress.plan(sticky.size * 2);
   progress.queue(
@@ -840,21 +883,78 @@ export async function reanchorGraph(
     ),
   );
 
-  // The anchor's data is already here, so the build doesn't fetch it.
-  const built = await buildGraph(anchorId, options, api, onProgress, progress, anchor);
+  // The anchors' data is already here, so the build doesn't fetch it.
+  const built = await buildGraph(anchorIds, options, api, onProgress, progress, anchors);
 
   let next = { ...built.graph, sticky };
   for (const id of sticky) {
     const work = graph.works.get(id);
     if (!next.works.has(id)) {
       const previous = graph.relations.get(id);
-      next = addWorks(next, [work], previous === 'anchor' ? relationTo(anchor, work) : previous);
+      next = addWorks(next, [work], previous === 'anchor' ? relationTo(anchors, work) : previous);
     }
     next = (await expandWork(next, id, { limit: options.limit }, api, progress))(next);
     progress.setWorks(next.works.size);
     onProgress(next);
   }
   return { graph: next, truncated: built.truncated };
+}
+
+/**
+ * Which anchors each work is near, for coloring a graph with several anchors: every anchor
+ * within `reach` citation steps of it (either direction), where reach is the deeper of the two
+ * build depths (at least 1), so a work in two anchors' neighborhoods is shared. A work further
+ * from every anchor (one an expansion brought in, say) is near the closest ones; one with no
+ * path to any anchor is near none. Each anchor is near only itself. Derived from the works,
+ * never stored.
+ *
+ * @param {Graph} graph
+ * @param {{ citingDepth?: number, citedDepth?: number }} [depths]
+ * @returns {Map<string, string[]>}  Anchor IDs in anchor order, by work ID.
+ */
+export function anchorNeighborhoods(graph, { citingDepth = 1, citedDepth = 1 } = {}) {
+  const reach = Math.max(citingDepth, citedDepth, 1);
+  const adjacent = new Map([...graph.works.keys()].map((id) => [id, []]));
+  for (const { source, target } of deriveEdges(graph.works)) {
+    adjacent.get(source).push(target);
+    adjacent.get(target).push(source);
+  }
+  const anchors = graph.anchorIds.filter((id) => adjacent.has(id));
+  const distances = anchors.map((start) => {
+    const dist = new Map([[start, 0]]);
+    let frontier = [start];
+    while (frontier.length) {
+      const next = [];
+      for (const id of frontier) {
+        for (const other of adjacent.get(id)) {
+          if (dist.has(other)) continue;
+          dist.set(other, dist.get(id) + 1);
+          next.push(other);
+        }
+      }
+      frontier = next;
+    }
+    return dist;
+  });
+  const result = new Map();
+  for (const id of graph.works.keys()) {
+    if (anchors.includes(id)) {
+      result.set(id, [id]);
+      continue;
+    }
+    const away = distances.map((dist) => dist.get(id) ?? Infinity);
+    const within = anchors.filter((_, i) => away[i] <= reach);
+    const nearest = Math.min(...away);
+    result.set(
+      id,
+      within.length
+        ? within
+        : nearest === Infinity
+          ? []
+          : anchors.filter((_, i) => away[i] === nearest),
+    );
+  }
+  return result;
 }
 
 /**
@@ -879,10 +979,10 @@ const MIN_EARLIER_CITERS = 2;
  * 1. Infer from dated neighbors on the graph: a work is older than any work that cites it and
  *    newer than any work it cites. With both bounds, use the midpoint; with one, place it a
  *    year beyond.
- * 2. Guarantee the anchor rule: a work the anchor cites is older than the anchor, and a work
- *    citing the anchor is newer.
+ * 2. Guarantee the anchor rule: a work an anchor cites is older than that anchor, and a work
+ *    citing an anchor is newer.
  * 3. Otherwise fall back on how the work joined the graph: cited works (found by following
- *    references back from the anchor) are older, citing works newer.
+ *    references back from an anchor) are older than the primary anchor, citing works newer.
  *
  * @param {Graph} graph
  * @returns {Map<string, LayoutYear>}
@@ -920,9 +1020,14 @@ export function layoutYears(graph) {
     return null;
   };
 
-  const anchor = graph.works.get(graph.anchorId);
-  const anchorYear = anchor ? (yearOf(anchor.id) ?? fromNeighbors(anchor.id)) : null;
-  const anchorCites = new Set(anchor?.references ?? []);
+  const anchors = anchorWorks(graph).map((anchor) => ({
+    id: anchor.id,
+    year: yearOf(anchor.id) ?? fromNeighbors(anchor.id),
+    cites: new Set(anchor.references),
+  }));
+  // For works nothing else places: the primary anchor's year, or failing that the first one's
+  // that has a year.
+  const fallbackYear = anchors.find((anchor) => anchor.year != null)?.year ?? null;
 
   const result = new Map();
   for (const work of graph.works.values()) {
@@ -940,34 +1045,41 @@ export function layoutYears(graph) {
       result.set(work.id, { year: work.year, inferred: false });
       continue;
     }
-    if (work.id === graph.anchorId) {
-      result.set(work.id, { year: anchorYear, inferred: true });
+    const asAnchor = anchors.find((anchor) => anchor.id === work.id);
+    if (asAnchor) {
+      result.set(work.id, { year: asAnchor.year, inferred: true });
       continue;
     }
 
     let year = fromNeighbors(work.id);
-    if (anchorYear != null) {
-      const citedByAnchor = anchorCites.has(work.id);
-      const citesAnchor = work.references.includes(graph.anchorId);
-      if (citedByAnchor && !citesAnchor) year = Math.min(year ?? anchorYear - 1, anchorYear - 1);
-      else if (citesAnchor && !citedByAnchor)
-        year = Math.max(year ?? anchorYear + 1, anchorYear + 1);
-      else if (year == null) {
-        const relation = graph.relations.get(work.id);
-        year =
-          relation === 'cited'
-            ? anchorYear - 1
-            : relation === 'citing'
-              ? anchorYear + 1
-              : anchorYear;
-      }
+    // Older than every anchor citing it, newer than every anchor it cites.
+    let upper = Infinity;
+    let lower = -Infinity;
+    for (const anchor of anchors) {
+      if (anchor.year == null) continue;
+      const citedByAnchor = anchor.cites.has(work.id);
+      const citesAnchor = work.references.includes(anchor.id);
+      if (citedByAnchor && !citesAnchor) upper = Math.min(upper, anchor.year - 1);
+      else if (citesAnchor && !citedByAnchor) lower = Math.max(lower, anchor.year + 1);
+    }
+    if (upper !== Infinity || lower !== -Infinity) {
+      year ??= upper !== Infinity ? upper : lower;
+      year = Math.max(Math.min(year, upper), lower);
+    } else if (year == null && fallbackYear != null) {
+      const relation = graph.relations.get(work.id);
+      year =
+        relation === 'cited'
+          ? fallbackYear - 1
+          : relation === 'citing'
+            ? fallbackYear + 1
+            : fallbackYear;
     }
     result.set(work.id, { year, inferred: true });
   }
   return result;
 }
 
-// Years near the anchor's get more room along the axis, where the graph is usually densest
+// Years near the anchors' get more room along the axis, where the graph is usually densest
 // and readers look first: steps between consecutive years there are up to 1 + FOCUS_BOOST
 // times as long, and the boost halves every FOCUS_HALF_LIFE years away from the anchor.
 const FOCUS_BOOST = 2;
@@ -976,21 +1088,24 @@ const FOCUS_HALF_LIFE = 4;
 /**
  * Positions along the time axis for a set of years, centered on 0. Distinct years are spaced
  * in order; larger gaps get logarithmically more room, so a long gap is visible without
- * squeezing densely published decades together. With a `focus` year (the anchor's), steps
- * near it are stretched (see FOCUS_BOOST), so nearby years sit further apart than distant ones.
+ * squeezing densely published decades together. With `focus` years (the anchors'), steps
+ * near them are stretched (see FOCUS_BOOST), so nearby years sit further apart than distant
+ * ones; a step near several gets the largest boost of any.
  *
  * @param {Iterable<number>} years
  * @param {number} [spacing]  Distance between consecutive years.
- * @param {number | null} [focus]
+ * @param {number[]} [focus]
  * @returns {Map<number, number>}
  */
-export function yearPositions(years, spacing = 15, focus = null) {
+export function yearPositions(years, spacing = 15, focus = []) {
   const sorted = [...new Set(years)].sort((a, b) => a - b);
-  // How far a step between two years is from the focus: 0 if it spans it.
-  const distance = (a, b) =>
-    focus >= a && focus <= b ? 0 : Math.min(Math.abs(a - focus), Math.abs(b - focus));
+  // How far a step between two years is from a focus year: 0 if it spans it.
+  const distance = (a, b, f) => (f >= a && f <= b ? 0 : Math.min(Math.abs(a - f), Math.abs(b - f)));
   const weight = (a, b) =>
-    focus == null ? 1 : 1 + FOCUS_BOOST * 2 ** (-distance(a, b) / FOCUS_HALF_LIFE);
+    focus.length === 0
+      ? 1
+      : 1 +
+        FOCUS_BOOST * 2 ** (-Math.min(...focus.map((f) => distance(a, b, f))) / FOCUS_HALF_LIFE);
   const positions = new Map();
   let position = 0;
   sorted.forEach((year, i) => {

@@ -702,25 +702,29 @@ export function createWorkService({
     },
 
     /**
-     * The shortest chain of citations, either way, from `fromId` to `toId` (see shortestPath),
-     * most-cited first among equally short ones, searched through the provider's links in
+     * The shortest chain of citations, either way, from `fromId` to the nearest of `toIds`
+     * (see shortestPath), most-cited first among equally short ones, searched through the provider's links in
      * batches. Each step is a Work, with how the step before relates to it (`link`: 'cites' or
      * 'cited-by'). Works not on the provider have no links to search.
      *
      * @returns {Promise<{ path: { work: Work, link: string | null }[] | null, searched: number,
      *   outcome: 'found' | 'none' | 'budget', complete: boolean }>}
      */
-    async findPath(fromId, toId) {
+    async findPath(fromId, toIds) {
       if (!provider.getNeighborIds) throw new HttpError(501, 'Path search unavailable');
-      const [from, to] = await Promise.all([loadSource(fromId), loadSource(toId)]);
+      const [from, ...to] = await Promise.all([fromId, ...[toIds].flat()].map(loadSource));
       const fromKey = from.externalIds?.[providerName];
-      const toKey = to.externalIds?.[providerName];
-      if (!fromKey || !toKey || isReferenceOnly(from) || isReferenceOnly(to)) {
+      // Reference-only works have no links to search.
+      const toKeys = to
+        .filter((source) => !isReferenceOnly(source))
+        .map((source) => source.externalIds?.[providerName])
+        .filter(Boolean);
+      if (toKeys.includes(fromKey)) throw new HttpError(400, 'A path needs two different works');
+      if (!fromKey || isReferenceOnly(from) || toKeys.length === 0) {
         return { path: null, searched: 0, outcome: 'none', complete: true };
       }
-      if (fromKey === toKey) throw new HttpError(400, 'A path needs two different works');
       const deadline = now().getTime() + PATH_TIME_MS;
-      const result = await shortestPath(fromKey, toKey, {
+      const result = await shortestPath(fromKey, toKeys, {
         neighbors: (ids) => provider.getNeighborIds(ids),
         citationCounts: (ids) => provider.getCitationCounts(ids),
         maxSteps: PATH_MAX_STEPS,

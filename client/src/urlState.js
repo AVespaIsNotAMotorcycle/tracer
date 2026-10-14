@@ -1,8 +1,9 @@
-// The graph's anchor and build options, as URL query parameters, so a graph can be shared by
-// copying the URL: ?anchor=<id>&citing=1&cited=2&perNode=20&max=300. A saved graph is opened
+// The graph's anchors and build options, as URL query parameters, so a graph can be shared by
+// copying the URL: ?anchor=<id>&citing=1&cited=2&perNode=20&max=300. A graph with several
+// anchors repeats the parameter, primary anchor first: ?anchor=<id>&anchor=<id>. A saved graph is opened
 // by its ID instead (?graph=<id>), which also restores its expansions, filters and view.
 //
-// The anchor is written as a DOI or OpenAlex ID rather than a Tracer ID: Tracer IDs only mean
+// Anchors are written as DOIs or OpenAlex IDs rather than a Tracer ID: Tracer IDs only mean
 // something within one database, so they'd break when shared across deployments or after a
 // database reset. The API accepts all three. Options are written only when they differ from
 // the defaults, and other query parameters (e.g. ?automation) are left alone.
@@ -22,14 +23,22 @@ export function shareableId(work) {
 }
 
 /**
- * Reads the anchor and options from a query string. Missing or invalid options fall back to
- * the defaults.
+ * Reads the anchors and options from a query string. Missing or invalid options fall back to
+ * the defaults; blank and repeated anchors are dropped.
  *
  * @param {string} search  e.g. window.location.search
+ * @returns {{ anchors: string[], options: typeof DEFAULT_OPTIONS, graph: string | null }}
  */
 export function readUrlState(search) {
   const params = new URLSearchParams(search);
-  const anchor = params.get('anchor')?.trim() || null;
+  const anchors = [
+    ...new Set(
+      params
+        .getAll('anchor')
+        .map((id) => id.trim())
+        .filter(Boolean),
+    ),
+  ];
   const options = { ...DEFAULT_OPTIONS };
   for (const [key, { name, min, max }] of Object.entries(PARAMS)) {
     const value = Number(params.get(name));
@@ -37,19 +46,29 @@ export function readUrlState(search) {
       options[key] = value;
     }
   }
-  return { anchor, options, graph: params.get('graph')?.trim() || null };
+  return { anchors, options, graph: params.get('graph')?.trim() || null };
 }
 
 /**
- * Returns `search` updated with an anchor work and the options its graph was built with.
+ * Returns `search` updated with the anchor works and the options their graph was built with.
  *
  * @param {string} search  The current query string, whose other parameters are kept.
- * @param {object} anchorWork
+ * @param {object[]} anchorWorks  Primary anchor first.
  * @param {typeof DEFAULT_OPTIONS} options
  */
-export function writeUrlState(search, anchorWork, options) {
-  const params = new URLSearchParams(search);
-  params.set('anchor', shareableId(anchorWork));
+export function writeUrlState(search, anchorWorks, options) {
+  // The anchors go where the first one was (or at the end), as `set` does with one.
+  const entries = [...new URLSearchParams(search)];
+  const at = entries.findIndex(([name]) => name === 'anchor');
+  const others = entries.filter(([name]) => name !== 'anchor');
+  const anchors = anchorWorks.map((work) => ['anchor', shareableId(work)]);
+  const before =
+    at === -1 ? others.length : entries.slice(0, at).filter(([n]) => n !== 'anchor').length;
+  const params = new URLSearchParams([
+    ...others.slice(0, before),
+    ...anchors,
+    ...others.slice(before),
+  ]);
   // A new run is no longer the saved graph the URL named.
   params.delete('graph');
   for (const [key, { name }] of Object.entries(PARAMS)) {

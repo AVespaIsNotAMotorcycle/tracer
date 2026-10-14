@@ -49,6 +49,19 @@ describe('shortestPath', () => {
     ]);
   });
 
+  it('ends at the nearest of several targets', async () => {
+    // X cites A, which cites S. R is further: X cites B, B cites C, C cites R.
+    const network = { X: ['A', 'B'], A: ['S'], B: ['C'], C: ['R'] };
+    const result = await shortestPath('X', ['R', 'S'], lookups(network));
+
+    expect(result.outcome).toBe('found');
+    expect(steps(result)).toEqual([
+      ['X', null],
+      ['A', 'cites'],
+      ['S', 'cites'],
+    ]);
+  });
+
   it('breaks ties between shortest paths by total citations', async () => {
     // R cites P and Q, which both cite X.
     const network = { R: ['P', 'Q'], P: ['X'], Q: ['X'] };

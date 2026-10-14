@@ -16,21 +16,28 @@ const annotationSchema = new mongoose.Schema(
   { timestamps: true },
 );
 
+// A work a graph is built around: its Tracer ID, with its DOI or OpenAlex ID and title as
+// fallbacks that stay meaningful if Tracer IDs change.
+const anchorSchema = new mongoose.Schema(
+  { id: { type: String, required: true }, ref: String, title: String },
+  { _id: false },
+);
+
 // A graph a user saved. Its _id is the ID used to open it (/?graph=<id>). It stores what's
-// needed to rebuild the graph, not the works themselves: the anchor, the build options, the
+// needed to rebuild the graph, not the works themselves: the anchors, the build options, the
 // works the user expanded (in order, since a later expansion can depend on an earlier one's
 // works), and the filters and view, so it reopens as it was left.
 const savedGraphSchema = new mongoose.Schema(
   {
     userId: { type: mongoose.Schema.Types.ObjectId, ref: 'User', required: true },
     name: { type: String, required: true, maxlength: 120 },
-    // Bumped if the stored shape changes, so old saves can be read.
-    version: { type: Number, default: 1 },
-    anchor: {
-      id: { type: String, required: true }, // Tracer ID.
-      ref: String, // DOI or OpenAlex ID: still meaningful if Tracer IDs change.
-      title: String,
-    },
+    // Bumped if the stored shape changes, so old saves can be read. 1: one `anchor`; 2:
+    // `anchors`, primary first. Version 1 documents are read as if they had `anchors`
+    // (anchorsOf in graphService.js) and rewritten as version 2 on their next save.
+    version: { type: Number, default: 2 },
+    anchors: { type: [anchorSchema], default: undefined },
+    // Version 1 only.
+    anchor: { id: String, ref: String, title: String },
     options: { citingDepth: Number, citedDepth: Number, limit: Number, maxNodes: Number },
     filters: {
       minYear: Number,

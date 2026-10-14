@@ -62,14 +62,14 @@ export async function getCited(id, { limit, signal } = {}) {
 }
 
 /**
- * The shortest path of citations, either way, from work `id` to work `to`, most-cited first
- * among equally short ones: { path: [{ work, link }] | null, searched, outcome, complete }.
+ * The shortest path of citations, either way, from work `id` to the nearest of the works `to`
+ * (an ID or a list, e.g. the anchors), most-cited first among equally short ones: { path: [{ work, link }] | null, searched, outcome, complete }.
  * `link` says how the step before relates to each work ('cites' or 'cited-by'); `outcome` is
  * 'found', 'none' (nothing links them) or 'budget' (the search stopped at its limits), and
  * `complete` is false if a much-cited work's citing list was cut short.
  */
 export async function findPath(id, to, { signal } = {}) {
-  const params = new URLSearchParams({ to });
+  const params = new URLSearchParams({ to: [to].flat().join(',') });
   return get(`${workPath(id)}/path?${params}`, { signal });
 }
 

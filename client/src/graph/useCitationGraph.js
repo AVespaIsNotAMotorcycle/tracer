@@ -12,6 +12,7 @@ import {
   graphFromSnapshot,
   reanchorGraph,
   restoreGraph,
+  sameAnchors,
 } from './graphModel.js';
 import { createProgressTracker } from './progress.js';
 
@@ -69,8 +70,9 @@ export function useCitationGraph(api = defaultApi) {
     return { signal, scoped };
   }, [api]);
 
+  // Builds a new graph around `anchorIds` (any IDs the API accepts).
   const build = useCallback(
-    async (anchorId, /** @type {BuildOptions} */ options) => {
+    async (anchorIds, /** @type {BuildOptions} */ options) => {
       const { signal, scoped } = startRun();
       setGraph(emptyGraph());
       setStatus('loading');
@@ -80,7 +82,7 @@ export function useCitationGraph(api = defaultApi) {
       const progress = track('run', 'Building graph', signal, options.concurrency ?? 4);
       try {
         const result = await buildGraph(
-          anchorId,
+          anchorIds,
           options,
           scoped,
           (g) => {
@@ -155,13 +157,21 @@ export function useCitationGraph(api = defaultApi) {
   // Keeps showing the current graph until the new one is complete, so works that stay keep
   // their positions instead of the view collapsing to the new anchor and regrowing.
   const rebuild = useCallback(
-    async (from, anchorId, /** @type {BuildOptions} */ options, label) => {
+    async (from, anchorIds, /** @type {BuildOptions} */ options, label, extra) => {
       const { signal, scoped } = startRun();
       setStatus('reanchoring');
       setError(null);
       const progress = track('run', label, signal, 3);
       try {
-        const result = await reanchorGraph(from, anchorId, options, scoped, undefined, progress);
+        const result = await reanchorGraph(
+          from,
+          anchorIds,
+          options,
+          scoped,
+          undefined,
+          progress,
+          extra,
+        );
         if (signal.aborted) return;
         setGraph(result.graph);
         setTruncated(result.truncated);
@@ -178,15 +188,22 @@ export function useCitationGraph(api = defaultApi) {
     [startRun, track, untrack],
   );
 
+  /**
+   * Rebuilds around `anchorIds`, works on the graph: a new anchor, the anchors with one added
+   * or removed, or the same ones. `unstick` (an anchor being removed) loses its neighbors.
+   */
   const reanchor = useCallback(
-    (anchorId, /** @type {BuildOptions} */ options) =>
-      rebuild(graphRef.current, anchorId, options, 'Re-anchoring'),
+    (
+      anchorIds,
+      /** @type {BuildOptions} */ options,
+      { unstick = [], label = 'Re-anchoring' } = {},
+    ) => rebuild(graphRef.current, anchorIds, options, label, { unstick }),
     [rebuild],
   );
 
   /**
    * Undoes the expansion of `ids` (a work, or a book and its chapters): rebuilds on the same
-   * anchor without them sticky, so their neighbors stay only if something else reaches them.
+   * anchors without them sticky, so their neighbors stay only if something else reaches them.
    */
   const collapse = useCallback(
     (ids, /** @type {BuildOptions} */ options) => {
@@ -195,7 +212,7 @@ export function useCitationGraph(api = defaultApi) {
       const short = title.length > 40 ? `${title.slice(0, 39)}…` : title;
       return rebuild(
         collapseWorks(current, ids),
-        current.anchorId,
+        current.anchorIds,
         options,
         `Collapsing “${short}”`,
       );
@@ -282,20 +299,20 @@ export function useCitationGraph(api = defaultApi) {
   );
 
   /**
-   * Looks for works co-cited with the anchor (see findCoCitations), then shows those at least
+   * Looks for works co-cited with an anchor (see findCoCitations), then shows those at least
    * `minCiters` citing works cite (see applyCoCitations). `targets` are the anchor and its
    * chapters. Resolves to the search's results (every count of 2 or more), for changing the
-   * minimum later, or null if it failed or the anchor changed meanwhile.
+   * minimum later, or null if it failed or the anchors changed meanwhile.
    */
   const findCoCitations = useCallback(
     async (targets, { limit, maxNodes, minCiters, keep }) => {
-      const anchorId = graphRef.current.anchorId;
+      const anchorIds = graphRef.current.anchorIds;
       const progress = track('cocite', 'Finding co-citations', undefined, 3);
       try {
         const result = await findCoCitationsIn(graphRef.current, targets, { limit }, api, progress);
-        if (graphRef.current.anchorId !== anchorId) return null;
+        if (!sameAnchors(graphRef.current.anchorIds, anchorIds)) return null;
         setGraph((latest) =>
-          latest.anchorId === anchorId
+          sameAnchors(latest.anchorIds, anchorIds)
             ? applyCoCitationsTo(latest, result, { minCiters, maxNodes, keep })
             : latest,
         );
@@ -311,13 +328,13 @@ export function useCitationGraph(api = defaultApi) {
   );
 
   /**
-   * Asks the server for the shortest path of citations from `fromId` to the anchor (see
-   * findPath in api.js) and adds its works to the graph. Resolves to the search's result, or
-   * null if it failed or the anchor changed meanwhile.
+   * Asks the server for the shortest path of citations from `fromId` to the nearest anchor
+   * (see findPath in api.js) and adds its works to the graph. Resolves to the search's result,
+   * or null if it failed or the anchors changed meanwhile.
    */
   const findPath = useCallback(
     async (fromId) => {
-      const anchorId = graphRef.current.anchorId;
+      const anchorIds = graphRef.current.anchorIds;
       const title = graphRef.current.works.get(fromId)?.title ?? 'work';
       const short = title.length > 40 ? `${title.slice(0, 39)}…` : title;
       // One request, searched in batches on the server.
@@ -325,11 +342,11 @@ export function useCitationGraph(api = defaultApi) {
       progress.plan(1);
       const finish = progress.begin({ key: `path:${fromId}`, label: 'Searching citations' });
       try {
-        const result = await api.findPath(fromId, anchorId);
-        if (graphRef.current.anchorId !== anchorId) return null;
+        const result = await api.findPath(fromId, anchorIds);
+        if (!sameAnchors(graphRef.current.anchorIds, anchorIds)) return null;
         if (result.path) {
           setGraph((latest) =>
-            latest.anchorId === anchorId ? applyPath(latest, result.path) : latest,
+            sameAnchors(latest.anchorIds, anchorIds) ? applyPath(latest, result.path) : latest,
           );
         }
         return result;

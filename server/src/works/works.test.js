@@ -796,9 +796,19 @@ describe('GET /api/works/:id/path', () => {
     expect(res.body.path[1].work.id).toBe(await tracerIdOf('W1'));
   });
 
+  it('finds a path to the nearest of several works', async () => {
+    // W2 is cited by W1 (one step); W5 is two steps away.
+    const res = await api.get('/api/works/W2/path?to=W5,W1');
+
+    expect(res.status).toBe(200);
+    expect(res.body.path.map((step) => step.work.externalIds.openalex)).toEqual(['W2', 'W1']);
+  });
+
   it('needs a work to find a path to, other than the work itself', async () => {
     expect((await api.get('/api/works/W1/path')).status).toBe(400);
     expect((await api.get('/api/works/W1/path?to=W1')).status).toBe(400);
+    expect((await api.get('/api/works/W1/path?to=W2,W1')).status).toBe(400);
+    expect((await api.get('/api/works/W1/path?to=W2,W3,W4,W5,W6,W7,W8')).status).toBe(400);
   });
 });
 

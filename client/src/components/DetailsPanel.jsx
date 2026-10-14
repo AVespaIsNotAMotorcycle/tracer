@@ -61,7 +61,7 @@ const doiLink = (work) => work.links.find((link) => link.kind === 'doi');
  * layoutYears) explains a listed year that was set aside as implausible. `onCollapse` is
  * given only for works the user expanded, and undoes that. `pinned` works are always shown,
  * whatever the filters; `onTogglePin` pins or unpins it. `note` is the user's note on it, and
- * `onNoteChange` sets it ('' deletes it). The anchor gets `onFindCoCitations`,
+ * `onNoteChange` sets it ('' deletes it). Each anchor gets `onFindCoCitations`,
  * with `coCitationControl` ({ value, max, citers, onChange, locked }) for the minimum number of works
  * citing it that must cite a work, and `coCitationResult` ({ minCiters, citers, found, left })
  * once it has run; a work co-cited with the anchor
@@ -69,20 +69,36 @@ const doiLink = (work) => work.links.find((link) => link.kind === 'doi');
  * on the graph to the anchor gets `pathControl` ({ disconnected, finding, result, onFind,
  * onSelect, locked }) to look for the shortest one; `result` (see findPath in api.js) stays shown once
  * found, with each step selectable. `locked` means the plan doesn't include that search.
+ *
+ * With `anchorControl` ({ count, limit, onAdd, onRemove }), a work can be added as another
+ * anchor (up to `limit`), and an anchor removed when there are several (`manyAnchors`). Then
+ * `neighborhood` lists the anchors it's near ({ id, index, title }; see anchorNeighborhoods).
  */
 const yearOf = (work) => (work.year == null ? '' : ` (${work.year})`);
 
-/** Looking for, and showing, the shortest path of citations from a work to the anchor. */
-function PathToAnchor({ disconnected, finding, result, onFind, onSelect, locked = false }) {
+/**
+ * Looking for, and showing, the shortest path of citations from a work to the anchor (or,
+ * with `many` anchors, the nearest one).
+ */
+function PathToAnchor({
+  disconnected,
+  finding,
+  result,
+  onFind,
+  onSelect,
+  locked = false,
+  many = false,
+}) {
   const path = result?.path;
+  const theAnchor = many ? 'an anchor' : 'the anchor';
   return (
     <div className="path-to-anchor">
       {path ? (
         <>
           <p className="small">
-            Connected to the anchor in {path.length - 1} step{path.length === 2 ? '' : 's'}:
+            Connected to {theAnchor} in {path.length - 1} step{path.length === 2 ? '' : 's'}:
           </p>
-          <ol className="path-steps" aria-label="Path to the anchor">
+          <ol className="path-steps" aria-label={`Path to ${theAnchor}`}>
             {path.map(({ work, link }, index) => (
               <li key={work.id}>
                 {link && (
@@ -99,7 +115,7 @@ function PathToAnchor({ disconnected, finding, result, onFind, onSelect, locked 
                 )}
                 <span className="muted small">
                   {yearOf(work)}
-                  {index === path.length - 1 ? ', the anchor' : ''}
+                  {index === path.length - 1 ? `, ${theAnchor}` : ''}
                 </span>
               </li>
             ))}
@@ -115,16 +131,16 @@ function PathToAnchor({ disconnected, finding, result, onFind, onSelect, locked 
         disconnected && (
           <>
             <p className="muted small">
-              No citations on the graph link this work to the anchor&rsquo;s.
+              No citations on the graph link this work to {many ? 'any anchor’s' : 'the anchor’s'}.
             </p>
             <button type="button" onClick={onFind} disabled={finding || locked}>
-              {finding ? 'Finding a path…' : 'Find shortest path to the anchor'}
+              {finding ? 'Finding a path…' : `Find shortest path to ${theAnchor}`}
             </button>
             {locked && <p className="muted small">{NOT_IN_PLAN}.</p>}
             {result?.outcome === 'none' && (
               <p className="muted small">
                 There&rsquo;s no path on OpenAlex: none of the {result.searched.toLocaleString()}{' '}
-                works linked to this one, however distantly, reaches the anchor.
+                works linked to this one, however distantly, reaches {theAnchor}.
               </p>
             )}
             {result?.outcome === 'budget' && (
@@ -136,6 +152,42 @@ function PathToAnchor({ disconnected, finding, result, onFind, onSelect, locked 
           </>
         )
       )}
+    </div>
+  );
+}
+
+/**
+ * Which anchors a work is near, on a graph with several (see anchorNeighborhoods): each with
+ * its color, as on the graph. `anchors` are { id, index, title }, index being its place among
+ * the anchors (which picks its color).
+ */
+function Neighborhood({ anchors, isAnchor }) {
+  if (isAnchor) {
+    const [self] = anchors;
+    return (
+      <p className="neighborhood small">
+        <span className="anchor-swatch" style={{ '--swatch': `var(--anchor-${self.index + 1})` }} />
+        Anchor {self.index + 1}
+      </p>
+    );
+  }
+  if (anchors.length === 0) {
+    return <p className="neighborhood small muted">Not linked to an anchor</p>;
+  }
+  return (
+    <div className="neighborhood small">
+      <span className="muted">{anchors.length > 1 ? 'Shared by' : 'Near'}</span>
+      <ul aria-label="Near anchors">
+        {anchors.map((anchor) => (
+          <li key={anchor.id}>
+            <span
+              className="anchor-swatch"
+              style={{ '--swatch': `var(--anchor-${anchor.index + 1})` }}
+            />
+            {anchor.title}
+          </li>
+        ))}
+      </ul>
     </div>
   );
 }
@@ -164,6 +216,9 @@ export default function DetailsPanel({
   findingCoCitations = false,
   coCitationResult = null,
   pathControl = null,
+  anchorControl = null,
+  neighborhood = null,
+  manyAnchors = false,
   onClose,
   inert = false,
 }) {
@@ -198,6 +253,7 @@ export default function DetailsPanel({
           {typeLabel} · {byline}
         </span>
       </p>
+      {neighborhood && <Neighborhood anchors={neighborhood} isAnchor={relation === 'anchor'} />}
       {implausible && (
         <p className="muted small">
           OpenAlex gives {yearInfo.listedYear}, but works on this graph cite it from{' '}
@@ -261,7 +317,29 @@ export default function DetailsPanel({
       )}
       {expandable && relation !== 'anchor' && (
         <button type="button" onClick={onMakeAnchor} disabled={busy}>
-          Make this the anchor
+          {manyAnchors ? 'Make this the only anchor' : 'Make this the anchor'}
+        </button>
+      )}
+      {expandable && relation !== 'anchor' && anchorControl && (
+        <>
+          <button
+            type="button"
+            onClick={anchorControl.onAdd}
+            disabled={busy || anchorControl.count >= anchorControl.limit}
+          >
+            Add as anchor
+          </button>
+          {anchorControl.count >= anchorControl.limit && (
+            <p className="muted small">
+              Your plan allows up to {anchorControl.limit} anchor
+              {anchorControl.limit === 1 ? '' : 's'}.
+            </p>
+          )}
+        </>
+      )}
+      {relation === 'anchor' && anchorControl && anchorControl.count > 1 && (
+        <button type="button" onClick={anchorControl.onRemove} disabled={busy}>
+          Remove anchor
         </button>
       )}
 
@@ -326,7 +404,7 @@ export default function DetailsPanel({
           )}
         </div>
       )}
-      {pathControl && <PathToAnchor {...pathControl} />}
+      {pathControl && <PathToAnchor {...pathControl} many={manyAnchors} />}
       {coCitedBy != null && (
         <p className="muted small">
           Co-cited with the anchor: {coCitedBy} works on the graph citing the anchor cite this one

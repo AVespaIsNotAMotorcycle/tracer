@@ -132,7 +132,10 @@ function SavedGraphItem({ graph, api, onRenamed, onDeleted }) {
       )}
       <span className="muted small">
         {[
-          graph.anchor?.title && `Anchor: ${graph.anchor.title}`,
+          graph.anchors?.length === 1 && graph.anchors[0].title
+            ? `Anchor: ${graph.anchors[0].title}`
+            : graph.anchors?.length > 1 &&
+              `Anchors: ${graph.anchors.map((anchor) => anchor.title ?? 'Untitled').join('; ')}`,
           `Updated ${dateFormat.format(new Date(graph.updatedAt))}`,
           graph.expandedCount ? `${graph.expandedCount} expanded` : null,
         ]

@@ -13,6 +13,8 @@ const gunzip = promisify(gunzipCallback);
 
 export const MAX_NAME_LENGTH = 120;
 const MAX_EXPANDED = 5000;
+// The most anchors any plan allows (see entitlements/plans.js).
+const MAX_ANCHORS = 6;
 const MAX_ANNOTATIONS = 5000;
 const MAX_NOTE_LENGTH = 10_000;
 // How long a snapshot of a built graph is used before reopening the graph rebuilds it, so its
@@ -41,6 +43,7 @@ const OPTION_LIMITS = {
 };
 
 const isInt = (value) => Number.isInteger(value);
+const isId = (value) => typeof value === 'string' && value.length > 0 && value.length <= 64;
 const bad = (message) => new HttpError(400, message);
 
 /**
@@ -51,15 +54,29 @@ const bad = (message) => new HttpError(400, message);
  *
  * Options beyond the user's plan limits (`limits`) are a 403.
  *
- * @param {any} state  { anchor: { id, ref?, title? }, options, filters,
- *   view: { axisAngle, pinned }, expanded, annotations? }
+ * @param {any} state  { anchors: [{ id, ref?, title? }], options, filters,
+ *   view: { axisAngle, pinned }, expanded, annotations? }. A single `anchor` (from a client
+ *   from before multiple anchors) is read as `anchors: [anchor]`.
  * @param {Record<string, number>} [limits]  The user's plan limits (entitlementsFor).
  */
 export function checkState(state, limits = PLANS.free.limits) {
   if (!state || typeof state !== 'object') throw bad('Missing graph');
-  const { anchor, options, filters = {}, view = {}, expanded = [] } = state;
-  if (typeof anchor?.id !== 'string' || !anchor.id || anchor.id.length > 64) {
+  const { options, filters = {}, view = {}, expanded = [] } = state;
+  const anchors = state.anchors ?? (state.anchor ? [state.anchor] : []);
+  if (
+    !Array.isArray(anchors) ||
+    anchors.length === 0 ||
+    !anchors.every((anchor) => isId(anchor?.id))
+  ) {
     throw bad('Missing anchor');
+  }
+  if (anchors.length > MAX_ANCHORS || new Set(anchors.map((a) => a.id)).size < anchors.length) {
+    throw bad('Invalid anchors');
+  }
+  if (anchors.length > limits.anchors) {
+    throw new EntitlementError(`Your plan allows up to ${limits.anchors} anchors`, {
+      limit: 'anchors',
+    });
   }
   const checkedOptions = {};
   for (const [key, [min, max]] of Object.entries(OPTION_RANGES)) {
@@ -106,11 +123,11 @@ export function checkState(state, limits = PLANS.free.limits) {
     throw bad('Invalid expanded works');
   }
   const checked = {
-    anchor: {
+    anchors: anchors.map((anchor) => ({
       id: anchor.id,
       ref: typeof anchor.ref === 'string' ? anchor.ref.slice(0, 256) : null,
       title: typeof anchor.title === 'string' ? anchor.title.slice(0, 500) : null,
-    },
+    })),
     options: checkedOptions,
     filters: {
       minYear: year(filters.minYear),
@@ -180,39 +197,62 @@ function replaceAnnotations(graph, next) {
 }
 
 /**
- * Identifies what a graph is built from: its anchor, build options and expansions (not its
- * filters or view, which don't change the works). A snapshot built from one key doesn't apply
- * to another.
+ * A saved graph's anchors, primary first, as plain { id, ref, title }: `anchors`, or a version
+ * 1 graph's single `anchor`.
  *
- * @param {{ anchor: { id: string }, options: object, expanded: string[] }} state
+ * @param {{ anchors?: object[], anchor?: object }} graph
  */
-export function stateKey({ anchor, options, expanded }) {
-  const { citingDepth, citedDepth, limit, maxNodes } = options;
+export function anchorsOf(graph) {
+  const list = graph.anchors?.length ? graph.anchors : graph.anchor?.id ? [graph.anchor] : [];
+  return list.map(({ id, ref, title }) => ({ id, ref: ref ?? null, title: title ?? null }));
+}
+
+/**
+ * Identifies what a graph is built from: its anchors, build options and expansions (not its
+ * filters or view, which don't change the works). A snapshot built from one key doesn't apply
+ * to another. A graph with one anchor hashes as it did before multiple anchors, so snapshots
+ * of version 1 graphs stay valid.
+ *
+ * @param {{ anchors?: { id: string }[], anchor?: { id: string }, options: object,
+ *   expanded: string[] }} state
+ */
+export function stateKey(state) {
+  const { citingDepth, citedDepth, limit, maxNodes } = state.options;
+  const ids = anchorsOf(state).map((anchor) => anchor.id);
+  const anchors = ids.length === 1 ? ids[0] : ids;
   return createHash('sha256')
-    .update(JSON.stringify([anchor.id, citingDepth, citedDepth, limit, maxNodes, [...expanded]]))
+    .update(
+      JSON.stringify([anchors, citingDepth, citedDepth, limit, maxNodes, [...state.expanded]]),
+    )
     .digest('base64url');
 }
 
-const isId = (value) => typeof value === 'string' && value.length > 0 && value.length <= 64;
-
 /**
  * A built graph as the client serializes it, checked for shape (the works themselves are only
- * ever shown to their owner, so they're stored as sent). Throws 400 if it's malformed or of a
- * different anchor.
+ * ever shown to their owner, so they're stored as sent). Throws 400 if it's malformed or of
+ * different anchors.
  *
- * @param {any} snapshot  { anchorId, works, relations: [id, relation][],
+ * @param {any} snapshot  { anchorIds, works, relations: [id, relation][],
  *   expanded: [id, direction[]][], sticky: id[], truncated }
- * @param {string} anchorId  The saved graph's anchor.
+ *   (or one `anchorId`, as clients from before multiple anchors send)
+ * @param {string[]} anchorIds  The saved graph's anchors.
  */
-export function checkSnapshot(snapshot, anchorId) {
+export function checkSnapshot(snapshot, anchorIds) {
   if (!snapshot || typeof snapshot !== 'object') throw bad('Invalid snapshot');
   const { works, relations, expanded, sticky, truncated } = snapshot;
-  if (snapshot.anchorId !== anchorId) throw bad('Snapshot is of a different anchor');
+  const ids = snapshot.anchorIds ?? (snapshot.anchorId ? [snapshot.anchorId] : null);
+  if (
+    !Array.isArray(ids) ||
+    ids.length !== anchorIds.length ||
+    !ids.every((id, i) => id === anchorIds[i])
+  ) {
+    throw bad('Snapshot is of different anchors');
+  }
   if (
     !Array.isArray(works) ||
     works.length > MAX_SNAPSHOT_WORKS ||
     !works.every((work) => work && typeof work === 'object' && isId(work.id)) ||
-    !works.some((work) => work.id === anchorId)
+    !anchorIds.every((id) => works.some((work) => work.id === id))
   ) {
     throw bad('Invalid snapshot works');
   }
@@ -226,10 +266,22 @@ export function checkSnapshot(snapshot, anchorId) {
   const directions = (list) => Array.isArray(list) && list.every((d) => DIRECTIONS.has(d));
   if (!pairs(expanded, directions)) throw bad('Invalid snapshot expansions');
   if (!Array.isArray(sticky) || !sticky.every(isId)) throw bad('Invalid snapshot sticky works');
-  return { anchorId, works, relations, expanded, sticky, truncated: truncated === true };
+  return { anchorIds, works, relations, expanded, sticky, truncated: truncated === true };
 }
 
-/** A trimmed name, or the anchor's title (or a placeholder) when it's blank. */
+/**
+ * The default name for a graph, from its anchors: one's title, two joined by "&", or the
+ * first and how many more, titles shortened to fit (as the client names it).
+ */
+function anchorsName(anchors) {
+  const titles = anchors.map((anchor) => anchor.title || 'Untitled');
+  const short = (text, max) => (text.length > max ? `${text.slice(0, max - 1)}…` : text);
+  if (titles.length <= 1) return titles[0] ?? null;
+  if (titles.length === 2) return `${short(titles[0], 58)} & ${short(titles[1], 58)}`;
+  return `${short(titles[0], 100)} and ${titles.length - 1} more`;
+}
+
+/** A trimmed name, or the anchors' titles (or a placeholder) when it's blank. */
 function checkName(name, fallback) {
   if (name != null && typeof name !== 'string') throw bad('Invalid name');
   const trimmed = (name ?? '').trim();
@@ -241,7 +293,7 @@ function checkName(name, fallback) {
 const summary = (graph) => ({
   id: String(graph._id),
   name: graph.name,
-  anchor: { title: graph.anchor?.title ?? null, ref: graph.anchor?.ref ?? null },
+  anchors: anchorsOf(graph).map(({ ref, title }) => ({ title, ref })),
   expandedCount: graph.expanded?.length ?? 0,
   createdAt: graph.createdAt,
   updatedAt: graph.updatedAt,
@@ -250,7 +302,7 @@ const summary = (graph) => ({
 const full = (graph) => ({
   ...summary(graph),
   stateKey: stateKey(graph),
-  anchor: graph.anchor,
+  anchors: anchorsOf(graph),
   options: graph.options,
   filters: graph.filters,
   view: graph.view,
@@ -328,7 +380,13 @@ export function createGraphService({
      */
     async create(userId, { name, state, snapshot }, { limits = PLANS.free.limits } = {}) {
       const checked = checkState(state, limits);
-      const checkedSnapshot = snapshot == null ? null : checkSnapshot(snapshot, checked.anchor.id);
+      const checkedSnapshot =
+        snapshot == null
+          ? null
+          : checkSnapshot(
+              snapshot,
+              checked.anchors.map((anchor) => anchor.id),
+            );
       if ((await SavedGraph.countDocuments({ userId })) >= limits.savedGraphs) {
         throw new EntitlementError(`You can save up to ${limits.savedGraphs} graphs`, {
           limit: 'savedGraphs',
@@ -336,7 +394,7 @@ export function createGraphService({
       }
       const graph = await SavedGraph.create({
         userId,
-        name: checkName(name, checked.anchor.title),
+        name: checkName(name, anchorsName(checked.anchors)),
         ...checked,
       });
       if (checkedSnapshot) await storeSnapshot(graph, checkedSnapshot);
@@ -362,11 +420,20 @@ export function createGraphService({
       const graph = await owned(userId, id);
       const before = stateKey(graph);
       const checked = checkState(state, limits);
-      const checkedSnapshot = snapshot == null ? null : checkSnapshot(snapshot, checked.anchor.id);
+      const checkedSnapshot =
+        snapshot == null
+          ? null
+          : checkSnapshot(
+              snapshot,
+              checked.anchors.map((anchor) => anchor.id),
+            );
       const { annotations, ...rest } = checked;
       graph.set(rest);
       if (annotations) replaceAnnotations(graph, annotations);
-      if (name !== undefined) graph.name = checkName(name, graph.anchor.title);
+      // A version 1 graph becomes version 2: `anchors` replaces `anchor`.
+      graph.anchor = undefined;
+      graph.version = 2;
+      if (name !== undefined) graph.name = checkName(name, anchorsName(anchorsOf(graph)));
       await graph.save();
       if (checkedSnapshot) await storeSnapshot(graph, checkedSnapshot);
       else if (stateKey(graph) !== before) await GraphSnapshot.deleteOne({ _id: graph._id });
@@ -380,12 +447,18 @@ export function createGraphService({
     async saveSnapshot(userId, id, { key, snapshot }) {
       const graph = await owned(userId, id);
       if (key !== stateKey(graph)) throw new HttpError(409, 'The saved graph has changed');
-      await storeSnapshot(graph, checkSnapshot(snapshot, graph.anchor.id));
+      await storeSnapshot(
+        graph,
+        checkSnapshot(
+          snapshot,
+          anchorsOf(graph).map((anchor) => anchor.id),
+        ),
+      );
     },
 
     async rename(userId, id, name) {
       const graph = await owned(userId, id);
-      graph.name = checkName(name, graph.anchor.title);
+      graph.name = checkName(name, anchorsName(anchorsOf(graph)));
       await graph.save();
       return full(graph);
     },

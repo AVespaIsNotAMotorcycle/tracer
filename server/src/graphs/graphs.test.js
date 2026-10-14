@@ -1,10 +1,11 @@
+import { createHash } from 'node:crypto';
 import { MongoMemoryServer } from 'mongodb-memory-server';
 import mongoose from 'mongoose';
 import request from 'supertest';
 import { afterAll, beforeAll, beforeEach, describe, expect, it } from 'vitest';
 import { createApp } from '../app.js';
 import { createAuthService } from '../auth/authService.js';
-import { createGraphService, SNAPSHOT_TTL_MS } from './graphService.js';
+import { createGraphService, SNAPSHOT_TTL_MS, stateKey } from './graphService.js';
 import { GraphSnapshot } from '../models/GraphSnapshot.js';
 import { Identity } from '../models/Identity.js';
 import { SavedGraph } from '../models/SavedGraph.js';
@@ -47,7 +48,7 @@ async function signedIn(email = 'historian@example.org') {
 }
 
 const state = (overrides = {}) => ({
-  anchor: { id: 'tracer-anchor', ref: '10.1093/past/50.1.76', title: 'The Moral Economy' },
+  anchors: [{ id: 'tracer-anchor', ref: '10.1093/past/50.1.76', title: 'The Moral Economy' }],
   options: { citingDepth: 1, citedDepth: 2, limit: 60, maxNodes: 500 },
   filters: { minYear: 1950, maxYear: null, minConnections: 2, excludedTypes: ['dataset'] },
   view: { axisAngle: 45, pinned: ['tracer-b'] },
@@ -65,7 +66,7 @@ describe('saving and opening graphs', () => {
     expect(graph).toMatchObject({
       id: expect.any(String),
       name: 'Riots',
-      anchor: { id: 'tracer-anchor', ref: '10.1093/past/50.1.76', title: 'The Moral Economy' },
+      anchors: [{ id: 'tracer-anchor', ref: '10.1093/past/50.1.76', title: 'The Moral Economy' }],
       options: { citingDepth: 1, citedDepth: 2, limit: 60, maxNodes: 500 },
       filters: { minYear: 1950, maxYear: null, minConnections: 2, excludedTypes: ['dataset'] },
       view: { axisAngle: 45, pinned: ['tracer-b'] },
@@ -96,7 +97,7 @@ describe('saving and opening graphs', () => {
     expect(graphs[0]).toEqual({
       id: first.graph.id,
       name: 'First, renamed',
-      anchor: { title: 'The Moral Economy', ref: '10.1093/past/50.1.76' },
+      anchors: [{ title: 'The Moral Economy', ref: '10.1093/past/50.1.76' }],
       expandedCount: 2,
       createdAt: expect.any(String),
       updatedAt: expect.any(String),
@@ -173,7 +174,7 @@ describe('saving and opening graphs', () => {
 
 // A built graph as the client serializes it (serializeGraph).
 const snapshot = (overrides = {}) => ({
-  anchorId: 'tracer-anchor',
+  anchorIds: ['tracer-anchor'],
   works: [
     { id: 'tracer-anchor', title: 'The Moral Economy', year: 1971, references: ['tracer-a'] },
     { id: 'tracer-a', title: 'Riots', year: 1960, references: [], abstract: 'x'.repeat(50_000) },
@@ -250,7 +251,8 @@ describe('snapshots of built graphs', () => {
   });
 
   it.each([
-    ['of a different anchor', snapshot({ anchorId: 'tracer-a' })],
+    ['of a different anchor', snapshot({ anchorIds: ['tracer-a'] })],
+    ['with an extra anchor', snapshot({ anchorIds: ['tracer-anchor', 'tracer-a'] })],
     ['without its anchor’s work', snapshot({ works: [{ id: 'tracer-a' }] })],
     ['with an unknown relation', snapshot({ relations: [['tracer-a', 'sibling']] })],
     ['with an unknown direction', snapshot({ expanded: [['tracer-a', ['sideways']]] })],
@@ -345,9 +347,122 @@ describe('access', () => {
   });
 });
 
+describe('several anchors', () => {
+  const two = [
+    { id: 'tracer-anchor', ref: '10.1093/past/50.1.76', title: 'The Moral Economy' },
+    { id: 'tracer-b', ref: 'W2', title: 'Captain Swing' },
+  ];
+
+  it('saves and opens a graph with several anchors, named after them', async () => {
+    const agent = await signedIn();
+    const { graph } = (await agent.post('/api/graphs').send({ state: state({ anchors: two }) }))
+      .body;
+    expect(graph.name).toBe('The Moral Economy & Captain Swing');
+    expect(graph.anchors).toEqual(two);
+    expect((await agent.get(`/api/graphs/${graph.id}`)).body.graph.anchors).toEqual(two);
+    expect((await agent.get('/api/graphs')).body.graphs[0].anchors).toEqual(
+      two.map(({ title, ref }) => ({ title, ref })),
+    );
+  });
+
+  it('shortens long anchor titles to fit a default name', async () => {
+    const agent = await signedIn();
+    const long = [
+      { id: 'tracer-a', title: 'A'.repeat(100) },
+      { id: 'tracer-b', title: 'B'.repeat(100) },
+    ];
+    const res = await agent.post('/api/graphs').send({ state: state({ anchors: long }) });
+    expect(res.status).toBe(201);
+    expect(res.body.graph.name).toBe(`${'A'.repeat(57)}… & ${'B'.repeat(57)}…`);
+  });
+
+  it('keeps snapshots only for the same anchors, in order', async () => {
+    const agent = await signedIn();
+    const works = [...snapshot().works, { id: 'tracer-b', references: [] }];
+    const built = snapshot({ anchorIds: ['tracer-anchor', 'tracer-b'], works });
+    const res = await agent
+      .post('/api/graphs')
+      .send({ state: state({ anchors: two }), snapshot: built });
+    expect(res.status).toBe(201);
+    const reversed = snapshot({ anchorIds: ['tracer-b', 'tracer-anchor'], works });
+    const refused = await agent
+      .post('/api/graphs')
+      .send({ state: state({ anchors: two }), snapshot: reversed });
+    expect(refused.status).toBe(400);
+  });
+
+  it('allows as many anchors as the plan does', async () => {
+    const agent = await signedIn();
+    const three = [...two, { id: 'tracer-c' }];
+    const refused = await agent.post('/api/graphs').send({ state: state({ anchors: three }) });
+    expect(refused.status).toBe(403);
+    expect(refused.body.limit).toBe('anchors');
+
+    await User.updateOne({}, { plan: 'scholar' });
+    expect(
+      (await agent.post('/api/graphs').send({ state: state({ anchors: three }) })).status,
+    ).toBe(201);
+  });
+
+  it('accepts a single `anchor` from an older client', async () => {
+    const agent = await signedIn();
+    const { anchors, ...rest } = state();
+    const res = await agent.post('/api/graphs').send({ state: { ...rest, anchor: anchors[0] } });
+    expect(res.status).toBe(201);
+    expect(res.body.graph.anchors).toEqual(anchors);
+  });
+
+  it('reads a version 1 graph as anchors, with its old state key, and upgrades it on saving', async () => {
+    const agent = await signedIn();
+    const user = await User.findOne().lean();
+    const { anchors, ...rest } = state();
+    const old = await SavedGraph.create({
+      userId: user._id,
+      name: 'Old',
+      version: 1,
+      anchor: anchors[0],
+      ...rest,
+    });
+    await SavedGraph.updateOne({ _id: old._id }, { $unset: { anchors: 1 } });
+    const { citingDepth, citedDepth, limit, maxNodes } = rest.options;
+    const v1Key = createHash('sha256')
+      .update(
+        JSON.stringify([anchors[0].id, citingDepth, citedDepth, limit, maxNodes, rest.expanded]),
+      )
+      .digest('base64url');
+
+    const opened = (await agent.get(`/api/graphs/${old.id}`)).body.graph;
+    expect(opened.anchors).toEqual(anchors);
+    expect(opened.stateKey).toBe(v1Key);
+    expect(stateKey(state())).toBe(v1Key);
+    expect((await agent.get('/api/graphs')).body.graphs[0].anchors).toEqual([
+      { title: 'The Moral Economy', ref: '10.1093/past/50.1.76' },
+    ]);
+
+    // A legacy snapshot (one anchorId) still applies.
+    const legacy = { ...snapshot(), anchorId: 'tracer-anchor' };
+    delete legacy.anchorIds;
+    const put = await agent
+      .put(`/api/graphs/${old.id}/snapshot`)
+      .send({ key: v1Key, snapshot: legacy });
+    expect(put.status).toBe(204);
+
+    await agent.put(`/api/graphs/${old.id}`).send({ state: state() });
+    const stored = await SavedGraph.findById(old._id).lean();
+    expect(stored.version).toBe(2);
+    expect(stored.anchors).toEqual(anchors);
+    expect(stored.anchor).toBeUndefined();
+  });
+});
+
 describe('validation', () => {
   it.each([
-    ['no anchor', state({ anchor: {} })],
+    ['no anchor', state({ anchors: [] })],
+    ['an anchor without an ID', state({ anchors: [{ title: 'x' }] })],
+    [
+      'the same anchor twice',
+      state({ anchors: [{ id: 'tracer-anchor' }, { id: 'tracer-anchor' }] }),
+    ],
     [
       'a depth out of range',
       state({ options: { citingDepth: 9, citedDepth: 1, limit: 20, maxNodes: 300 } }),

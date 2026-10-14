@@ -14,7 +14,16 @@ const FREE = {
 const signedInAs = (user, entitlements = FREE) => ({ user, entitlements });
 
 vi.mock('./graph/GraphView.jsx', () => ({
-  default: ({ graph, visible, onSelect, axisAngle, expandedIds, coCitedIds, notes }) => (
+  default: ({
+    graph,
+    visible,
+    onSelect,
+    axisAngle,
+    expandedIds,
+    coCitedIds,
+    notes,
+    neighborhoods,
+  }) => (
     <ul aria-label="Graph" data-axis-angle={axisAngle}>
       {[...graph.works.values()]
         .filter((work) => visible.has(work.id))
@@ -26,6 +35,7 @@ vi.mock('./graph/GraphView.jsx', () => ({
               data-expanded={expandedIds?.has(work.id) || undefined}
               data-co-cited={coCitedIds?.has(work.id) || undefined}
               data-note={notes?.get(work.id)}
+              data-near={neighborhoods?.get(work.id)?.join(' ')}
             >
               {work.title}
             </button>
@@ -1155,6 +1165,20 @@ describe('advanced search', () => {
     expect(screen.getByText(/· 1 pinned/)).toBeInTheDocument();
   });
 
+  it('builds a graph with all the chosen works as anchors, up to the plan’s limit', async () => {
+    render(<App />);
+    const page = openAdvanced();
+    fireEvent.change(within(page).getByLabelText('Title'), { target: { value: 'x' } });
+    fireEvent.click(within(page).getByRole('button', { name: 'Search' }));
+    const list = await results();
+    fireEvent.click(within(list).getByRole('checkbox', { name: /Title anchor/ }));
+    fireEvent.click(within(list).getByRole('checkbox', { name: /Title book/ }));
+    fireEvent.click(within(page).getByRole('button', { name: 'Build with these as anchors' }));
+
+    await waitFor(() => expect(window.location.search).toBe('?anchor=Wanchor&anchor=Wbook'));
+    expect(screen.getByText('Near several anchors')).toBeInTheDocument();
+  });
+
   it('adds chosen works to the graph on screen, expanding them', async () => {
     await buildFromSearch();
     const page = openAdvanced();
@@ -1226,7 +1250,7 @@ describe('path to the anchor', () => {
     );
 
     expect(await within(details).findByText(/Connected to the anchor in 3 steps/)).toBeVisible();
-    expect(api.findPath).toHaveBeenCalledWith('lone', 'anchor');
+    expect(api.findPath).toHaveBeenCalledWith('lone', ['anchor']);
     const steps = within(details).getByRole('list', { name: 'Path to the anchor' });
     expect(steps).toHaveTextContent(
       'Title lone (1990)which is cited by Title b1 (2000)which is cited by Title b2 (2010)which cites Title anchor (1971), the anchor',
@@ -1367,7 +1391,7 @@ describe('saved graphs', () => {
     const [name, state] = vi.mocked(api.saveGraph).mock.calls[0];
     expect(name).toBe('Riots');
     expect(state).toEqual({
-      anchor: { id: 'anchor', ref: 'Wanchor', title: 'Title anchor' },
+      anchors: [{ id: 'anchor', ref: 'Wanchor', title: 'Title anchor' }],
       options: { citingDepth: 1, citedDepth: 1, limit: 20, maxNodes: 300 },
       filters: { minYear: null, maxYear: null, minConnections: 1, excludedTypes: ['article'] },
       view: { axisAngle: 30, pinned: ['ref'] },
@@ -1378,7 +1402,7 @@ describe('saved graphs', () => {
     });
     // With the graph as built, so reopening it needn't fetch anything.
     const snapshot = vi.mocked(api.saveGraph).mock.calls[0][2];
-    expect(snapshot).toMatchObject({ anchorId: 'anchor', sticky: ['ref'], truncated: false });
+    expect(snapshot).toMatchObject({ anchorIds: ['anchor'], sticky: ['ref'], truncated: false });
     expect(snapshot.works.map((w) => w.id)).toContain('more');
     expect(snapshot.relations).toContainEqual(['anchor', 'anchor']);
     expect(snapshot.expanded).toContainEqual(['ref', ['citing', 'cited']]);
@@ -1414,7 +1438,7 @@ describe('saved graphs', () => {
   it('opens a saved graph from its link, with its expansions, filters and view', async () => {
     vi.mocked(api.getSavedGraph).mockResolvedValue(
       savedFrom({
-        anchor: { id: 'anchor', ref: 'Wanchor', title: 'Title anchor' },
+        anchors: [{ id: 'anchor', ref: 'Wanchor', title: 'Title anchor' }],
         options: { citingDepth: 1, citedDepth: 1, limit: 20, maxNodes: 300 },
         filters: { minYear: 1900, maxYear: null, minConnections: 1, excludedTypes: [] },
         view: { axisAngle: 60 },
@@ -1439,7 +1463,7 @@ describe('saved graphs', () => {
   it('opens a saved graph with its pinned works shown', async () => {
     vi.mocked(api.getSavedGraph).mockResolvedValue(
       savedFrom({
-        anchor: { id: 'anchor', ref: 'Wanchor', title: 'Title anchor' },
+        anchors: [{ id: 'anchor', ref: 'Wanchor', title: 'Title anchor' }],
         options: { citingDepth: 1, citedDepth: 1, limit: 20, maxNodes: 300 },
         filters: { minYear: null, maxYear: null, minConnections: 1, excludedTypes: ['article'] },
         view: { axisAngle: 30, pinned: ['citer'] },
@@ -1463,7 +1487,7 @@ describe('saved graphs', () => {
     vi.mocked(api.getSavedGraph).mockResolvedValue(
       savedFrom(
         {
-          anchor: { id: 'anchor', ref: 'Wanchor', title: 'Title anchor' },
+          anchors: [{ id: 'anchor', ref: 'Wanchor', title: 'Title anchor' }],
           options: { citingDepth: 1, citedDepth: 1, limit: 20, maxNodes: 300 },
           filters: { minYear: null, maxYear: null, minConnections: 1, excludedTypes: [] },
           view: { axisAngle: 30 },
@@ -1486,7 +1510,7 @@ describe('saved graphs', () => {
   });
 
   const savedState = {
-    anchor: { id: 'anchor', ref: 'Wanchor', title: 'Title anchor' },
+    anchors: [{ id: 'anchor', ref: 'Wanchor', title: 'Title anchor' }],
     options: { citingDepth: 1, citedDepth: 1, limit: 20, maxNodes: 300 },
     filters: { minYear: null, maxYear: null, minConnections: 1, excludedTypes: [] },
     view: { axisAngle: 30 },
@@ -1498,7 +1522,7 @@ describe('saved graphs', () => {
       savedFrom(savedState, {
         stateKey: 'k1',
         snapshot: {
-          anchorId: 'anchor',
+          anchorIds: ['anchor'],
           works: [work('anchor', { references: ['ref'] }), work('ref', { year: 1950 })],
           relations: [
             ['anchor', 'anchor'],
@@ -1625,7 +1649,7 @@ describe('auto-save', () => {
     window.localStorage.setItem('tracer:autoSave:g1', '1');
     vi.mocked(api.getSavedGraph).mockResolvedValue(
       savedFrom({
-        anchor: { id: 'anchor', ref: 'Wanchor', title: 'Title anchor' },
+        anchors: [{ id: 'anchor', ref: 'Wanchor', title: 'Title anchor' }],
         options: { citingDepth: 1, citedDepth: 1, limit: 20, maxNodes: 300 },
         filters: { minYear: null, maxYear: null, minConnections: 1, excludedTypes: [] },
         view: { axisAngle: 30 },
@@ -1676,7 +1700,7 @@ describe('profile page', () => {
   const summary = (id, name) => ({
     id,
     name,
-    anchor: { title: 'The Moral Economy', ref: '10.1093/past/50.1.76' },
+    anchors: [{ title: 'The Moral Economy', ref: '10.1093/past/50.1.76' }],
     expandedCount: 2,
     createdAt: '2026-01-01T00:00:00Z',
     updatedAt: '2026-01-02T00:00:00Z',
@@ -1787,5 +1811,149 @@ describe('plan entitlements', () => {
     expect(api.getCiting).toHaveBeenCalledWith('anchor', expect.objectContaining({ limit: 20 }));
     expect(screen.getByRole('button', { name: 'Save graph' })).toBeEnabled();
     expect(screen.getByRole('button', { name: 'Advanced search' })).toBeEnabled();
+  });
+});
+
+describe('multiple anchors', () => {
+  const titles = () =>
+    within(graph())
+      .getAllByRole('button')
+      .map((button) => button.textContent)
+      .sort();
+
+  it('adds a work as another anchor, coloring works by the anchors they’re near', async () => {
+    // "more" cites citer (and ref), so it's near citer only.
+    const citesCiter = work('more', { references: ['citer', 'ref'], year: 2010 });
+    vi.mocked(api.getCiting).mockImplementation(async (id) =>
+      id === 'anchor' ? [citer] : [citesCiter],
+    );
+    await buildFromSearch();
+    fireEvent.click(within(graph()).getByRole('button', { name: 'Title citer' }));
+    fireEvent.click(screen.getByRole('button', { name: 'Add as anchor' }));
+
+    // From citer: its citing work "more".
+    expect(await within(graph()).findByRole('button', { name: 'Title more' })).toBeInTheDocument();
+    expect(titles()).toEqual(['Title anchor', 'Title citer', 'Title more', 'Title ref']);
+    await waitFor(() => expect(window.location.search).toBe('?anchor=Wanchor&anchor=Wciter'));
+    // ref is cited by both anchors; more cites only citer.
+    expect(within(graph()).getByRole('button', { name: 'Title ref' })).toHaveAttribute(
+      'data-near',
+      'anchor citer',
+    );
+    expect(within(graph()).getByRole('button', { name: 'Title more' })).toHaveAttribute(
+      'data-near',
+      'citer',
+    );
+    const legend = screen.getByRole('region', { name: 'Legend' });
+    expect(within(legend).getByText('Title anchor and works near it')).toBeInTheDocument();
+    expect(within(legend).getByText('Title citer and works near it')).toBeInTheDocument();
+
+    fireEvent.click(within(graph()).getByRole('button', { name: 'Title ref' }));
+    const details = screen.getByRole('complementary', { name: 'Title ref' });
+    expect(within(details).getByText('Shared by')).toBeInTheDocument();
+    expect(within(details).getByRole('list', { name: 'Near anchors' })).toHaveTextContent(
+      'Title anchorTitle citer',
+    );
+    expect(
+      within(details).getByRole('button', { name: 'Make this the only anchor' }),
+    ).toBeEnabled();
+  });
+
+  it('allows as many anchors as the plan does', async () => {
+    vi.mocked(api.getCited).mockImplementation(async (id) =>
+      id === 'anchor' ? [ref] : id === 'citer' ? [ref, anchor] : [],
+    );
+    await buildFromSearch();
+    fireEvent.click(within(graph()).getByRole('button', { name: 'Title citer' }));
+    fireEvent.click(screen.getByRole('button', { name: 'Add as anchor' }));
+    await within(graph()).findByRole('button', { name: 'Title more' });
+
+    fireEvent.click(within(graph()).getByRole('button', { name: 'Title ref' }));
+    const details = screen.getByRole('complementary', { name: 'Title ref' });
+    await waitFor(() =>
+      expect(within(details).getByRole('button', { name: 'Add as anchor' })).toBeDisabled(),
+    );
+    expect(within(details).getByText('Your plan allows up to 2 anchors.')).toBeInTheDocument();
+  });
+
+  it('removes an anchor, with the works only it brought in', async () => {
+    await buildFromSearch();
+    fireEvent.click(within(graph()).getByRole('button', { name: 'Title citer' }));
+    fireEvent.click(screen.getByRole('button', { name: 'Add as anchor' }));
+    await within(graph()).findByRole('button', { name: 'Title more' });
+
+    fireEvent.click(screen.getByRole('button', { name: 'Remove anchor' }));
+
+    await waitFor(() =>
+      expect(within(graph()).queryByRole('button', { name: 'Title more' })).toBeNull(),
+    );
+    expect(titles()).toEqual(['Title anchor', 'Title citer', 'Title ref']);
+    await waitFor(() => expect(window.location.search).toBe('?anchor=Wanchor'));
+    expect(screen.queryByText('Near several anchors')).toBeNull();
+    expect(screen.getByText('Citing works')).toBeInTheDocument();
+  });
+
+  it('builds from every anchor in the URL', async () => {
+    window.history.replaceState(null, '', '/?anchor=Wanchor&anchor=Wciter');
+    vi.mocked(api.getWork).mockImplementation(async (id) => (id === 'Wciter' ? citer : anchor));
+    render(<App />);
+
+    await waitFor(() => expect(titles()).toContain('Title more'));
+    expect(api.getWork).toHaveBeenCalledWith('Wanchor', expect.anything());
+    expect(api.getWork).toHaveBeenCalledWith('Wciter', expect.anything());
+    expect(screen.getByText('Near several anchors')).toBeInTheDocument();
+  });
+
+  it('shortens a default name from long titles to fit', async () => {
+    const user = { id: 'u1', email: 'historian@example.org' };
+    vi.mocked(api.getAccount).mockResolvedValue(signedInAs(user));
+    const long = { ...anchor, title: 'Manchus and Han: '.repeat(6) };
+    vi.mocked(api.searchWorks).mockResolvedValue([long]);
+    vi.mocked(api.getWork).mockResolvedValue(long);
+    render(<App />);
+    fireEvent.change(screen.getByLabelText('Title, DOI, or OpenAlex ID'), {
+      target: { value: 'manchus' },
+    });
+    fireEvent.click(screen.getByRole('button', { name: 'Go' }));
+    fireEvent.click(
+      within(await screen.findByRole('list', { name: 'Search results' })).getByRole('button', {
+        name: /Manchus/,
+      }),
+    );
+    fireEvent.click(await screen.findByRole('button', { name: 'Title citer' }));
+    fireEvent.click(screen.getByRole('button', { name: 'Add as anchor' }));
+    await within(graph()).findByRole('button', { name: 'Title more' });
+
+    fireEvent.click(screen.getByRole('button', { name: 'Save graph' }));
+    const name = within(screen.getByRole('dialog')).getByLabelText('Name').value;
+    expect(name.length).toBeLessThanOrEqual(120);
+    expect(name).toMatch(/^Manchus and Han: .*… & Title citer$/);
+  });
+
+  it('saves every anchor, and names the graph after them', async () => {
+    const user = { id: 'u1', email: 'historian@example.org' };
+    vi.mocked(api.getAccount).mockResolvedValue(signedInAs(user));
+    vi.mocked(api.saveGraph).mockImplementation(async (name, state) => ({
+      id: 'g1',
+      name,
+      ...state,
+    }));
+    await buildFromSearch();
+    fireEvent.click(within(graph()).getByRole('button', { name: 'Title citer' }));
+    fireEvent.click(screen.getByRole('button', { name: 'Add as anchor' }));
+    await within(graph()).findByRole('button', { name: 'Title more' });
+
+    fireEvent.click(screen.getByRole('button', { name: 'Save graph' }));
+    const dialog = screen.getByRole('dialog');
+    expect(within(dialog).getByLabelText('Name')).toHaveValue('Title anchor & Title citer');
+    fireEvent.click(within(dialog).getByRole('button', { name: 'Save' }));
+
+    await waitFor(() => expect(api.saveGraph).toHaveBeenCalled());
+    const [, state, snapshot] = vi.mocked(api.saveGraph).mock.calls[0];
+    expect(state.anchors).toEqual([
+      { id: 'anchor', ref: 'Wanchor', title: 'Title anchor' },
+      { id: 'citer', ref: 'Wciter', title: 'Title citer' },
+    ]);
+    expect(snapshot.anchorIds).toEqual(['anchor', 'citer']);
   });
 });

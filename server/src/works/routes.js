@@ -36,6 +36,8 @@ const TEXT_FIELDS = ['any', 'title', 'author', 'abstract', 'fulltext'];
 const SORTS = ['relevance', 'cited', 'newest', 'oldest'];
 const MAX_TEXT = 300;
 const MAX_IDS = 20;
+// Works a path search can end at: as many as a graph can have anchors.
+const MAX_PATH_TARGETS = 6;
 // OpenAlex pages through at most the first 10,000 results.
 const MAX_RESULT = 10000;
 const ID_LIST = /^[A-Za-z]\d{1,15}(?:,[A-Za-z]\d{1,15})*$/;
@@ -181,9 +183,21 @@ export function createWorksRouter(workService, authService) {
     res.json({ match: await workService.getCitationMatch(req.params.id) });
   });
 
+  // `to` is one work or several, comma-separated (a graph's anchors): the path ends at the
+  // nearest.
   router.get('/:id/path', requireFeature('pathSearch'), async (req, res) => {
-    const to = single(req.query.to);
-    if (!to) throw new HttpError(400, 'to is required');
+    const to = [
+      ...new Set(
+        single(req.query.to)
+          .split(',')
+          .map((id) => id.trim())
+          .filter(Boolean),
+      ),
+    ];
+    if (to.length === 0) throw new HttpError(400, 'to is required');
+    if (to.length > MAX_PATH_TARGETS) {
+      throw new HttpError(400, `to may list at most ${MAX_PATH_TARGETS} works`);
+    }
     res.json(await workService.findPath(req.params.id, to));
   });
 

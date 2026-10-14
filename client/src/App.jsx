@@ -16,6 +16,7 @@ import ViewPanel from './components/ViewPanel.jsx';
 import { DEFAULT_AXIS_ANGLE } from './graph/axis.js';
 import GraphView from './graph/GraphView.jsx';
 import {
+  anchorNeighborhoods,
   canExpand,
   deriveEdges,
   CO_CITATION_LIMIT,
@@ -25,6 +26,7 @@ import {
   graphSnapshot,
   inGraphCitationCounts,
   inGraphConnectionCounts,
+  isAnchor,
   totalCitationCounts,
   layoutYears,
   NO_FILTERS,
@@ -83,6 +85,21 @@ function autoSaveRemembered(id) {
 export const AUTO_SAVE_DELAY_MS = 1500;
 
 const short = (text, max = 40) => (text.length > max ? `${text.slice(0, max - 1)}…` : text);
+
+// Longest name a saved graph can have (as the server checks).
+const MAX_NAME_LENGTH = 120;
+
+/**
+ * A graph's default name, from its anchors: one's title, two joined by "&", or the first and
+ * how many more, shortened to fit a saved graph's name. The server names a graph saved without
+ * a name the same way.
+ */
+const anchorsName = (anchors) => {
+  const titles = anchors.map((work) => work.title ?? 'Untitled');
+  if (titles.length <= 1) return short(titles[0] ?? '', MAX_NAME_LENGTH);
+  if (titles.length === 2) return `${short(titles[0], 58)} & ${short(titles[1], 58)}`;
+  return `${short(titles[0], 100)} and ${titles.length - 1} more`;
+};
 
 /**
  * The app: the graph, or the signed-in user's saved graphs at /profile. There's no client-side
@@ -146,15 +163,16 @@ function GraphPage({ auth }) {
       else next.delete(id);
       return next;
     });
-  // The last co-citation search, for one anchor: { anchorId, found, counts, citers } (counts:
-  // how many works citing the anchor cite each, from 2 up). Works at or above the minimum
-  // are highlighted while that's still the anchor.
+  // The last co-citation search, for one anchor: { anchorId, anchorsKey, found, counts, citers,
+  // minCiters } (counts: how many works citing the anchor cite each, from 2 up; anchorsKey:
+  // the graph's anchors then). Works at or above `minCiters` are highlighted until the anchors
+  // change.
   const [coCitations, setCoCitations] = useState(null);
   const [findingCoCitations, setFindingCoCitations] = useState(false);
   // The minimum citers the user chose for a co-citation, for one anchor ({ anchorId, value });
   // otherwise it's defaultMinCoCiters.
   const [minCoCitersChoice, setMinCoCitersChoice] = useState(null);
-  // The last path search from a work to the anchor: { anchorId, fromId, result } (see
+  // The last path search from a work to the anchors: { anchorsKey, fromId, result } (see
   // findPathToAnchor), and the work being searched from, if one is.
   const [pathSearch, setPathSearch] = useState(null);
   const [findingPathFrom, setFindingPathFrom] = useState(null);
@@ -213,20 +231,20 @@ function GraphPage({ auth }) {
   // The links slider's upper end: the most links of any work but the anchor, which is always
   // shown and linked to nearly everything, so counting it would leave most of the range empty.
   const maxConnections = useMemo(
-    () => Math.max(1, ...[...connections].filter(([id]) => id !== view.anchorId).map(([, n]) => n)),
-    [connections, view.anchorId],
+    () => Math.max(1, ...[...connections].filter(([id]) => !isAnchor(view, id)).map(([, n]) => n)),
+    [connections, view],
   );
 
   // How the next completed build or re-anchor updates the URL: 'push' a history entry when the
-  // user started it (so Back returns to the previous anchor), 'replace' when it came from the
+  // user started it (so Back returns to the previous anchors), 'replace' when it came from the
   // URL itself (page load, Back/Forward), so history isn't duplicated. `options` are the ones
   // that build used, not whatever the form shows by the time it finishes.
   const pendingUrl = useRef(null);
 
-  // Builds a new graph around `anchorId`. Any `extraIds` (works chosen together in advanced
+  // Builds a new graph around `anchorIds`. Any `extraIds` (works chosen together in advanced
   // search) are then added and expanded, as if the user had expanded each, and pinned: the user
   // asked for them, so filters (such as minimum links, for a work nothing cites) don't hide them.
-  const handleBuild = (anchorId, extraIds = []) => {
+  const handleBuild = (anchorIds, extraIds = []) => {
     setSelectedId(null);
     setFilters(NO_FILTERS);
     setPinned(new Set(extraIds));
@@ -240,9 +258,9 @@ function GraphPage({ auth }) {
     pendingUrl.current = { mode: 'push', options };
     setRunCount((n) => n + 1);
     if (extraIds.length) {
-      restore({ anchorId, options, expanded: extraIds }, 'Building graph');
+      restore({ anchorIds, options, expanded: extraIds }, 'Building graph');
     } else {
-      build(anchorId, options);
+      build(anchorIds, options);
     }
   };
 
@@ -253,15 +271,26 @@ function GraphPage({ auth }) {
     addWorks(ids, options);
   };
 
-  // Rebuild the current graph with the form's options: a re-anchor on the same anchor, so works
-  // the user expanded (and earlier anchors) stay.
-  const handleApplyOptions = () => handleReanchor(graph.anchorId);
+  // Rebuild the current graph with the form's options: a re-anchor on the same anchors, so
+  // works the user expanded (and earlier anchors) stay.
+  const handleApplyOptions = () => handleReanchor(graph.anchorIds);
 
-  const handleReanchor = (anchorId) => {
+  // Rebuilds around `anchorIds` (see reanchor in useCitationGraph), as a step Back can undo.
+  const handleReanchor = (anchorIds, extra) => {
     pendingUrl.current = { mode: 'push', options };
     setRunCount((n) => n + 1);
-    reanchor(anchorId, options);
+    reanchor(anchorIds, options, extra);
   };
+  // Another anchor beside the current ones (up to the plan's limit), or one fewer: the removed
+  // anchor isn't kept as an earlier anchor would be, so its neighborhood goes.
+  const anchorLimit = limits.anchors;
+  const handleAddAnchor = (id) =>
+    handleReanchor([...graph.anchorIds, id], { label: 'Adding an anchor' });
+  const handleRemoveAnchor = (id) =>
+    handleReanchor(
+      graph.anchorIds.filter((other) => other !== id),
+      { unstick: [id], label: 'Removing an anchor' },
+    );
 
   // Opens a saved graph: its options, filters and view, then the graph itself. That's the
   // server's snapshot of it as last built, while it's fresh (a week); otherwise it's rebuilt
@@ -291,7 +320,7 @@ function GraphPage({ auth }) {
       setRunCount((n) => n + 1);
       restore(
         {
-          anchorId: saved.anchor.id,
+          anchorIds: saved.anchors.map((anchor) => anchor.id),
           options: saved.options,
           expanded: saved.expanded ?? [],
           snapshot: saved.snapshot,
@@ -319,23 +348,25 @@ function GraphPage({ auth }) {
 
   // Open the graph a shared URL (or a saved graph's link) points to.
   useEffect(() => {
-    const { anchor, graph: savedId, ...url } = readUrlState(window.location.search);
+    const { graph: savedId, ...url } = readUrlState(window.location.search);
     if (savedId) {
       openSavedById(savedId);
       return;
     }
     const urlOptions = clampOptions(url.options, limitsRef.current);
-    if (!anchor) return;
+    const anchors = url.anchors.slice(0, limitsRef.current.anchors);
+    if (!anchors.length) return;
     // The first run needs no new fit key: nothing has been fitted yet.
     pendingUrl.current = { mode: 'replace', options: urlOptions };
-    build(anchor, urlOptions);
+    build(anchors, urlOptions);
   }, [build, openSavedById]);
 
   // Back/Forward: rebuild whatever graph the URL now describes.
   useEffect(() => {
     const handlePopState = () => {
-      const { anchor, graph: savedId, ...url } = readUrlState(window.location.search);
+      const { graph: savedId, ...url } = readUrlState(window.location.search);
       const urlOptions = clampOptions(url.options, limitsRef.current);
+      const anchors = url.anchors.slice(0, limitsRef.current.anchors);
       if (savedId) {
         pendingUrl.current = null;
         openSavedById(savedId);
@@ -350,10 +381,10 @@ function GraphPage({ auth }) {
       setSavedGraph(null);
       setAutoSave(false);
       setAutoSaveStatus(null);
-      if (anchor) {
+      if (anchors.length) {
         pendingUrl.current = { mode: 'replace', options: urlOptions };
         setRunCount((n) => n + 1);
-        build(anchor, urlOptions);
+        build(anchors, urlOptions);
       } else {
         pendingUrl.current = null;
         reset();
@@ -363,19 +394,19 @@ function GraphPage({ auth }) {
     return () => window.removeEventListener('popstate', handlePopState);
   }, [build, reset, openSavedById]);
 
-  // Once a build or re-anchor finishes, write its anchor and options to the URL. A failed build
-  // leaves the URL alone; a failed re-anchor keeps the old anchor, which the URL already shows.
+  // Once a build or re-anchor finishes, write its anchors and options to the URL. A failed build
+  // leaves the URL alone; a failed re-anchor keeps the old anchors, which the URL already shows.
   useEffect(() => {
     const pending = pendingUrl.current;
     // Wait for the run to finish. 'idle' means it hasn't started yet: on page load this effect
     // runs in the same pass that starts the build, before its status changes.
     if (!pending || busy || status === 'idle') return;
     pendingUrl.current = null;
-    const anchorWork = graph.works.get(graph.anchorId);
-    if (status !== 'done' || !anchorWork) return;
+    const anchors = graph.anchorIds.map((id) => graph.works.get(id)).filter(Boolean);
+    if (status !== 'done' || !anchors.length) return;
     setGraphOptions(pending.options);
     const { pathname, search, hash } = window.location;
-    const next = writeUrlState(search, anchorWork, pending.options);
+    const next = writeUrlState(search, anchors, pending.options);
     if (next === search) return;
     const url = `${pathname}${next}${hash}`;
     if (pending.mode === 'push') window.history.pushState(null, '', url);
@@ -394,38 +425,48 @@ function GraphPage({ auth }) {
     return ids;
   }, [view.works, graph, partsOf]);
 
-  // The anchor and its chapters, and how many works on the graph cite them: the works whose
+  // Searches tied to the anchors (co-citations, paths) apply only while they're the same.
+  const anchorsKey = graph.anchorIds.join(' ');
+  // The last co-citation search, if it was made with the current anchors.
+  const coSearch = coCitations?.anchorsKey === anchorsKey ? coCitations : null;
+  // The anchor whose co-citation controls are shown: the selected one, else the one searched.
+  const coAnchorId =
+    shownId && isAnchor(graph, shownId) ? shownId : (coSearch?.anchorId ?? graph.anchorIds[0]);
+
+  // That anchor and its chapters, and how many works on the graph cite them: the works whose
   // reference lists are searched for co-citations.
   const anchorTargets = useMemo(
-    () => [graph.anchorId, ...(partsOf.get(graph.anchorId) ?? []).map((part) => part.id)],
-    [graph.anchorId, partsOf],
+    () => [coAnchorId, ...(partsOf.get(coAnchorId) ?? []).map((part) => part.id)],
+    [coAnchorId, partsOf],
   );
   const citerCount = useMemo(() => coCiters(graph, anchorTargets).length, [graph, anchorTargets]);
   const maxCoCiters = Math.max(2, citerCount);
   const minCoCiters = Math.min(
     maxCoCiters,
-    minCoCitersChoice?.anchorId === graph.anchorId
-      ? minCoCitersChoice.value
-      : defaultMinCoCiters(citerCount),
+    coSearch && coSearch.anchorId === coAnchorId
+      ? coSearch.minCiters
+      : minCoCitersChoice && minCoCitersChoice.anchorId === coAnchorId
+        ? minCoCitersChoice.value
+        : defaultMinCoCiters(citerCount),
   );
 
-  // Co-cited works as shown (a chapter as its book), with how many works citing the anchor
-  // cite each; empty unless they were found for the current anchor.
+  // Co-cited works as shown (a chapter as its book), with how many works citing the searched
+  // anchor cite each; empty unless they were found with the current anchors.
   const coCited = useMemo(() => {
     const shown = new Map();
-    if (coCitations?.anchorId !== graph.anchorId) return shown;
-    for (const [id, count] of coCitations.counts) {
-      if (count < minCoCiters) continue;
+    if (!coSearch) return shown;
+    for (const [id, count] of coSearch.counts) {
+      if (count < coSearch.minCiters) continue;
       const viewId = bookOf.get(id) ?? id;
       if (view.works.has(viewId)) shown.set(viewId, Math.max(count, shown.get(viewId) ?? 0));
     }
     return shown;
-  }, [coCitations, graph.anchorId, minCoCiters, bookOf, view.works]);
+  }, [coSearch, bookOf, view.works]);
 
   // Looks through the reference lists of the works on the graph citing the anchor (or its
   // chapters), adding works at least minCoCiters of them cite, and highlights them.
   const handleFindCoCitations = async () => {
-    const anchorId = graph.anchorId;
+    const anchorId = coAnchorId;
     const minCiters = minCoCiters;
     setFindingCoCitations(true);
     const result = await findCoCitations(anchorTargets, {
@@ -436,9 +477,9 @@ function GraphPage({ auth }) {
     });
     setFindingCoCitations(false);
     if (!result) return;
-    setCoCitations({ anchorId, ...result, citers: citerCount });
-    // Fixed from here on, so the default following the number of citers (which expanding can
-    // change) doesn't move the minimum out of step with what was added.
+    // The minimum is fixed from here on, so the default following the number of citers (which
+    // expanding can change) doesn't move it out of step with what was added.
+    setCoCitations({ anchorId, anchorsKey, ...result, citers: citerCount, minCiters });
     setMinCoCitersChoice({ anchorId, value: minCiters });
   };
 
@@ -446,9 +487,10 @@ function GraphPage({ auth }) {
   // removed, and ones that now do are added, from the search's results.
   const handleMinCoCitersChange = (value) => {
     const next = Math.max(2, Math.min(maxCoCiters, value));
-    setMinCoCitersChoice({ anchorId: graph.anchorId, value: next });
-    if (coCitations?.anchorId === graph.anchorId) {
-      applyCoCitations(coCitations, {
+    setMinCoCitersChoice({ anchorId: coAnchorId, value: next });
+    if (coSearch && coSearch.anchorId === coAnchorId) {
+      setCoCitations({ ...coSearch, minCiters: next });
+      applyCoCitations(coSearch, {
         minCiters: next,
         maxNodes: (graphOptions ?? options).maxNodes,
         keep: pinned,
@@ -456,25 +498,35 @@ function GraphPage({ auth }) {
     }
   };
 
-  // Works joined to the anchor by citations on the graph, either way. Others (brought in by
-  // expanding or adding a work) can look for a path to it.
+  // Works joined to an anchor by citations on the graph, either way. Others (brought in by
+  // expanding or adding a work) can look for a path to one.
   const anchorComponent = useMemo(
     () =>
-      new Set(connectedComponents(view.works.keys(), deriveEdges(view.works), view.anchorId)[0]),
+      new Set(
+        connectedComponents(view.works.keys(), deriveEdges(view.works), view.anchorIds)
+          .filter((ids) => ids.some((id) => isAnchor(view, id)))
+          .flat(),
+      ),
     [view],
+  );
+  // Which anchors each work is near, for coloring a graph with several (see
+  // anchorNeighborhoods), at the depths the graph was built with.
+  const neighborhoods = useMemo(
+    () => (view.anchorIds.length > 1 ? anchorNeighborhoods(view, graphOptions ?? options) : null),
+    [view, graphOptions, options],
   );
 
   const handleFindPath = async (fromId) => {
-    const anchorId = graph.anchorId;
+    const key = anchorsKey;
     setFindingPathFrom(fromId);
     const result = await findPath(fromId);
     setFindingPathFrom(null);
-    if (result) setPathSearch({ anchorId, fromId, result });
+    if (result) setPathSearch({ anchorsKey: key, fromId, result });
   };
 
   const selected = shownId ? view.works.get(shownId) : null;
   const shownPath =
-    selected && pathSearch?.fromId === selected.id && pathSearch.anchorId === graph.anchorId
+    selected && pathSearch?.fromId === selected.id && pathSearch.anchorsKey === anchorsKey
       ? pathSearch.result
       : null;
   const disconnected = Boolean(
@@ -488,18 +540,21 @@ function GraphPage({ auth }) {
       }))
     : [];
   const hasGraph = graph.works.size > 0;
-  const anchorWork = graph.works.get(graph.anchorId);
+  const anchorWorks = useMemo(
+    () => graph.anchorIds.map((id) => graph.works.get(id)).filter(Boolean),
+    [graph],
+  );
+  const graphName = anchorsName(anchorWorks);
 
-  // What saving stores: what's needed to rebuild the graph (anchor, the options it was built
+  // What saving stores: what's needed to rebuild the graph (anchors, the options it was built
   // with, the works the user expanded, in order), how it's shown (filters, axis, pins) and the
   // user's notes.
   const saveState = useMemo(
     () => ({
-      anchor: {
-        id: graph.anchorId,
-        ref: anchorWork ? shareableId(anchorWork) : null,
-        title: anchorWork?.title ?? null,
-      },
+      anchors: graph.anchorIds.map((id) => {
+        const work = graph.works.get(id);
+        return { id, ref: work ? shareableId(work) : null, title: work?.title ?? null };
+      }),
       options: graphOptions ?? options,
       filters,
       // Pins of works no longer on the graph (dropped by a re-anchor) aren't worth keeping.
@@ -511,7 +566,7 @@ function GraphPage({ auth }) {
         body,
       })),
     }),
-    [graph, anchorWork, graphOptions, options, filters, axisAngle, pinned, view, notes],
+    [graph, graphOptions, options, filters, axisAngle, pinned, view, notes],
   );
   const saveJson = useMemo(() => JSON.stringify(saveState), [saveState]);
   const idle = !busy && expanding.size === 0;
@@ -597,7 +652,7 @@ function GraphPage({ auth }) {
     saving.current = true;
     setAutoSaveStatus({ state: 'saving' });
     try {
-      const saved = await saveNow(anchorWork?.title ?? '', false);
+      const saved = await saveNow(graphName, false);
       rememberAutoSave(saved.id, true);
       saving.current = false;
       setAutoSaveStatus({ state: 'saved' });
@@ -616,10 +671,12 @@ function GraphPage({ auth }) {
           hidden={!advanced.open}
           initialQuery={advanced.query}
           onClose={closeAdvanced}
-          onBuild={([anchorId, ...rest]) => {
+          onBuild={(ids, { asAnchors = false } = {}) => {
             closeAdvanced();
-            handleBuild(anchorId, rest);
+            if (asAnchors) handleBuild(ids);
+            else handleBuild([ids[0]], ids.slice(1));
           }}
+          anchorLimit={anchorLimit}
           onAdd={(ids) => {
             closeAdvanced();
             handleAddWorks(ids);
@@ -633,7 +690,7 @@ function GraphPage({ auth }) {
         <SearchPanel
           options={options}
           onOptionsChange={setOptions}
-          onBuild={handleBuild}
+          onBuild={(id) => handleBuild([id])}
           onApply={hasGraph ? handleApplyOptions : undefined}
           onAdvanced={openAdvanced}
           advancedLocked={!auth.can('advancedSearch')}
@@ -655,21 +712,47 @@ function GraphPage({ auth }) {
         {hasGraph && <ViewPanel axisAngle={axisAngle} onAxisAngleChange={setAxisAngle} />}
         {hasGraph && (
           <section className="panel legend" aria-label="Legend">
-            <span>
-              <i className="swatch anchor" /> Anchor
-            </span>
-            <span>
-              <i className="swatch citing" /> Citing works
-            </span>
-            <span>
-              <i className="swatch cited" /> Cited works
-            </span>
+            {neighborhoods ? (
+              <>
+                {/* Colored by anchor: each anchor, then works near several or none. */}
+                {anchorWorks.map((work, index) => (
+                  <span key={work.id} className="legend-anchor">
+                    <i
+                      className="anchor-swatch"
+                      style={{ '--swatch': `var(--anchor-${index + 1})` }}
+                    />
+                    <span title={work.title ?? 'Untitled'}>
+                      {short(work.title ?? 'Untitled', 50)} and works near it
+                    </span>
+                  </span>
+                ))}
+                <span>
+                  <i className="swatch shared" /> Near several anchors
+                </span>
+                <span>
+                  <i className="swatch unlinked" /> Not linked to an anchor
+                </span>
+              </>
+            ) : (
+              <>
+                <span>
+                  <i className="swatch anchor" /> Anchor
+                </span>
+                <span>
+                  <i className="swatch citing" /> Citing works
+                </span>
+                <span>
+                  <i className="swatch cited" /> Cited works
+                </span>
+              </>
+            )}
             <span>
               <i className="swatch expanded" /> Expanded
             </span>
             {coCited.size > 0 && (
               <span>
-                <i className="swatch co-cited" /> Co-cited with the anchor
+                <i className="swatch co-cited" /> Co-cited with{' '}
+                {neighborhoods ? 'an anchor' : 'the anchor'}
               </span>
             )}
             <span>
@@ -716,7 +799,7 @@ function GraphPage({ auth }) {
               user={auth.user}
               canSave={auth.can('saveGraphs')}
               savedGraph={savedGraph}
-              defaultName={anchorWork?.title ?? ''}
+              defaultName={graphName}
               disabled={busy}
               onSave={handleSave}
               autoSave={autoSaving}
@@ -733,6 +816,7 @@ function GraphPage({ auth }) {
             pinnedIds={pinned}
             notes={notes}
             coCitedIds={coCited}
+            neighborhoods={neighborhoods}
             years={years}
             visible={visible}
             selectedId={shownId}
@@ -767,17 +851,33 @@ function GraphPage({ auth }) {
               parts: parts.map((part) => part.work.id),
             })
           }
-          onMakeAnchor={() => handleReanchor(selected.id)}
+          onMakeAnchor={() => handleReanchor([selected.id])}
+          anchorControl={{
+            count: graph.anchorIds.length,
+            limit: anchorLimit,
+            onAdd: () => handleAddAnchor(selected.id),
+            onRemove: () => handleRemoveAnchor(selected.id),
+          }}
+          neighborhood={
+            neighborhoods
+              ? (neighborhoods.get(selected.id) ?? []).map((id) => ({
+                  id,
+                  index: graph.anchorIds.indexOf(id),
+                  title: graph.works.get(id)?.title ?? 'Untitled',
+                }))
+              : null
+          }
+          manyAnchors={graph.anchorIds.length > 1}
           pinned={pinned.has(selected.id)}
           onTogglePin={() => togglePin(selected.id)}
           note={notes.get(selected.id) ?? ''}
           onNoteChange={(text) => setNote(selected.id, text)}
           signedIn={Boolean(auth.user)}
           coCitedBy={coCited.get(selected.id) ?? null}
-          onFindCoCitations={selected.id === graph.anchorId ? handleFindCoCitations : undefined}
+          onFindCoCitations={isAnchor(graph, selected.id) ? handleFindCoCitations : undefined}
           findingCoCitations={findingCoCitations}
           coCitationControl={
-            selected.id === graph.anchorId
+            isAnchor(graph, selected.id)
               ? {
                   value: minCoCiters,
                   max: maxCoCiters,
@@ -788,13 +888,13 @@ function GraphPage({ auth }) {
               : null
           }
           coCitationResult={
-            selected.id === graph.anchorId && coCitations?.anchorId === graph.anchorId
+            coSearch?.anchorId === selected.id
               ? {
                   minCiters: minCoCiters,
-                  citers: coCitations.citers,
-                  found: [...coCitations.counts.values()].filter((n) => n >= minCoCiters).length,
+                  citers: coSearch.citers,
+                  found: [...coSearch.counts.values()].filter((n) => n >= minCoCiters).length,
                   // Works that didn't fit under the max works setting.
-                  left: [...coCitations.counts].filter(
+                  left: [...coSearch.counts].filter(
                     ([id, n]) => n >= minCoCiters && !graph.works.has(id),
                   ).length,
                 }
@@ -815,7 +915,7 @@ function GraphPage({ auth }) {
           onCollapse={
             // Only works the user expanded (or earlier anchors) can be collapsed; the build's
             // own expansions would just come back.
-            selected.id !== graph.anchorId &&
+            !isAnchor(graph, selected.id) &&
             [selected.id, ...parts.map((part) => part.work.id)].some((id) => graph.sticky.has(id))
               ? () =>
                   collapse(

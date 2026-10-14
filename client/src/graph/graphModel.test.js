@@ -3,6 +3,7 @@ import { createProgressTracker } from './progress.js';
 import {
   addFoundWorks,
   addWorks,
+  anchorNeighborhoods,
   buildGraph,
   collapseWorks,
   deriveEdges,
@@ -18,10 +19,12 @@ import {
   graphSnapshot,
   inGraphCitationCounts,
   inGraphConnectionCounts,
+  isAnchor,
   layoutYears,
   markExpanded,
   reanchorGraph,
   restoreGraph,
+  sameAnchors,
   totalCitationCounts,
   NO_FILTERS,
   visibleIds,
@@ -114,7 +117,7 @@ describe('visibleIds', () => {
       ],
       'cited',
     ),
-    anchorId: 'R',
+    anchorIds: ['R'],
   };
   const connections = inGraphConnectionCounts(graph.works);
 
@@ -129,7 +132,7 @@ describe('visibleIds', () => {
         [work('R', [], 2003), work('A', ['R'], 1953), work('B', ['R'], 1988)],
         'citing',
       ),
-      anchorId: 'A',
+      anchorIds: ['A'],
     };
     const years = layoutYears(graph2);
     const filters = { ...NO_FILTERS, minYear: 2000, minConnections: 0 };
@@ -156,7 +159,7 @@ describe('visibleIds', () => {
         ],
         'cited',
       ),
-      anchorId: 'N',
+      anchorIds: ['N'],
     };
     const typedCounts = inGraphConnectionCounts(typed.works);
 
@@ -193,7 +196,7 @@ describe('works not on OpenAlex', () => {
     api.getCited.mockImplementation(async (id) => (id === 'R' ? [unlisted('U')] : []));
 
     const { graph } = await buildGraph(
-      'R',
+      ['R'],
       { citingDepth: 2, citedDepth: 2, limit: 10, maxNodes: 100 },
       api,
     );
@@ -216,7 +219,7 @@ describe('buildGraph', () => {
     const api = fakeApi(network);
 
     const { graph, truncated } = await buildGraph(
-      'R',
+      ['R'],
       { citingDepth: 2, citedDepth: 1, limit: 10, maxNodes: 100 },
       api,
     );
@@ -237,7 +240,7 @@ describe('buildGraph', () => {
 
   it('records which directions were fetched for each work', async () => {
     const { graph } = await buildGraph(
-      'R',
+      ['R'],
       { citingDepth: 1, citedDepth: 1, limit: 10, maxNodes: 100 },
       fakeApi(network),
     );
@@ -248,7 +251,7 @@ describe('buildGraph', () => {
 
   it('applies the per-node limit', async () => {
     const { graph } = await buildGraph(
-      'R',
+      ['R'],
       { citingDepth: 0, citedDepth: 1, limit: 1, maxNodes: 100 },
       fakeApi(network),
     );
@@ -258,7 +261,7 @@ describe('buildGraph', () => {
 
   it('stops at maxNodes and reports truncation', async () => {
     const { graph, truncated } = await buildGraph(
-      'R',
+      ['R'],
       { citingDepth: 3, citedDepth: 3, limit: 10, maxNodes: 3 },
       fakeApi(network),
     );
@@ -269,7 +272,7 @@ describe('buildGraph', () => {
 
   it('alternates directions so maxNodes does not starve one', async () => {
     const { graph } = await buildGraph(
-      'R',
+      ['R'],
       { citingDepth: 1, citedDepth: 1, limit: 10, maxNodes: 4 },
       fakeApi(network),
     );
@@ -282,7 +285,7 @@ describe('buildGraph', () => {
   it('fetches each work at most once per direction', async () => {
     const api = fakeApi(network);
 
-    await buildGraph('R', { citingDepth: 3, citedDepth: 3, limit: 10, maxNodes: 100 }, api);
+    await buildGraph(['R'], { citingDepth: 3, citedDepth: 3, limit: 10, maxNodes: 100 }, api);
 
     const citedIds = api.getCited.mock.calls.map(([id]) => id);
     expect(new Set(citedIds).size).toBe(citedIds.length);
@@ -292,7 +295,7 @@ describe('buildGraph', () => {
     const onProgress = vi.fn();
 
     await buildGraph(
-      'R',
+      ['R'],
       { citingDepth: 1, citedDepth: 1, limit: 10, maxNodes: 100 },
       fakeApi(network),
       onProgress,
@@ -307,12 +310,12 @@ describe('buildGraph', () => {
     api.getWork.mockResolvedValueOnce(work('R', ['A', 'B']));
 
     const { graph } = await buildGraph(
-      '10.1234/anchor',
+      ['10.1234/anchor'],
       { citingDepth: 0, citedDepth: 0, limit: 10, maxNodes: 100 },
       api,
     );
 
-    expect(graph.anchorId).toBe('R');
+    expect(graph.anchorIds).toEqual(['R']);
   });
 });
 
@@ -322,7 +325,7 @@ describe('expandWorks', () => {
     const api = fakeApi(network);
     const graph = {
       ...addWorks(emptyGraph(), [work('R', ['A']), work('A', ['B']), work('B')], 'cited'),
-      anchorId: 'R',
+      anchorIds: ['R'],
     };
 
     const apply = await expandWorks(graph, ['A', 'B'], { limit: 10 }, api);
@@ -343,7 +346,7 @@ describe('expandWork', () => {
   it('adds citing and cited works and marks the work expanded', async () => {
     const graph = {
       ...addWorks(emptyGraph(), [work('R', ['A']), work('A', ['B'])], 'cited'),
-      anchorId: 'R',
+      anchorIds: ['R'],
     };
 
     const apply = await expandWork(graph, 'A', { limit: 10 }, fakeApi(network));
@@ -377,7 +380,7 @@ describe('layoutYears', () => {
     for (const [id, references, year, relation] of rows) {
       graph = addWorks(graph, [work(id, references, year)], relation);
     }
-    return { ...graph, anchorId: rows[0][0] };
+    return { ...graph, anchorIds: [rows[0][0]] };
   };
   const yearsOf = (graph) =>
     Object.fromEntries([...layoutYears(graph)].map(([id, { year }]) => [id, year]));
@@ -519,7 +522,7 @@ describe('yearPositions', () => {
 
   it('spaces years near the focus further apart than distant ones', () => {
     const years = [1950, 1951, 1970, 1971, 1972, 1990, 1991];
-    const positions = yearPositions(years, 10, 1971);
+    const positions = yearPositions(years, 10, [1971]);
     const step = (a, b) => positions.get(b) - positions.get(a);
 
     expect(step(1970, 1971)).toBeCloseTo(30); // 1 + 2: the full boost, spanning the focus.
@@ -527,7 +530,7 @@ describe('yearPositions', () => {
     expect(step(1970, 1971)).toBeGreaterThan(step(1990, 1991) * 2.5);
     // Order is kept, and without a focus nothing changes.
     expect([...positions.keys()]).toEqual(years);
-    expect(yearPositions(years, 10, null)).toEqual(yearPositions(years, 10));
+    expect(yearPositions(years, 10, [])).toEqual(yearPositions(years, 10));
   });
 });
 
@@ -539,7 +542,7 @@ describe('restoreGraph', () => {
   it('builds from the anchor, then repeats the expansions in order', async () => {
     const api = fakeApi(network);
     // D is only on the graph once A is expanded, so order matters.
-    const { graph } = await restoreGraph({ anchorId: 'R', options, expanded: ['A', 'D'] }, api);
+    const { graph } = await restoreGraph({ anchorIds: ['R'], options, expanded: ['A', 'D'] }, api);
 
     expect([...graph.works.keys()].sort()).toEqual(['A', 'D', 'E', 'G', 'R']);
     expect([...graph.sticky]).toEqual(['A', 'D']);
@@ -553,7 +556,10 @@ describe('restoreGraph', () => {
       if (id === 'GONE') throw new Error('Work not found');
       return getWork(id);
     });
-    const { graph } = await restoreGraph({ anchorId: 'R', options, expanded: ['GONE', 'G'] }, api);
+    const { graph } = await restoreGraph(
+      { anchorIds: ['R'], options, expanded: ['GONE', 'G'] },
+      api,
+    );
     expect(graph.works.has('G')).toBe(true);
     expect(graph.works.has('GONE')).toBe(false);
     expect([...graph.sticky]).toEqual(['G']);
@@ -568,18 +574,18 @@ describe('collapseWorks', () => {
 
   it('drops what only the collapsed expansion reached, keeping what the build reaches', async () => {
     const api = fakeApi(network);
-    let graph = (await buildGraph('R', options, api)).graph;
+    let graph = (await buildGraph(['R'], options, api)).graph;
     graph = (await expandWork(graph, 'A', { limit: 10 }, api))(graph);
     expect(ids(graph)).toEqual(['A', 'D', 'E', 'R']);
 
     const { graph: collapsed } = await reanchorGraph(
       collapseWorks(graph, ['A']),
-      'R',
+      ['R'],
       options,
       api,
     );
 
-    expect(collapsed.anchorId).toBe('R');
+    expect(collapsed.anchorIds).toEqual(['R']);
     expect(ids(collapsed)).toEqual(['A', 'R']); // A stays: the build reaches it.
     expect(collapsed.sticky.has('A')).toBe(false);
     expect(collapsed.expanded.get('A')).toBeUndefined();
@@ -598,7 +604,7 @@ describe('reanchorGraph', () => {
   const oldGraph = async (
     api,
     options = { citingDepth: 0, citedDepth: 2, limit: 10, maxNodes: 100 },
-  ) => (await buildGraph('R', options, api)).graph;
+  ) => (await buildGraph(['R'], options, api)).graph;
 
   it('measures depth from the new anchor and drops what only the old build reached', async () => {
     const api = fakeApi(network);
@@ -607,12 +613,12 @@ describe('reanchorGraph', () => {
 
     const { graph } = await reanchorGraph(
       before,
-      'B',
+      ['B'],
       { citingDepth: 0, citedDepth: 2, limit: 10, maxNodes: 100 },
       api,
     );
 
-    expect(graph.anchorId).toBe('B');
+    expect(graph.anchorIds).toEqual(['B']);
     // From B: F (depth 1), G (depth 2). Kept: R with its neighbors A, B, C. Dropped: D.
     expect(ids(graph)).toEqual(['A', 'B', 'C', 'F', 'G', 'R']);
   });
@@ -623,7 +629,7 @@ describe('reanchorGraph', () => {
 
     const { graph } = await reanchorGraph(
       before,
-      'B',
+      ['B'],
       { citingDepth: 0, citedDepth: 1, limit: 10, maxNodes: 100 },
       api,
     );
@@ -642,7 +648,7 @@ describe('reanchorGraph', () => {
 
     const { graph } = await reanchorGraph(
       before,
-      'B',
+      ['B'],
       { citingDepth: 0, citedDepth: 1, limit: 10, maxNodes: 100 },
       api,
     );
@@ -654,11 +660,11 @@ describe('reanchorGraph', () => {
   it('carries sticky works through a chain of re-anchors', async () => {
     const api = fakeApi(network);
     const options = { citingDepth: 0, citedDepth: 1, limit: 10, maxNodes: 100 };
-    const first = await reanchorGraph(await oldGraph(api), 'B', options, api);
+    const first = await reanchorGraph(await oldGraph(api), ['B'], options, api);
 
-    const { graph } = await reanchorGraph(first.graph, 'F', options, api);
+    const { graph } = await reanchorGraph(first.graph, ['F'], options, api);
 
-    expect(graph.anchorId).toBe('F');
+    expect(graph.anchorIds).toEqual(['F']);
     expect(graph.sticky).toEqual(new Set(['R', 'B']));
     expect(graph.works.has('G')).toBe(true);
   });
@@ -670,7 +676,7 @@ describe('reanchorGraph', () => {
 
     await reanchorGraph(
       before,
-      'B',
+      ['B'],
       { citingDepth: 1, citedDepth: 1, limit: 10, maxNodes: 100 },
       api,
     );
@@ -683,7 +689,7 @@ describe('reanchorGraph', () => {
     await expect(
       reanchorGraph(
         await oldGraph(api),
-        'Z',
+        ['Z'],
         { citingDepth: 1, citedDepth: 1, limit: 10, maxNodes: 100 },
         api,
       ),
@@ -704,7 +710,7 @@ describe('progress reporting', () => {
     const { tracker, snapshots } = record();
 
     const { graph } = await buildGraph(
-      'R',
+      ['R'],
       { citingDepth: 1, citedDepth: 2, limit: 10, maxNodes: 100 },
       fakeApi(network),
       undefined,
@@ -723,7 +729,7 @@ describe('progress reporting', () => {
     const { tracker, snapshots } = record();
 
     await buildGraph(
-      'R',
+      ['R'],
       { citingDepth: 0, citedDepth: 3, limit: 10, maxNodes: 100 },
       fakeApi(network),
       undefined,
@@ -740,7 +746,7 @@ describe('progress reporting', () => {
     const { tracker, snapshots } = record();
 
     await buildGraph(
-      'R',
+      ['R'],
       { citingDepth: 3, citedDepth: 3, limit: 10, maxNodes: 3 },
       fakeApi(network),
       undefined,
@@ -767,13 +773,13 @@ describe('progress reporting', () => {
   it('includes sticky expansions when re-anchoring', async () => {
     const api = fakeApi(network);
     const before = (
-      await buildGraph('R', { citingDepth: 0, citedDepth: 1, limit: 10, maxNodes: 100 }, api)
+      await buildGraph(['R'], { citingDepth: 0, citedDepth: 1, limit: 10, maxNodes: 100 }, api)
     ).graph;
     const { tracker, snapshots } = record();
 
     await reanchorGraph(
       before,
-      'B',
+      ['B'],
       { citingDepth: 0, citedDepth: 1, limit: 10, maxNodes: 100 },
       api,
       undefined,
@@ -793,7 +799,7 @@ describe('foldBookParts', () => {
   const preface = withDoi(work('preface'), '10.1017/9781108647403.002', 'other');
   const graphOf = (anchorId, ...works) => ({
     ...emptyGraph(),
-    anchorId,
+    anchorIds: [anchorId],
     works: worksMap(...works),
   });
 
@@ -852,7 +858,7 @@ describe('graphSnapshot', () => {
   it('survives a trip through JSON as the same graph', () => {
     let graph = addWorks(emptyGraph(), [{ id: 'anchor', references: ['ref'] }], 'anchor');
     graph = addWorks(graph, [{ id: 'ref', references: [] }], 'cited');
-    graph = { ...graph, anchorId: 'anchor', sticky: new Set(['ref']) };
+    graph = { ...graph, anchorIds: ['anchor'], sticky: new Set(['ref']) };
     graph = markExpanded(markExpanded(graph, 'ref', 'citing'), 'ref', 'cited');
 
     const sent = JSON.parse(JSON.stringify(graphSnapshot(graph, true)));
@@ -873,7 +879,7 @@ describe('findCoCitations and applyCoCitations', () => {
     let graph = addWorks(emptyGraph(), [work('A')], 'anchor');
     graph = addWorks(graph, [work('C1', ['A']), work('C2', ['A']), work('C3', ['A'])], 'citing');
     graph = addWorks(graph, [{ ...work('R', ['A']), type: 'reference-only' }], 'citing');
-    return { ...graph, anchorId: 'A' };
+    return { ...graph, anchorIds: ['A'] };
   };
   const search = (graph = start(), api = fakeApi(network)) =>
     findCoCitations(graph, ['A'], { limit: 200 }, api);
@@ -963,7 +969,7 @@ describe('findCoCitations and applyCoCitations', () => {
     const chapterNetwork = { B: [], 'B.1': [], C1: ['B.1', 'X'], C2: ['B', 'X'] };
     let graph = addWorks(emptyGraph(), [work('B')], 'anchor');
     graph = addWorks(graph, [work('C1', ['B.1']), work('C2', ['B'])], 'citing');
-    graph = { ...graph, anchorId: 'B' };
+    graph = { ...graph, anchorIds: ['B'] };
     const { counts } = await findCoCitations(
       graph,
       ['B', 'B.1'],
@@ -993,7 +999,7 @@ describe('applyPath', () => {
   it('adds the path’s works and citations to the graph, connecting the work', () => {
     const graph = {
       ...addWorks(emptyGraph(), [work('R'), work('X')], 'cited'),
-      anchorId: 'R',
+      anchorIds: ['R'],
     };
     // X is cited by B, which cites A, which R cites. B's record lacks X, and R's lacks A, as
     // when a link came from another source; the path's links supply them.
@@ -1016,5 +1022,162 @@ describe('applyPath', () => {
     );
     // Only the path was added; none of it is marked expanded.
     expect(next.expanded.size).toBe(0);
+  });
+});
+
+describe('multiple anchors', () => {
+  const ids = (graph) => [...graph.works.keys()].sort();
+
+  it('builds from every anchor at once, with one maxNodes budget', async () => {
+    // R cites A; S cites B; C cites both anchors.
+    const network = { R: ['A'], S: ['B'], A: [], B: [], C: ['R', 'S'] };
+    const api = fakeApi(network);
+    const options = { citingDepth: 1, citedDepth: 1, limit: 10, maxNodes: 100 };
+
+    const { graph } = await buildGraph(['R', 'S'], options, api);
+
+    expect(graph.anchorIds).toEqual(['R', 'S']);
+    expect(ids(graph)).toEqual(['A', 'B', 'C', 'R', 'S']);
+    expect(graph.relations.get('R')).toBe('anchor');
+    expect(graph.relations.get('S')).toBe('anchor');
+    expect(isAnchor(graph, 'S')).toBe(true);
+    expect(isAnchor(graph, 'C')).toBe(false);
+
+    const small = await buildGraph(['R', 'S'], { ...options, maxNodes: 3 }, fakeApi(network));
+    expect(small.graph.works.size).toBe(3);
+    expect(small.truncated).toBe(true);
+  });
+
+  it('keeps one anchor when two IDs name the same work', async () => {
+    const api = fakeApi({ R: [] });
+    api.getWork.mockResolvedValue(work('R'));
+    const options = { citingDepth: 0, citedDepth: 0, limit: 10, maxNodes: 100 };
+
+    const { graph } = await buildGraph(['10.1/r', 'W1'], options, api);
+
+    expect(graph.anchorIds).toEqual(['R']);
+  });
+
+  describe('adding and removing anchors', () => {
+    // R cites A and B; B cites F.
+    const network = { R: ['A', 'B'], A: [], B: ['F'], F: [] };
+    const options = { citingDepth: 0, citedDepth: 1, limit: 10, maxNodes: 100 };
+
+    it('adds an anchor, building from both', async () => {
+      const api = fakeApi(network);
+      const before = (await buildGraph(['R'], options, api)).graph;
+
+      const { graph } = await reanchorGraph(before, ['R', 'B'], options, api);
+
+      expect(graph.anchorIds).toEqual(['R', 'B']);
+      expect(ids(graph)).toEqual(['A', 'B', 'F', 'R']);
+      expect(graph.sticky.size).toBe(0);
+    });
+
+    it('removes an anchor with its neighborhood, unlike making another work the anchor', async () => {
+      const api = fakeApi(network);
+      const both = (await buildGraph(['R', 'B'], options, api)).graph;
+
+      const removed = await reanchorGraph(both, ['R'], options, api, undefined, undefined, {
+        unstick: ['B'],
+      });
+      expect(removed.graph.anchorIds).toEqual(['R']);
+      // B stays (R cites it); F only B's build reached.
+      expect(ids(removed.graph)).toEqual(['A', 'B', 'R']);
+      expect(removed.graph.sticky.has('B')).toBe(false);
+
+      // Without unstick, B is kept as an earlier anchor, with its neighbors.
+      const kept = await reanchorGraph(both, ['R'], options, api);
+      expect(kept.graph.sticky.has('B')).toBe(true);
+      expect(ids(kept.graph)).toEqual(['A', 'B', 'F', 'R']);
+    });
+  });
+
+  it('compares anchor lists in order', () => {
+    expect(sameAnchors(['A', 'B'], ['A', 'B'])).toBe(true);
+    expect(sameAnchors(['A', 'B'], ['B', 'A'])).toBe(false);
+    expect(sameAnchors(['A'], ['A', 'B'])).toBe(false);
+  });
+
+  describe('anchorNeighborhoods', () => {
+    // R cites A; S cites A and B; C cites R; D cites C; X is linked to nothing.
+    const graph = {
+      ...emptyGraph(),
+      anchorIds: ['R', 'S'],
+      works: worksMap(
+        work('R', ['A']),
+        work('S', ['A', 'B']),
+        work('A'),
+        work('B'),
+        work('C', ['R']),
+        work('D', ['C']),
+        work('X'),
+      ),
+    };
+
+    it('puts works within reach of several anchors in each one’s, in anchor order', () => {
+      const near = anchorNeighborhoods(graph, { citingDepth: 1, citedDepth: 1 });
+      expect(Object.fromEntries(near)).toEqual({
+        R: ['R'],
+        S: ['S'],
+        A: ['R', 'S'],
+        B: ['S'],
+        C: ['R'],
+        // Further than the depths from every anchor: the nearest one's.
+        D: ['R'],
+        X: [],
+      });
+    });
+
+    it('reaches as far as the deeper build depth', () => {
+      const near = anchorNeighborhoods(graph, { citingDepth: 0, citedDepth: 3 });
+      // B is three steps from R (R–A–S–B), within reach.
+      expect(near.get('B')).toEqual(['R', 'S']);
+    });
+  });
+
+  it('places an undated work by each anchor that cites it or that it cites', () => {
+    const graph = {
+      ...emptyGraph(),
+      anchorIds: ['R', 'S'],
+      works: worksMap(work('R', [], 1990), work('S', ['U'], 2000), work('U', [], null)),
+      relations: new Map([
+        ['R', 'anchor'],
+        ['S', 'anchor'],
+        ['U', 'cited'],
+      ]),
+    };
+
+    // Older than S, which cites it, not placed relative to the primary anchor R.
+    expect(layoutYears(graph).get('U')).toEqual({ year: 1999, inferred: true });
+  });
+
+  it('stretches the years near every anchor', () => {
+    const years = [1948, 1949, 1950, 1951, 1975, 1976, 1999, 2000, 2001];
+    const gap = (positions, a, b) => positions.get(b) - positions.get(a);
+    const both = yearPositions(years, 10, [1950, 2000]);
+    const near1950 = yearPositions(years, 10, [1950]);
+    const near2000 = yearPositions(years, 10, [2000]);
+
+    expect(gap(both, 1949, 1950)).toBeCloseTo(gap(near1950, 1949, 1950));
+    expect(gap(both, 1999, 2000)).toBeCloseTo(gap(near2000, 1999, 2000));
+    expect(gap(both, 1999, 2000)).toBeGreaterThan(gap(near1950, 1999, 2000));
+  });
+
+  it('keeps every anchor through a snapshot, and reads one from before multiple anchors', () => {
+    const graph = {
+      ...addWorks({ ...emptyGraph(), anchorIds: ['R', 'S'] }, [work('R'), work('S')], 'anchor'),
+    };
+    expect(graphFromSnapshot(graphSnapshot(graph, false)).graph.anchorIds).toEqual(['R', 'S']);
+
+    const legacy = {
+      anchorId: 'R',
+      works: [work('R')],
+      relations: [['R', 'anchor']],
+      expanded: [],
+      sticky: [],
+      truncated: false,
+    };
+    expect(graphFromSnapshot(legacy).graph.anchorIds).toEqual(['R']);
   });
 });

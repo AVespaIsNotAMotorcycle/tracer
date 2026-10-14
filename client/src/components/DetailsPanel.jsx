@@ -66,8 +66,8 @@ const doiLink = (work) => work.links.find((link) => link.kind === 'doi');
  * citing it that must cite a work, and `coCitationResult` ({ minCiters, citers, found, left })
  * once it has run; a work co-cited with the anchor
  * has `coCitedBy`, how many works citing the anchor cite it. A work with no path of citations
- * on the graph to the anchor gets `pathControl` ({ disconnected, finding, result, onFind,
- * onSelect, locked }) to look for the shortest one; `result` (see findPath in api.js) stays shown once
+ * on the graph to an anchor gets `pathControl` ({ targets, choice, onChoose, finding, result,
+ * onFind, onSelect, locked }; see PathToAnchor) to look for the shortest one; `result` (see findPath in api.js) stays shown once
  * found, with each step selectable. `locked` means the plan doesn't include that search.
  *
  * With `anchorControl` ({ count, limit, onAdd, onRemove }), a work can be added as another
@@ -76,12 +76,23 @@ const doiLink = (work) => work.links.find((link) => link.kind === 'doi');
  */
 const yearOf = (work) => (work.year == null ? '' : ` (${work.year})`);
 
+// Anchor titles in running text.
+const anchorTitle = (anchor) => {
+  const title = anchor?.title ?? 'Untitled';
+  return `“${title.length > 60 ? `${title.slice(0, 59)}…` : title}”`;
+};
+
 /**
- * Looking for, and showing, the shortest path of citations from a work to the anchor (or,
- * with `many` anchors, the nearest one).
+ * Looking for, and showing, the shortest path of citations from a work to an anchor it has no
+ * path to on the graph. `targets` are those anchors ({ id, title }); with several, the user
+ * picks one or the nearest (`choice`: an anchor ID or 'nearest', set with `onChoose`).
+ * `result` is the last search's, with `result.targets` the anchors it searched for. With one
+ * anchor on the graph (`many` false), it's just "the anchor".
  */
 function PathToAnchor({
-  disconnected,
+  targets = [],
+  choice = 'nearest',
+  onChoose,
   finding,
   result,
   onFind,
@@ -90,15 +101,21 @@ function PathToAnchor({
   many = false,
 }) {
   const path = result?.path;
-  const theAnchor = many ? 'an anchor' : 'the anchor';
+  // How to name the anchors a search was (or will be) for.
+  const describe = (anchors) =>
+    !many ? 'the anchor' : anchors.length === 1 ? anchorTitle(anchors[0]) : 'the nearest anchor';
+  const chosen = choice === 'nearest' ? targets : targets.filter((t) => t.id === choice);
+  const reached = path ? path[path.length - 1].work : null;
+  const searched = describe(result?.targets ?? chosen);
   return (
     <div className="path-to-anchor">
       {path ? (
         <>
           <p className="small">
-            Connected to {theAnchor} in {path.length - 1} step{path.length === 2 ? '' : 's'}:
+            Connected to {many ? anchorTitle(reached) : 'the anchor'} in {path.length - 1} step
+            {path.length === 2 ? '' : 's'}:
           </p>
-          <ol className="path-steps" aria-label={`Path to ${theAnchor}`}>
+          <ol className="path-steps" aria-label={many ? 'Path to an anchor' : 'Path to the anchor'}>
             {path.map(({ work, link }, index) => (
               <li key={work.id}>
                 {link && (
@@ -115,7 +132,7 @@ function PathToAnchor({
                 )}
                 <span className="muted small">
                   {yearOf(work)}
-                  {index === path.length - 1 ? `, ${theAnchor}` : ''}
+                  {index === path.length - 1 ? (many ? ', an anchor' : ', the anchor') : ''}
                 </span>
               </li>
             ))}
@@ -128,19 +145,48 @@ function PathToAnchor({
           )}
         </>
       ) : (
-        disconnected && (
+        targets.length > 0 && (
           <>
             <p className="muted small">
-              No citations on the graph link this work to {many ? 'any anchor’s' : 'the anchor’s'}.
+              No citations on the graph link this work to{' '}
+              {!many
+                ? 'the anchor’s'
+                : targets.length === 1
+                  ? anchorTitle(targets[0])
+                  : `${targets.length} of the anchors`}
+              .
             </p>
-            <button type="button" onClick={onFind} disabled={finding || locked}>
-              {finding ? 'Finding a path…' : `Find shortest path to ${theAnchor}`}
+            {many && targets.length > 1 && (
+              <label className="path-target">
+                Path to
+                <select value={choice} onChange={(event) => onChoose(event.target.value)}>
+                  <option value="nearest">The nearest of them</option>
+                  {targets.map((target) => (
+                    <option key={target.id} value={target.id}>
+                      {target.title ?? 'Untitled'}
+                    </option>
+                  ))}
+                </select>
+              </label>
+            )}
+            <button
+              type="button"
+              onClick={() => onFind(chosen.map((t) => t.id))}
+              disabled={finding || locked}
+            >
+              {finding
+                ? 'Finding a path…'
+                : !many
+                  ? 'Find shortest path to the anchor'
+                  : targets.length === 1
+                    ? 'Find shortest path to that anchor'
+                    : 'Find shortest path'}
             </button>
             {locked && <p className="muted small">{NOT_IN_PLAN}.</p>}
             {result?.outcome === 'none' && (
               <p className="muted small">
                 There&rsquo;s no path on OpenAlex: none of the {result.searched.toLocaleString()}{' '}
-                works linked to this one, however distantly, reaches {theAnchor}.
+                works linked to this one, however distantly, reaches {searched}.
               </p>
             )}
             {result?.outcome === 'budget' && (

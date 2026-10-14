@@ -1142,6 +1142,18 @@ button.with-icon {
   }
 }
 
+/* Which unlinked anchor to look for a path to. */
+.path-target {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  font-size: 0.9em;
+}
+
+.path-target select {
+  max-width: 100%;
+}
+
 /* A work's shortest path of citations to the anchor (in its details). */
 .path-to-anchor {
   display: flex;

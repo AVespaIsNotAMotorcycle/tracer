@@ -1274,6 +1274,83 @@ describe('path to the anchor', () => {
     ).not.toBeInTheDocument();
   });
 
+  it('finds a path between two anchors nothing on the graph links', async () => {
+    window.history.replaceState(null, '', '/?anchor=Wanchor&anchor=Wlone');
+    vi.mocked(api.getWork).mockImplementation(async (id) => (id === 'Wlone' ? lone : anchor));
+    render(<App />);
+    await waitFor(() =>
+      expect(within(graph()).getByRole('button', { name: 'Title b1' })).toBeInTheDocument(),
+    );
+
+    // A work linked to one anchor can look for the other.
+    fireEvent.click(within(graph()).getByRole('button', { name: 'Title citer' }));
+    expect(
+      screen.getByText('No citations on the graph link this work to “Title lone”.'),
+    ).toBeInTheDocument();
+
+    fireEvent.click(within(graph()).getByRole('button', { name: 'Title lone' }));
+    const details = screen.getByRole('complementary', { name: 'Title lone' });
+    expect(
+      within(details).getByText('No citations on the graph link this work to “Title anchor”.'),
+    ).toBeInTheDocument();
+    fireEvent.click(
+      within(details).getByRole('button', { name: 'Find shortest path to that anchor' }),
+    );
+
+    expect(
+      await within(details).findByText(/Connected to “Title anchor” in 3 steps/),
+    ).toBeInTheDocument();
+    expect(api.findPath).toHaveBeenCalledWith('lone', ['anchor']);
+    expect(within(graph()).getByRole('button', { name: 'Title b2' })).toBeInTheDocument();
+  });
+
+  it('lets the user choose which unlinked anchor to look for, or the nearest', async () => {
+    const other = work('other', { year: 1950 });
+    const scholar = { ...FREE, plan: 'scholar', limits: { ...FREE.limits, anchors: 6 } };
+    vi.mocked(api.getAccount).mockResolvedValue(
+      signedInAs({ id: 'u1', email: 'a@b.org' }, scholar),
+    );
+    window.history.replaceState(null, '', '/?anchor=Wanchor&anchor=Wlone&anchor=Wother');
+    vi.mocked(api.getWork).mockImplementation(
+      async (id) => ({ Wlone: lone, Wother: other })[id] ?? anchor,
+    );
+    render(<App />);
+    await waitFor(() =>
+      expect(within(graph()).getByRole('button', { name: 'Title other' })).toBeInTheDocument(),
+    );
+
+    fireEvent.click(within(graph()).getByRole('button', { name: 'Title b1' }));
+    const details = screen.getByRole('complementary', { name: 'Title b1' });
+    expect(
+      within(details).getByText('No citations on the graph link this work to 2 of the anchors.'),
+    ).toBeInTheDocument();
+    const target = within(details).getByLabelText('Path to');
+    expect(
+      within(target)
+        .getAllByRole('option')
+        .map((o) => o.textContent),
+    ).toEqual(['The nearest of them', 'Title anchor', 'Title other']);
+    // Nothing found: still unlinked, so the choice stays.
+    vi.mocked(api.findPath).mockResolvedValue({
+      path: null,
+      searched: 3,
+      outcome: 'none',
+      complete: true,
+    });
+    fireEvent.click(within(details).getByRole('button', { name: 'Find shortest path' }));
+    await waitFor(() => expect(api.findPath).toHaveBeenCalledWith('b1', ['anchor', 'other']));
+    expect(
+      await within(details).findByText(/however distantly, reaches the nearest anchor/),
+    ).toBeInTheDocument();
+
+    fireEvent.change(within(details).getByLabelText('Path to'), { target: { value: 'other' } });
+    fireEvent.click(within(details).getByRole('button', { name: 'Find shortest path' }));
+    await waitFor(() => expect(api.findPath).toHaveBeenCalledWith('b1', ['other']));
+    expect(
+      await within(details).findByText(/however distantly, reaches “Title other”/),
+    ).toBeInTheDocument();
+  });
+
   it('says when nothing links the work to the anchor, or the search gave up', async () => {
     vi.mocked(api.findPath)
       .mockResolvedValueOnce({ path: null, searched: 12, outcome: 'none', complete: true })

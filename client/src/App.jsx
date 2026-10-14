@@ -172,10 +172,12 @@ function GraphPage({ auth }) {
   // The minimum citers the user chose for a co-citation, for one anchor ({ anchorId, value });
   // otherwise it's defaultMinCoCiters.
   const [minCoCitersChoice, setMinCoCitersChoice] = useState(null);
-  // The last path search from a work to the anchors: { anchorsKey, fromId, result } (see
+  // The last path search from a work to anchors: { anchorsKey, fromId, targetIds, result } (see
   // findPathToAnchor), and the work being searched from, if one is.
   const [pathSearch, setPathSearch] = useState(null);
   const [findingPathFrom, setFindingPathFrom] = useState(null);
+  // The anchor chosen to look for a path to, from one work: { fromId, target }.
+  const [pathTarget, setPathTarget] = useState(null);
   const [selectedId, setSelectedId] = useState(null);
   const [axisAngle, setAxisAngle] = useState(DEFAULT_AXIS_ANGLE);
   // Counts runs (builds, re-anchors, options changes), so the view re-fits after each one.
@@ -346,8 +348,13 @@ function GraphPage({ auth }) {
     [openSaved],
   );
 
-  // Open the graph a shared URL (or a saved graph's link) points to.
+  // Open the graph a shared URL (or a saved graph's link) points to, once, when the account is
+  // known: the plan's limits decide how many anchors and how large a build the URL can ask for.
+  const accountKnown = auth.user !== undefined;
+  const openedUrl = useRef(false);
   useEffect(() => {
+    if (!accountKnown || openedUrl.current) return;
+    openedUrl.current = true;
     const { graph: savedId, ...url } = readUrlState(window.location.search);
     if (savedId) {
       openSavedById(savedId);
@@ -359,7 +366,7 @@ function GraphPage({ auth }) {
     // The first run needs no new fit key: nothing has been fitted yet.
     pendingUrl.current = { mode: 'replace', options: urlOptions };
     build(anchors, urlOptions);
-  }, [build, openSavedById]);
+  }, [accountKnown, build, openSavedById]);
 
   // Back/Forward: rebuild whatever graph the URL now describes.
   useEffect(() => {
@@ -498,17 +505,16 @@ function GraphPage({ auth }) {
     }
   };
 
-  // Works joined to an anchor by citations on the graph, either way. Others (brought in by
-  // expanding or adding a work) can look for a path to one.
-  const anchorComponent = useMemo(
-    () =>
-      new Set(
-        connectedComponents(view.works.keys(), deriveEdges(view.works), view.anchorIds)
-          .filter((ids) => ids.some((id) => isAnchor(view, id)))
-          .flat(),
-      ),
-    [view],
-  );
+  // Which part of the graph (connected component, linked by citations either way) each work
+  // is in. A work can look for a path to any anchor outside its part: one brought in by
+  // expanding or adding a work, or another anchor not linked to it.
+  const componentOf = useMemo(() => {
+    const parts = new Map();
+    connectedComponents(view.works.keys(), deriveEdges(view.works), view.anchorIds).forEach(
+      (ids, index) => ids.forEach((id) => parts.set(id, index)),
+    );
+    return parts;
+  }, [view]);
   // Which anchors each work is near, for coloring a graph with several (see
   // anchorNeighborhoods), at the depths the graph was built with.
   const neighborhoods = useMemo(
@@ -516,22 +522,34 @@ function GraphPage({ auth }) {
     [view, graphOptions, options],
   );
 
-  const handleFindPath = async (fromId) => {
+  // Looks for the shortest path from `fromId` to the nearest of `targetIds` (anchors).
+  const handleFindPath = async (fromId, targetIds) => {
     const key = anchorsKey;
     setFindingPathFrom(fromId);
-    const result = await findPath(fromId);
+    const result = await findPath(fromId, targetIds);
     setFindingPathFrom(null);
-    if (result) setPathSearch({ anchorsKey: key, fromId, result });
+    if (result) setPathSearch({ anchorsKey: key, fromId, targetIds, result });
   };
 
   const selected = shownId ? view.works.get(shownId) : null;
   const shownPath =
     selected && pathSearch?.fromId === selected.id && pathSearch.anchorsKey === anchorsKey
-      ? pathSearch.result
+      ? pathSearch
       : null;
-  const disconnected = Boolean(
-    selected && !anchorComponent.has(selected.id) && canExpand(selected),
-  );
+  // The anchors the selected work has no path to on the graph, and which of them to look for
+  // (an anchor's ID, or the nearest).
+  const pathTargets =
+    selected && canExpand(selected)
+      ? view.anchorIds
+          .filter(
+            (id) => id !== selected.id && componentOf.get(id) !== componentOf.get(selected.id),
+          )
+          .map((id) => ({ id, title: view.works.get(id)?.title ?? 'Untitled' }))
+      : [];
+  const pathChoice =
+    pathTarget?.fromId === selected?.id && pathTargets.some((t) => t.id === pathTarget.target)
+      ? pathTarget.target
+      : 'nearest';
   const parts = selected
     ? (partsOf.get(selected.id) ?? []).map((work) => ({
         work,
@@ -901,12 +919,20 @@ function GraphPage({ auth }) {
               : null
           }
           pathControl={
-            disconnected || shownPath?.path
+            pathTargets.length > 0 || shownPath?.result.path
               ? {
-                  disconnected,
+                  targets: pathTargets,
+                  choice: pathChoice,
+                  onChoose: (target) => setPathTarget({ fromId: selected.id, target }),
                   finding: findingPathFrom === selected.id,
-                  result: shownPath,
-                  onFind: () => handleFindPath(selected.id),
+                  result: shownPath && {
+                    ...shownPath.result,
+                    targets: shownPath.targetIds.map((id) => ({
+                      id,
+                      title: view.works.get(id)?.title ?? 'Untitled',
+                    })),
+                  },
+                  onFind: (targetIds) => handleFindPath(selected.id, targetIds),
                   locked: !auth.can('pathSearch'),
                   onSelect: setSelectedId,
                 }

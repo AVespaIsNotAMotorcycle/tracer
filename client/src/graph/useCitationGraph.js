@@ -328,12 +328,13 @@ export function useCitationGraph(api = defaultApi) {
   );
 
   /**
-   * Asks the server for the shortest path of citations from `fromId` to the nearest anchor
-   * (see findPath in api.js) and adds its works to the graph. Resolves to the search's result,
-   * or null if it failed or the anchors changed meanwhile.
+   * Asks the server for the shortest path of citations from `fromId` to the nearest of
+   * `toIds` (anchors; all of them by default; see findPath in api.js) and adds its works to the
+   * graph. Resolves to the search's result, or null if it failed or the anchors changed
+   * meanwhile.
    */
   const findPath = useCallback(
-    async (fromId) => {
+    async (fromId, toIds = graphRef.current.anchorIds) => {
       const anchorIds = graphRef.current.anchorIds;
       const title = graphRef.current.works.get(fromId)?.title ?? 'work';
       const short = title.length > 40 ? `${title.slice(0, 39)}…` : title;
@@ -342,7 +343,7 @@ export function useCitationGraph(api = defaultApi) {
       progress.plan(1);
       const finish = progress.begin({ key: `path:${fromId}`, label: 'Searching citations' });
       try {
-        const result = await api.findPath(fromId, anchorIds);
+        const result = await api.findPath(fromId, toIds);
         if (!sameAnchors(graphRef.current.anchorIds, anchorIds)) return null;
         if (result.path) {
           setGraph((latest) =>

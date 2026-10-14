@@ -1539,6 +1539,129 @@ describe('saved graphs', () => {
   });
 });
 
+describe('auto-save', () => {
+  const user = { id: 'u1', email: 'historian@example.org' };
+  const savedFrom = (state, overrides = {}) => ({
+    id: 'g1',
+    name: 'Riots',
+    createdAt: '2026-01-01T00:00:00Z',
+    updatedAt: '2026-01-02T00:00:00Z',
+    annotations: [],
+    ...state,
+    ...overrides,
+  });
+  // Changes are saved once they've settled for AUTO_SAVE_DELAY_MS.
+  const settled = { timeout: 4000 };
+
+  beforeEach(() => {
+    window.localStorage.clear();
+    vi.mocked(api.getCurrentUser).mockResolvedValue(user);
+    vi.mocked(api.saveGraph).mockReset();
+    vi.mocked(api.updateGraph).mockReset();
+    vi.mocked(api.saveGraph).mockImplementation(async (name, state) => savedFrom(state, { name }));
+    vi.mocked(api.updateGraph).mockImplementation(async (id, name, state) =>
+      savedFrom(state, { id, name }),
+    );
+  });
+
+  it('saves an unsaved graph when turned on, then saves each change', async () => {
+    await buildFromSearch();
+    fireEvent.click(await screen.findByRole('checkbox', { name: 'Auto-save' }));
+    await waitFor(() => expect(api.saveGraph).toHaveBeenCalledTimes(1));
+    expect(api.saveGraph).toHaveBeenCalledWith(
+      'Title anchor',
+      expect.any(Object),
+      expect.any(Object),
+    );
+    expect(await screen.findByText('All changes saved')).toBeInTheDocument();
+    expect(window.location.search).toContain('graph=g1');
+
+    // Pinning and a note: one save, of the view only, so no new snapshot.
+    fireEvent.click(within(graph()).getByRole('button', { name: 'Title citer' }));
+    fireEvent.click(screen.getByRole('button', { name: 'Pin: always show' }));
+    fireEvent.click(screen.getByRole('button', { name: 'Add note' }));
+    fireEvent.change(screen.getByLabelText('Note'), { target: { value: 'Key' } });
+    fireEvent.click(screen.getByRole('button', { name: 'Save note' }));
+    await waitFor(() => expect(api.updateGraph).toHaveBeenCalledTimes(1), settled);
+    const [id, name, state, snapshot] = vi.mocked(api.updateGraph).mock.calls[0];
+    expect([id, name, snapshot]).toEqual(['g1', 'Title anchor', undefined]);
+    expect(state.view.pinned).toEqual(['citer']);
+    expect(state.annotations).toEqual([
+      { target: { type: 'work', workId: 'citer' }, kind: 'note', body: 'Key' },
+    ]);
+
+    // Expanding changes the works, so it's saved with them.
+    fireEvent.click(screen.getByRole('button', { name: 'Expand citing and cited works' }));
+    await waitFor(() => expect(api.updateGraph).toHaveBeenCalledTimes(2), settled);
+    const [, , expandedState, expandedSnapshot] = vi.mocked(api.updateGraph).mock.calls[1];
+    expect(expandedState.expanded).toEqual(['citer']);
+    expect(expandedSnapshot.works.map((w) => w.id)).toContain('more');
+  });
+
+  it('doesn’t save when nothing changed, or once turned off', async () => {
+    await buildFromSearch();
+    fireEvent.click(await screen.findByRole('checkbox', { name: 'Auto-save' }));
+    await screen.findByText('All changes saved');
+    await new Promise((resolve) => setTimeout(resolve, 2000));
+    expect(api.updateGraph).not.toHaveBeenCalled();
+
+    fireEvent.click(screen.getByRole('checkbox', { name: 'Auto-save' }));
+    fireEvent.click(within(graph()).getByRole('button', { name: 'Title citer' }));
+    fireEvent.click(screen.getByRole('button', { name: 'Pin: always show' }));
+    await new Promise((resolve) => setTimeout(resolve, 2000));
+    expect(api.updateGraph).not.toHaveBeenCalled();
+  });
+
+  it('stays on for a saved graph when it’s reopened, saving only changes', async () => {
+    window.localStorage.setItem('tracer:autoSave:g1', '1');
+    vi.mocked(api.getSavedGraph).mockResolvedValue(
+      savedFrom({
+        anchor: { id: 'anchor', ref: 'Wanchor', title: 'Title anchor' },
+        options: { citingDepth: 1, citedDepth: 1, limit: 20, maxNodes: 300 },
+        filters: { minYear: null, maxYear: null, minConnections: 1, excludedTypes: [] },
+        view: { axisAngle: 30 },
+        expanded: [],
+      }),
+    );
+    window.history.replaceState(null, '', '/?graph=g1');
+    render(<App />);
+
+    const citerNode = await screen.findByRole('button', { name: 'Title citer' });
+    expect(await screen.findByRole('checkbox', { name: 'Auto-save' })).toBeChecked();
+    await new Promise((resolve) => setTimeout(resolve, 2000));
+    expect(api.updateGraph).not.toHaveBeenCalled();
+
+    fireEvent.click(citerNode);
+    fireEvent.click(screen.getByRole('button', { name: 'Pin: always show' }));
+    await waitFor(() => expect(api.updateGraph).toHaveBeenCalledTimes(1), settled);
+    expect(vi.mocked(api.updateGraph).mock.calls[0].slice(0, 2)).toEqual(['g1', 'Riots']);
+  });
+
+  it('says when a save fails', async () => {
+    await buildFromSearch();
+    fireEvent.click(await screen.findByRole('checkbox', { name: 'Auto-save' }));
+    await screen.findByText('All changes saved');
+    vi.mocked(api.updateGraph).mockRejectedValue(new Error('Server unavailable'));
+    fireEvent.click(within(graph()).getByRole('button', { name: 'Title citer' }));
+    fireEvent.click(screen.getByRole('button', { name: 'Pin: always show' }));
+    expect(
+      await screen.findByText('Couldn’t save: Server unavailable', {}, settled),
+    ).toBeInTheDocument();
+  });
+
+  it('turns off for a new search', async () => {
+    await buildFromSearch();
+    fireEvent.click(await screen.findByRole('checkbox', { name: 'Auto-save' }));
+    await screen.findByText('All changes saved');
+    fireEvent.click(screen.getByRole('button', { name: 'Go' }));
+    const results = await screen.findByRole('list', { name: 'Search results' });
+    fireEvent.click(within(results).getByRole('button', { name: /Title anchor/ }));
+    await waitFor(() =>
+      expect(screen.getByRole('checkbox', { name: 'Auto-save' })).not.toBeChecked(),
+    );
+  });
+});
+
 describe('profile page', () => {
   const user = { id: 'u1', email: 'historian@example.org' };
   const summary = (id, name) => ({

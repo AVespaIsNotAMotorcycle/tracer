@@ -6,21 +6,58 @@ const MAX_NAME_LENGTH = 120;
 /**
  * The "Save graph" button over the graph, and its dialog for naming the graph. A graph opened
  * from (or already saved as) a saved graph can be updated in place or saved as a new one.
- * Signed out, it says to log in instead.
+ * Signed out, it says to log in instead. Beside it, the "Auto-save" checkbox (`autoSave`,
+ * `onAutoSaveChange`) saves every change as it happens, with `autoSaveStatus` ({ state:
+ * 'saving' | 'saved' | 'error', message? }) shown in place of the last save's message.
  */
-export default function SaveGraph({ user, savedGraph, defaultName, disabled, onSave }) {
+export default function SaveGraph({
+  user,
+  savedGraph,
+  defaultName,
+  disabled,
+  onSave,
+  autoSave = false,
+  autoSaveStatus = null,
+  onAutoSaveChange,
+}) {
   const [open, setOpen] = useState(false);
   const [message, setMessage] = useState(null);
 
   if (user === undefined) return null;
   if (!user) return <span className="muted small">Log in to save this graph</span>;
 
+  const status = autoSaveStatus
+    ? {
+        saving: 'Saving…',
+        saved: 'All changes saved',
+        error: `Couldn’t save: ${autoSaveStatus.message}`,
+      }[autoSaveStatus.state]
+    : message;
+
   return (
     <>
-      {message && (
-        <span role="status" className="muted small">
-          {message}
+      {status && (
+        <span
+          role="status"
+          className={autoSaveStatus?.state === 'error' ? 'error small' : 'muted small'}
+        >
+          {status}
         </span>
+      )}
+      {onAutoSaveChange && (
+        <label className="checkbox-field">
+          <input
+            type="checkbox"
+            checked={autoSave}
+            // Turning it on for an unsaved graph saves it, which waits for the graph.
+            disabled={!savedGraph && !autoSave && disabled}
+            onChange={(event) => {
+              setMessage(null);
+              onAutoSaveChange(event.target.checked);
+            }}
+          />
+          Auto-save
+        </label>
       )}
       <button
         type="button"

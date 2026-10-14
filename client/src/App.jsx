@@ -59,6 +59,28 @@ const notesFrom = (annotations = []) =>
       .map((a) => [a.target.workId, a.body]),
   );
 
+// Auto-save is remembered per saved graph in this browser, so reloading one keeps it on.
+const autoSaveKey = (id) => `tracer:autoSave:${id}`;
+function rememberAutoSave(id, on) {
+  try {
+    if (on) window.localStorage.setItem(autoSaveKey(id), '1');
+    else window.localStorage.removeItem(autoSaveKey(id));
+  } catch {
+    // Storage blocked: it just won't be remembered.
+  }
+}
+function autoSaveRemembered(id) {
+  try {
+    return window.localStorage.getItem(autoSaveKey(id)) === '1';
+  } catch {
+    return false;
+  }
+}
+
+// How long changes settle before auto-save sends them, so a burst (say, stepping a slider) is
+// one save.
+export const AUTO_SAVE_DELAY_MS = 1500;
+
 const short = (text, max = 40) => (text.length > max ? `${text.slice(0, max - 1)}…` : text);
 
 /**
@@ -136,6 +158,15 @@ function GraphPage({ auth }) {
   // The saved graph this one was opened from or last saved as ({ id, name }), so saving again
   // can update it. A new search starts a new, unsaved graph.
   const [savedGraph, setSavedGraph] = useState(null);
+  // Whether every change to the saved graph is saved as it happens, and how that's going:
+  // { state: 'saving' | 'saved' | 'error', message? }.
+  const [autoSave, setAutoSave] = useState(false);
+  const [autoSaveStatus, setAutoSaveStatus] = useState(null);
+  // What was last saved (or opened): the state's JSON and the graph it was built into, so
+  // auto-save knows whether anything changed and whether to send a new snapshot. `baseline`
+  // asks for the next idle graph to be taken as saved, after opening one.
+  const lastSaved = useRef({ json: null, graph: null, baseline: false });
+  const saving = useRef(false);
   const [openError, setOpenError] = useState(null);
   // Advanced search fills the page below the header while open. Once opened it stays mounted
   // (hidden), so its fields, results and chosen works are still there next time; `query` is
@@ -194,6 +225,8 @@ function GraphPage({ auth }) {
     setCoCitations(null);
     setPathSearch(null);
     setSavedGraph(null);
+    setAutoSave(false);
+    setAutoSaveStatus(null);
     setOpenError(null);
     pendingUrl.current = { mode: 'push', options };
     setRunCount((n) => n + 1);
@@ -241,6 +274,9 @@ function GraphPage({ auth }) {
       setPathSearch(null);
       setSelectedId(null);
       setSavedGraph({ id: saved.id, name: saved.name });
+      setAutoSave(autoSaveRemembered(saved.id));
+      setAutoSaveStatus(null);
+      lastSaved.current = { json: null, graph: null, baseline: true };
       setOpenError(null);
       setRunCount((n) => n + 1);
       restore(
@@ -300,6 +336,8 @@ function GraphPage({ auth }) {
       setNotes(new Map());
       setCoCitations(null);
       setSavedGraph(null);
+      setAutoSave(false);
+      setAutoSaveStatus(null);
       if (anchor) {
         pendingUrl.current = { mode: 'replace', options: urlOptions };
         setRunCount((n) => n + 1);
@@ -440,12 +478,11 @@ function GraphPage({ auth }) {
   const hasGraph = graph.works.size > 0;
   const anchorWork = graph.works.get(graph.anchorId);
 
-  // Saves the graph as it is now: what's needed to rebuild it (anchor, the options it was built
-  // with, the works the user expanded, in order) and how it's shown (filters, axis), plus a
-  // snapshot of its works so reopening it needn't fetch them (not while a run or expansion is
-  // still changing them). Updates the saved graph it came from, unless saving as new.
-  const handleSave = async (name, asNew) => {
-    const state = {
+  // What saving stores: what's needed to rebuild the graph (anchor, the options it was built
+  // with, the works the user expanded, in order), how it's shown (filters, axis, pins) and the
+  // user's notes.
+  const saveState = useMemo(
+    () => ({
       anchor: {
         id: graph.anchorId,
         ref: anchorWork ? shareableId(anchorWork) : null,
@@ -461,17 +498,101 @@ function GraphPage({ auth }) {
         kind: 'note',
         body,
       })),
-    };
-    const snapshot = busy || expanding.size > 0 ? undefined : graphSnapshot(graph, truncated);
-    const saved =
-      savedGraph && !asNew
-        ? await updateGraph(savedGraph.id, name, state, snapshot)
-        : await saveGraph(name, state, snapshot);
-    setSavedGraph({ id: saved.id, name: saved.name });
-    // Reloading (or sharing the link with yourself) reopens the saved graph.
-    const { pathname, search, hash } = window.location;
-    window.history.replaceState(null, '', `${pathname}${withSavedGraph(search, saved.id)}${hash}`);
+    }),
+    [graph, anchorWork, graphOptions, options, filters, axisAngle, pinned, view, notes],
+  );
+  const saveJson = useMemo(() => JSON.stringify(saveState), [saveState]);
+  const idle = !busy && expanding.size === 0;
+
+  // Saves the graph as it is now, with a snapshot of its works so reopening it needn't fetch
+  // them (not while a run or expansion is still changing them; and when auto-saving, only if
+  // the works changed, since the server keeps the last one). Updates the saved graph it came
+  // from, unless saving as new.
+  const saveNow = async (name, asNew, { auto = false } = {}) => {
+    const withSnapshot = idle && (!auto || lastSaved.current.graph !== graph);
+    const snapshot = withSnapshot ? graphSnapshot(graph, truncated) : undefined;
+    const previous = lastSaved.current;
+    lastSaved.current = { json: saveJson, graph: withSnapshot ? graph : previous.graph };
+    try {
+      const saved =
+        savedGraph && !asNew
+          ? await updateGraph(savedGraph.id, name, saveState, snapshot)
+          : await saveGraph(name, saveState, snapshot);
+      setSavedGraph({ id: saved.id, name: saved.name });
+      // Reloading (or sharing the link with yourself) reopens the saved graph.
+      const { pathname, search, hash } = window.location;
+      window.history.replaceState(
+        null,
+        '',
+        `${pathname}${withSavedGraph(search, saved.id)}${hash}`,
+      );
+      return saved;
+    } catch (err) {
+      // A manual save that failed can be tried again as is.
+      if (!auto) lastSaved.current = previous;
+      throw err;
+    }
+  };
+
+  const handleSave = async (name, asNew) => {
+    const saved = await saveNow(name, asNew);
+    if (autoSave) rememberAutoSave(saved.id, true);
     return saved;
+  };
+
+  // Auto-save, once the graph is idle and something has changed, after changes settle. One
+  // save at a time: a change made during one is saved after it.
+  useEffect(() => {
+    // Just opened: once it's built, what's on screen is what was saved.
+    if (lastSaved.current.baseline && idle && hasGraph) {
+      lastSaved.current = { json: saveJson, graph };
+    }
+  }, [idle, hasGraph, saveJson, graph]);
+  useEffect(() => {
+    if (!autoSave || !savedGraph || !idle || !hasGraph || saving.current) return undefined;
+    if (lastSaved.current.baseline) return undefined;
+    if (saveJson === lastSaved.current.json && graph === lastSaved.current.graph) return undefined;
+    // Not "saved" while a change waits. Kept as is if already saving, so this doesn't re-run.
+    setAutoSaveStatus((prev) => (prev?.state === 'saving' ? prev : { state: 'saving' }));
+    const timer = setTimeout(async () => {
+      saving.current = true;
+      let status;
+      try {
+        await saveNow(savedGraph.name, false, { auto: true });
+        status = { state: 'saved' };
+      } catch (err) {
+        status = { state: 'error', message: err.message };
+      }
+      // Cleared first: the new status re-runs this effect, which saves anything changed since.
+      saving.current = false;
+      setAutoSaveStatus(status);
+    }, AUTO_SAVE_DELAY_MS);
+    return () => clearTimeout(timer);
+    // saveNow reads the same state as these.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [autoSave, savedGraph, idle, hasGraph, saveJson, graph, autoSaveStatus]);
+
+  // Turning auto-save on saves an unsaved graph at once, named after its anchor.
+  const handleAutoSaveChange = async (on) => {
+    setAutoSave(on);
+    setAutoSaveStatus(null);
+    if (savedGraph) {
+      rememberAutoSave(savedGraph.id, on);
+      return;
+    }
+    if (!on) return;
+    saving.current = true;
+    setAutoSaveStatus({ state: 'saving' });
+    try {
+      const saved = await saveNow(anchorWork?.title ?? '', false);
+      rememberAutoSave(saved.id, true);
+      saving.current = false;
+      setAutoSaveStatus({ state: 'saved' });
+    } catch (err) {
+      saving.current = false;
+      setAutoSave(false);
+      setAutoSaveStatus({ state: 'error', message: err.message });
+    }
   };
 
   return (
@@ -582,6 +703,9 @@ function GraphPage({ auth }) {
               defaultName={anchorWork?.title ?? ''}
               disabled={busy}
               onSave={handleSave}
+              autoSave={autoSave}
+              autoSaveStatus={autoSaveStatus}
+              onAutoSaveChange={handleAutoSaveChange}
             />
           </div>
         )}

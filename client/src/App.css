@@ -298,6 +298,20 @@ button.with-icon {
   margin: 0;
 }
 
+.header-nav {
+  margin-left: auto;
+  align-self: center;
+}
+
+.header-nav a {
+  color: var(--accent);
+}
+
+/* The nav already pushes the account controls right. */
+.header-nav + .account {
+  margin-left: 0;
+}
+
 .account {
   margin-left: auto;
   display: flex;
@@ -1487,4 +1501,132 @@ button.danger {
   background: var(--error);
   border-color: var(--error);
   color: var(--accent-text);
+}
+
+/* The plans compared (/pricing). */
+.pricing {
+  width: 100%;
+  /* Lets the table scroll inside its box instead of widening the page. */
+  min-width: 0;
+  max-width: 960px;
+  margin: 24px auto;
+  padding: 0 16px;
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+}
+
+.pricing p {
+  margin: 0;
+  max-width: 70ch;
+}
+
+/* The table scrolls sideways on narrow screens, rather than the page. */
+.pricing-table-wrap {
+  /* Holds the cells' visually hidden labels (absolutely positioned) inside the scroll box. */
+  position: relative;
+  overflow-x: auto;
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  background: var(--surface);
+}
+
+.pricing-table {
+  width: 100%;
+  min-width: 560px;
+  border-collapse: collapse;
+  font-size: 0.95em;
+}
+
+.pricing-table th,
+.pricing-table td {
+  padding: 10px 12px;
+  border-bottom: 1px solid var(--border);
+  text-align: left;
+  vertical-align: top;
+}
+
+.pricing-table thead th {
+  position: sticky;
+  top: 0;
+  background: var(--surface-2);
+  font-size: 0.9em;
+}
+
+.pricing-table thead th:nth-child(2),
+.pricing-table thead th:nth-child(3) {
+  width: 17%;
+}
+
+.pricing-table thead th:last-child {
+  width: 15%;
+}
+
+.pricing-table .group-row th {
+  padding-top: 18px;
+  background: var(--bg);
+  font-size: 0.85em;
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+  color: var(--muted);
+}
+
+.pricing-table tbody th[scope='row'] {
+  font-weight: normal;
+}
+
+.feature-name {
+  display: block;
+  font-weight: 600;
+}
+
+.feature-note {
+  display: block;
+  margin-top: 2px;
+  color: var(--muted);
+  font-size: 0.9em;
+}
+
+.plan-cell .icon {
+  width: 18px;
+  height: 18px;
+}
+
+.plan-cell .included {
+  color: var(--accent);
+}
+
+.plan-cell .not-included {
+  color: var(--muted);
+}
+
+/* Planned features: muted, so what's available now stands out. */
+.pricing-table tr.planned .feature-name,
+.pricing-table tr.planned .plan-cell {
+  color: var(--muted);
+}
+
+.status {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  padding: 2px 8px;
+  border-radius: 999px;
+  font-size: 0.85em;
+  white-space: nowrap;
+}
+
+.status .icon {
+  width: 14px;
+  height: 14px;
+}
+
+.status.available {
+  background: var(--accent);
+  color: var(--accent-text);
+}
+
+.status.planned {
+  border: 1px dashed var(--border);
+  color: var(--muted);
 }

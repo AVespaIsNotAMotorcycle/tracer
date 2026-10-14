@@ -2034,3 +2034,41 @@ describe('multiple anchors', () => {
     expect(snapshot.anchorIds).toEqual(['anchor', 'citer']);
   });
 });
+
+describe('plans and pricing', () => {
+  it('is linked from the header', async () => {
+    render(<App />);
+    expect(screen.getByRole('link', { name: 'Plans and pricing' })).toHaveAttribute(
+      'href',
+      '/pricing',
+    );
+  });
+
+  it('compares the plans feature by feature, marking what’s available and what’s planned', () => {
+    window.history.replaceState(null, '', '/pricing');
+    render(<App />);
+
+    expect(screen.getByRole('heading', { name: 'Plans and pricing' })).toBeInTheDocument();
+    const table = screen.getByRole('table', { name: /Features of the Free and Scholar plans/ });
+    const row = (name) => within(table).getByRole('row', { name: new RegExp(`^${name}`) });
+
+    const anchors = row('Multiple anchors');
+    expect(within(anchors).getByText('Up to 2')).toBeInTheDocument();
+    expect(within(anchors).getByText('Up to 6')).toBeInTheDocument();
+    expect(within(anchors).getByText('Available')).toBeInTheDocument();
+
+    const clusters = row('Cluster detection');
+    expect(within(clusters).getByText('Not included')).toBeInTheDocument();
+    expect(within(clusters).getByText('Included')).toBeInTheDocument();
+    expect(within(clusters).getByText('Planned')).toBeInTheDocument();
+
+    // Every feature says whether it's available.
+    const features = within(table)
+      .getAllByRole('row')
+      .filter((r) => within(r).queryByRole('rowheader'));
+    for (const feature of features) {
+      expect(within(feature).queryByText(/^(Available|Planned)$/)).not.toBeNull();
+    }
+    expect(screen.getByText(/of the \d+ features below are available now/)).toBeInTheDocument();
+  });
+});

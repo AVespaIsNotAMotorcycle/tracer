@@ -9,6 +9,7 @@ import DetailsPanel from './components/DetailsPanel.jsx';
 import FiltersPanel from './components/FiltersPanel.jsx';
 import Header from './components/Header.jsx';
 import LoadingProgress from './components/LoadingProgress.jsx';
+import PricingPage from './components/PricingPage.jsx';
 import ProfilePage from './components/ProfilePage.jsx';
 import SaveGraph from './components/SaveGraph.jsx';
 import SearchPanel from './components/SearchPanel.jsx';
@@ -102,12 +103,13 @@ const anchorsName = (anchors) => {
 };
 
 /**
- * The app: the graph, or the signed-in user's saved graphs at /profile. There's no client-side
+ * The app: the graph, the signed-in user's saved graphs at /profile, or the plans at /pricing. There's no client-side
  * router; links between the two load the page, and the server serves index.html for both.
  */
 export default function App() {
   const auth = useAuth();
   if (window.location.pathname === '/profile') return <ProfilePage auth={auth} />;
+  if (window.location.pathname === '/pricing') return <PricingPage auth={auth} />;
   return <GraphPage auth={auth} />;
 }
 

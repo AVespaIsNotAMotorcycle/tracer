@@ -1,5 +1,6 @@
 import express from 'express';
 import { jsonErrors, requireUser, sessionRequestChecks } from '../auth/routes.js';
+import { entitlementsFor, requireFeature } from '../entitlements/entitlements.js';
 
 /**
  * Routes under /api/graphs, all for the signed-in user's own saved graphs:
@@ -7,6 +8,9 @@ import { jsonErrors, requireUser, sessionRequestChecks } from '../auth/routes.js
  * replaces its contents ({ name?, state }; its notes too if the state has `annotations`); PATCH /:id renames it ({ name }); DELETE /:id
  * deletes it. POST and PUT also take `snapshot`, the graph as built, which GET /:id returns
  * while it's fresh; PUT /:id/snapshot ({ key, snapshot }) stores one for a graph just rebuilt.
+ *
+ * Saving needs the `saveGraphs` feature, within the plan's limits. Listing, opening, renaming
+ * and deleting don't, so an account that loses it keeps its graphs.
  *
  * @param {ReturnType<typeof import('./graphService.js').createGraphService>} graphService
  * @param {ReturnType<typeof import('../auth/authService.js').createAuthService>} authService
@@ -23,16 +27,25 @@ export function createGraphsRouter(graphService, authService) {
     res.json({ graphs: await graphService.list(req.user.id) });
   });
 
-  router.post('/', async (req, res) => {
-    res.status(201).json({ graph: await graphService.create(req.user.id, req.body ?? {}) });
+  const limits = (req) => ({ limits: entitlementsFor(req.user).limits });
+
+  router.post('/', requireFeature('saveGraphs'), async (req, res) => {
+    const graph = await graphService.create(req.user.id, req.body ?? {}, limits(req));
+    res.status(201).json({ graph });
   });
 
   router.get('/:id', async (req, res) => {
     res.json({ graph: await graphService.get(req.user.id, req.params.id) });
   });
 
-  router.put('/:id', async (req, res) => {
-    res.json({ graph: await graphService.update(req.user.id, req.params.id, req.body ?? {}) });
+  router.put('/:id', requireFeature('saveGraphs'), async (req, res) => {
+    const graph = await graphService.update(
+      req.user.id,
+      req.params.id,
+      req.body ?? {},
+      limits(req),
+    );
+    res.json({ graph });
   });
 
   router.put('/:id/snapshot', async (req, res) => {

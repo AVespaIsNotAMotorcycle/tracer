@@ -1,10 +1,17 @@
 import express from 'express';
 import mongoose from 'mongoose';
 import { HttpError } from '../works/errors.js';
-import { SESSION_TTL_MS } from './authService.js';
+import { entitlementsFor } from '../entitlements/entitlements.js';
+import { clientUser, SESSION_TTL_MS } from './authService.js';
 import { createRateLimiter } from './rateLimit.js';
 
 export const SESSION_COOKIE = 'tracer_session';
+
+/** The body of the auth routes' answers: the account (or null) and what its plan includes. */
+const accountBody = (user) => ({
+  user: user ? clientUser(user) : null,
+  entitlements: entitlementsFor(user),
+});
 
 /** The value of cookie `name` from a request's Cookie header, if any. */
 export function readCookie(req, name) {
@@ -58,7 +65,7 @@ export function sessionRequestChecks() {
 export function jsonErrors() {
   // eslint-disable-next-line no-unused-vars -- Express identifies error handlers by arity.
   return (err, req, res, next) => {
-    if (err instanceof HttpError) return res.status(err.status).json({ error: err.message });
+    if (err instanceof HttpError) return res.status(err.status).json(err.body());
     // Malformed JSON bodies.
     if (err.type === 'entity.parse.failed') return res.status(400).json({ error: 'Invalid JSON' });
     if (err.type === 'entity.too.large')
@@ -104,7 +111,7 @@ export function createAuthRouter(authService, { secureCookies = false, now } = {
     }
     const { user, token } = await authService.signUp(req.body?.email, req.body?.password);
     setSession(res, token);
-    res.status(201).json({ user });
+    res.status(201).json(accountBody(user));
   });
 
   router.post('/login', async (req, res) => {
@@ -116,7 +123,7 @@ export function createAuthRouter(authService, { secureCookies = false, now } = {
     }
     const { user, token } = await authService.logIn(req.body?.email, req.body?.password);
     setSession(res, token);
-    res.json({ user });
+    res.json(accountBody(user));
   });
 
   router.post('/logout', async (req, res) => {
@@ -126,7 +133,7 @@ export function createAuthRouter(authService, { secureCookies = false, now } = {
   });
 
   router.get('/me', async (req, res) => {
-    res.json({ user: await authService.userForToken(readCookie(req, SESSION_COOKIE)) });
+    res.json(accountBody(await authService.userForToken(readCookie(req, SESSION_COOKIE))));
   });
 
   router.use(jsonErrors());

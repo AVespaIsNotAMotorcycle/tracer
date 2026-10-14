@@ -1,5 +1,7 @@
 import express from 'express';
 import mongoose from 'mongoose';
+import { loadUser } from '../auth/routes.js';
+import { checkLimit, limitFor, requireFeature } from '../entitlements/entitlements.js';
 import { ProviderError } from '../providers/errors.js';
 import { HttpError } from './errors.js';
 
@@ -12,6 +14,21 @@ function parseLimit(value) {
   if (!Number.isInteger(limit) || limit < 1 || limit > MAX_LIMIT) {
     throw new HttpError(400, `limit must be an integer from 1 to ${MAX_LIMIT}`);
   }
+  return limit;
+}
+
+/** How many citing or cited works to list: `limit`, within the user's works per node. */
+function parseNeighborLimit(req) {
+  if (req.query.limit === undefined) {
+    return Math.min(DEFAULT_LIMIT, limitFor(req.user, 'perNode'));
+  }
+  const limit = parseLimit(req.query.limit);
+  checkLimit(
+    req.user,
+    'perNode',
+    limit,
+    `Your plan allows at most ${limitFor(req.user, 'perNode')} works per node`,
+  );
   return limit;
 }
 
@@ -94,9 +111,13 @@ export function parseCriteria(query) {
  * Routes under /api/works. `:id` accepts a Tracer ID, an OpenAlex ID, or a DOI. DOIs contain
  * slashes, so clients must URL-encode them (encodeURIComponent).
  *
+ * Works routes are open to anyone, but some are gated by plan (see entitlements), so the
+ * signed-in user, if any, is loaded as `req.user` (null without `authService`, as in tests).
+ *
  * @param {ReturnType<typeof import('./workService.js').createWorkService>} workService
+ * @param {ReturnType<typeof import('../auth/authService.js').createAuthService>} [authService]
  */
-export function createWorksRouter(workService) {
+export function createWorksRouter(workService, authService) {
   const router = express.Router();
 
   // Tracer IDs live in MongoDB, so these routes can't work without it.
@@ -107,6 +128,14 @@ export function createWorksRouter(workService) {
     next();
   });
 
+  if (authService) router.use(loadUser(authService));
+  else {
+    router.use((req, res, next) => {
+      req.user = null;
+      next();
+    });
+  }
+
   router.get('/', async (req, res) => {
     const query = typeof req.query.q === 'string' ? req.query.q.trim() : '';
     if (!query) throw new HttpError(400, 'q is required');
@@ -116,7 +145,7 @@ export function createWorksRouter(workService) {
   });
 
   // Before /:id, which would take "search" and "suggest" for work IDs.
-  router.get('/search', async (req, res) => {
+  router.get('/search', requireFeature('advancedSearch'), async (req, res) => {
     const criteria = parseCriteria(req.query);
     const limit = parseLimit(req.query.limit);
     const page = parseInteger(req.query.page, 'page', 1, Math.floor(MAX_RESULT / limit)) ?? 1;
@@ -139,12 +168,12 @@ export function createWorksRouter(workService) {
   });
 
   router.get('/:id/citing', async (req, res) => {
-    const limit = parseLimit(req.query.limit);
+    const limit = parseNeighborLimit(req);
     res.json({ works: await workService.getCitingWorks(req.params.id, { limit }) });
   });
 
   router.get('/:id/cited', async (req, res) => {
-    const limit = parseLimit(req.query.limit);
+    const limit = parseNeighborLimit(req);
     res.json({ works: await workService.getCitedWorks(req.params.id, { limit }) });
   });
 
@@ -152,7 +181,7 @@ export function createWorksRouter(workService) {
     res.json({ match: await workService.getCitationMatch(req.params.id) });
   });
 
-  router.get('/:id/path', async (req, res) => {
+  router.get('/:id/path', requireFeature('pathSearch'), async (req, res) => {
     const to = single(req.query.to);
     if (!to) throw new HttpError(400, 'to is required');
     res.json(await workService.findPath(req.params.id, to));
@@ -165,7 +194,7 @@ export function createWorksRouter(workService) {
   // eslint-disable-next-line no-unused-vars -- Express identifies error handlers by arity.
   router.use((err, req, res, next) => {
     if (err instanceof HttpError) {
-      return res.status(err.status).json({ error: err.message });
+      return res.status(err.status).json(err.body());
     }
     if (err instanceof ProviderError) {
       console.error(err);

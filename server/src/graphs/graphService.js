@@ -2,6 +2,8 @@ import { createHash } from 'node:crypto';
 import { promisify } from 'node:util';
 import { gunzip as gunzipCallback, gzip as gzipCallback } from 'node:zlib';
 import mongoose from 'mongoose';
+import { EntitlementError } from '../entitlements/entitlements.js';
+import { PLANS } from '../entitlements/plans.js';
 import { GraphSnapshot } from '../models/GraphSnapshot.js';
 import { SavedGraph } from '../models/SavedGraph.js';
 import { HttpError } from '../works/errors.js';
@@ -10,7 +12,6 @@ const gzip = promisify(gzipCallback);
 const gunzip = promisify(gunzipCallback);
 
 export const MAX_NAME_LENGTH = 120;
-export const MAX_GRAPHS_PER_USER = 500;
 const MAX_EXPANDED = 5000;
 const MAX_ANNOTATIONS = 5000;
 const MAX_NOTE_LENGTH = 10_000;
@@ -31,6 +32,14 @@ const OPTION_RANGES = {
   maxNodes: [10, 2000],
 };
 
+// Which plan limit (entitlements/plans.js) caps each build option.
+const OPTION_LIMITS = {
+  citingDepth: 'depth',
+  citedDepth: 'depth',
+  limit: 'perNode',
+  maxNodes: 'maxNodes',
+};
+
 const isInt = (value) => Number.isInteger(value);
 const bad = (message) => new HttpError(400, message);
 
@@ -40,10 +49,13 @@ const bad = (message) => new HttpError(400, message);
  *
  * `annotations` is optional: without it, an update keeps the graph's annotations.
  *
+ * Options beyond the user's plan limits (`limits`) are a 403.
+ *
  * @param {any} state  { anchor: { id, ref?, title? }, options, filters,
  *   view: { axisAngle, pinned }, expanded, annotations? }
+ * @param {Record<string, number>} [limits]  The user's plan limits (entitlementsFor).
  */
-export function checkState(state) {
+export function checkState(state, limits = PLANS.free.limits) {
   if (!state || typeof state !== 'object') throw bad('Missing graph');
   const { anchor, options, filters = {}, view = {}, expanded = [] } = state;
   if (typeof anchor?.id !== 'string' || !anchor.id || anchor.id.length > 64) {
@@ -53,6 +65,10 @@ export function checkState(state) {
   for (const [key, [min, max]] of Object.entries(OPTION_RANGES)) {
     const value = options?.[key];
     if (!isInt(value) || value < min || value > max) throw bad(`Invalid option: ${key}`);
+    const limit = OPTION_LIMITS[key];
+    if (value > limits[limit]) {
+      throw new EntitlementError(`Your plan allows at most ${limits[limit]} (${key})`, { limit });
+    }
     checkedOptions[key] = value;
   }
   const year = (value) => {
@@ -306,12 +322,17 @@ export function createGraphService({
       return graphs.map(summary);
     },
 
-    /** Saves a graph, with a snapshot of it as built if one is given. */
-    async create(userId, { name, state, snapshot }) {
-      const checked = checkState(state);
+    /**
+     * Saves a graph, with a snapshot of it as built if one is given. `limits` are the user's
+     * plan limits (entitlementsFor): how many graphs they can save, and the build options.
+     */
+    async create(userId, { name, state, snapshot }, { limits = PLANS.free.limits } = {}) {
+      const checked = checkState(state, limits);
       const checkedSnapshot = snapshot == null ? null : checkSnapshot(snapshot, checked.anchor.id);
-      if ((await SavedGraph.countDocuments({ userId })) >= MAX_GRAPHS_PER_USER) {
-        throw new HttpError(403, `You can save up to ${MAX_GRAPHS_PER_USER} graphs`);
+      if ((await SavedGraph.countDocuments({ userId })) >= limits.savedGraphs) {
+        throw new EntitlementError(`You can save up to ${limits.savedGraphs} graphs`, {
+          limit: 'savedGraphs',
+        });
       }
       const graph = await SavedGraph.create({
         userId,
@@ -334,12 +355,13 @@ export function createGraphService({
     /**
      * Replaces what the graph holds, and its name if given. Its annotations are replaced only
      * when the state includes them. A snapshot
-     * replaces the stored one; without one, a snapshot of the old state is dropped.
+     * replaces the stored one; without one, a snapshot of the old state is dropped. `limits`
+     * are the user's plan limits, as for create.
      */
-    async update(userId, id, { name, state, snapshot }) {
+    async update(userId, id, { name, state, snapshot }, { limits = PLANS.free.limits } = {}) {
       const graph = await owned(userId, id);
       const before = stateKey(graph);
-      const checked = checkState(state);
+      const checked = checkState(state, limits);
       const checkedSnapshot = snapshot == null ? null : checkSnapshot(snapshot, checked.anchor.id);
       const { annotations, ...rest } = checked;
       graph.set(rest);

@@ -313,6 +313,32 @@ describe('access', () => {
     expect(res.status).toBe(403);
   });
 
+  it('saves only within the plan, and keeps graphs openable without it', async () => {
+    const agent = await signedIn();
+    const { graph } = (await agent.post('/api/graphs').send({ state: state() })).body;
+    const override = (planOverrides) => User.updateOne({}, { planOverrides });
+
+    await override({ limits: { savedGraphs: 1 } });
+    const full = await agent.post('/api/graphs').send({ state: state() });
+    expect(full.status).toBe(403);
+    expect(full.body).toEqual({ error: 'You can save up to 1 graphs', limit: 'savedGraphs' });
+
+    await override({ limits: { maxNodes: 100 } });
+    const big = await agent.put(`/api/graphs/${graph.id}`).send({ state: state() });
+    expect(big.status).toBe(403);
+    expect(big.body.limit).toBe('maxNodes');
+    const fits = state({ options: { citingDepth: 1, citedDepth: 2, limit: 60, maxNodes: 100 } });
+    expect((await agent.put(`/api/graphs/${graph.id}`).send({ state: fits })).status).toBe(200);
+
+    await override({ features: { saveGraphs: false } });
+    const refused = await agent.post('/api/graphs').send({ state: state() });
+    expect(refused.status).toBe(403);
+    expect(refused.body.feature).toBe('saveGraphs');
+    expect((await agent.get('/api/graphs')).body.graphs).toHaveLength(1);
+    expect((await agent.get(`/api/graphs/${graph.id}`)).status).toBe(200);
+    expect((await agent.delete(`/api/graphs/${graph.id}`)).status).toBe(204);
+  });
+
   it('answers 404 for an ID that isn’t one', async () => {
     const agent = await signedIn();
     expect((await agent.get('/api/graphs/not-an-id')).status).toBe(404);

@@ -17,6 +17,7 @@ Each entry lists:
 - **Fielded search** (advanced search across title, author, venue, publisher, year, type, language, citation count, open access). Done.
 - **Notes on works**, saved with the graph as `annotations`. Done. Reading status is still to do (see 7).
 - **Shortest path to the anchor.** Done. Generalizing it is still to do (see 17).
+- **Entitlements layer** (groundwork): `can(user, feature)` / `limitFor(user, limit)` in `server/src/entitlements/`, checked by the gated routes and controls, with every tier including everything for now. Billing (Stripe) waits for launch.
 
 ---
 
@@ -24,7 +25,6 @@ Each entry lists:
 
 These aren't features, but each one gets harder to add later.
 
-- **Entitlements layer.** One server-side function (`can(user, 'feature')` / `limitFor(user, 'maxNodes')`) that every gated route and UI control checks, even while everyone is on the free tier. Adding gates one by one to finished features later means touching each of them. Billing (Stripe) can wait until launch; the checks shouldn't. *Size: S.*
 - **Request outside access now.** Apply for a Semantic Scholar API key (needed for 12), ask OpenAlex about a higher credit limit, and contact data providers for non-English sources (22). These take days to months to come back and don't depend on any code.
 
 ---

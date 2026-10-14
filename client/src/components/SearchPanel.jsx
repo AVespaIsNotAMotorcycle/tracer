@@ -1,5 +1,6 @@
 import { useState } from 'react';
 import { looksLikeWorkId, searchWorks } from '../api.js';
+import { ANONYMOUS, NOT_IN_PLAN } from '../auth/entitlements.js';
 import { sourceType } from '../graph/sourceTypes.js';
 
 const DEPTHS = [0, 1, 2, 3];
@@ -7,7 +8,8 @@ const DEPTHS = [0, 1, 2, 3];
 /**
  * Finds an anchor work (by search, or directly by DOI / OpenAlex ID) and sets build options.
  * With `onApply`, the options can also be applied to the current graph; `canApply` says
- * whether they differ from the ones it was built with.
+ * whether they differ from the ones it was built with. The options go only as far as the
+ * plan's `limits`, and with `advancedLocked` the plan doesn't include advanced search.
  */
 export default function SearchPanel({
   options,
@@ -16,6 +18,8 @@ export default function SearchPanel({
   onApply,
   onAdvanced,
   canApply = false,
+  advancedLocked = false,
+  limits = ANONYMOUS.limits,
   busy,
   search = searchWorks,
 }) {
@@ -72,6 +76,8 @@ export default function SearchPanel({
           type="button"
           className="link-button advanced-link"
           onClick={() => onAdvanced(looksLikeWorkId(query) ? '' : query.trim())}
+          disabled={advancedLocked}
+          title={advancedLocked ? NOT_IN_PLAN : undefined}
         >
           Advanced search
         </button>
@@ -82,7 +88,7 @@ export default function SearchPanel({
         <label>
           Citing depth
           <select value={options.citingDepth} onChange={setOption('citingDepth')}>
-            {DEPTHS.map((d) => (
+            {DEPTHS.filter((d) => d <= limits.depth).map((d) => (
               <option key={d} value={d}>
                 {d}
               </option>
@@ -92,7 +98,7 @@ export default function SearchPanel({
         <label>
           Cited depth
           <select value={options.citedDepth} onChange={setOption('citedDepth')}>
-            {DEPTHS.map((d) => (
+            {DEPTHS.filter((d) => d <= limits.depth).map((d) => (
               <option key={d} value={d}>
                 {d}
               </option>
@@ -104,7 +110,7 @@ export default function SearchPanel({
           <input
             type="number"
             min={1}
-            max={200}
+            max={limits.perNode}
             value={options.limit}
             onChange={setOption('limit')}
           />
@@ -114,7 +120,7 @@ export default function SearchPanel({
           <input
             type="number"
             min={10}
-            max={2000}
+            max={limits.maxNodes}
             step={10}
             value={options.maxNodes}
             onChange={setOption('maxNodes')}

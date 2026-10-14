@@ -103,17 +103,20 @@ async function send(method, path, body) {
   return data;
 }
 
-/** The signed-in account, or null. */
-export async function getCurrentUser() {
-  return (await get('/api/auth/me')).user;
+// The auth routes answer with the account and what its plan includes:
+// { user: { id, email, plan } | null, entitlements } (see auth/entitlements.js).
+
+/** The signed-in account (or null) and its entitlements. */
+export async function getAccount() {
+  return get('/api/auth/me');
 }
 
 export async function signUp(email, password) {
-  return (await post('/api/auth/signup', { email, password })).user;
+  return post('/api/auth/signup', { email, password });
 }
 
 export async function logIn(email, password) {
-  return (await post('/api/auth/login', { email, password })).user;
+  return post('/api/auth/login', { email, password });
 }
 
 export async function logOut() {

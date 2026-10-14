@@ -2,6 +2,7 @@ import { Pin, NotebookPen } from 'lucide-react';
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { getSavedGraph, saveGraph, saveGraphSnapshot, updateGraph } from './api.js';
 import './App.css';
+import { clampOptions } from './auth/entitlements.js';
 import { useAuth } from './auth/useAuth.js';
 import AdvancedSearch from './components/AdvancedSearch.jsx';
 import DetailsPanel from './components/DetailsPanel.jsx';
@@ -114,7 +115,15 @@ function GraphPage({ auth }) {
   } = useCitationGraph();
   const busy = status === 'loading' || status === 'reanchoring';
   // Build options start from the URL (or the defaults), so a shared link reproduces the graph.
-  const [options, setOptions] = useState(() => readUrlState(window.location.search).options);
+  // What's used is kept within the plan's limits (the form can't go past them either).
+  const [chosenOptions, setOptions] = useState(() => readUrlState(window.location.search).options);
+  const { limits } = auth;
+  const options = useMemo(() => clampOptions(chosenOptions, limits), [chosenOptions, limits]);
+  // For runs started from the URL or a saved graph, which shouldn't re-run when limits arrive.
+  const limitsRef = useRef(limits);
+  useEffect(() => {
+    limitsRef.current = limits;
+  }, [limits]);
   const [filters, setFilters] = useState(NO_FILTERS);
   // Works the user pinned: always shown, whatever the filters. View state like the filters,
   // kept across re-anchoring and saved with the graph.
@@ -259,7 +268,8 @@ function GraphPage({ auth }) {
   // with the works the user had expanded (see restoreGraph), and the result becomes the new
   // snapshot. The URL already names it (?graph=<id>).
   const openSaved = useCallback(
-    (saved) => {
+    (found) => {
+      const saved = { ...found, options: clampOptions(found.options, limitsRef.current) };
       setOptions(saved.options);
       setGraphOptions(saved.options);
       setFilters({
@@ -309,11 +319,12 @@ function GraphPage({ auth }) {
 
   // Open the graph a shared URL (or a saved graph's link) points to.
   useEffect(() => {
-    const { anchor, options: urlOptions, graph: savedId } = readUrlState(window.location.search);
+    const { anchor, graph: savedId, ...url } = readUrlState(window.location.search);
     if (savedId) {
       openSavedById(savedId);
       return;
     }
+    const urlOptions = clampOptions(url.options, limitsRef.current);
     if (!anchor) return;
     // The first run needs no new fit key: nothing has been fitted yet.
     pendingUrl.current = { mode: 'replace', options: urlOptions };
@@ -323,7 +334,8 @@ function GraphPage({ auth }) {
   // Back/Forward: rebuild whatever graph the URL now describes.
   useEffect(() => {
     const handlePopState = () => {
-      const { anchor, options: urlOptions, graph: savedId } = readUrlState(window.location.search);
+      const { anchor, graph: savedId, ...url } = readUrlState(window.location.search);
+      const urlOptions = clampOptions(url.options, limitsRef.current);
       if (savedId) {
         pendingUrl.current = null;
         openSavedById(savedId);
@@ -541,7 +553,8 @@ function GraphPage({ auth }) {
   };
 
   // Auto-save, once the graph is idle and something has changed, after changes settle. One
-  // save at a time: a change made during one is saved after it.
+  // save at a time: a change made during one is saved after it. Only while the plan includes it.
+  const autoSaving = autoSave && auth.can('autoSave') && auth.can('saveGraphs');
   useEffect(() => {
     // Just opened: once it's built, what's on screen is what was saved.
     if (lastSaved.current.baseline && idle && hasGraph) {
@@ -549,7 +562,7 @@ function GraphPage({ auth }) {
     }
   }, [idle, hasGraph, saveJson, graph]);
   useEffect(() => {
-    if (!autoSave || !savedGraph || !idle || !hasGraph || saving.current) return undefined;
+    if (!autoSaving || !savedGraph || !idle || !hasGraph || saving.current) return undefined;
     if (lastSaved.current.baseline) return undefined;
     if (saveJson === lastSaved.current.json && graph === lastSaved.current.graph) return undefined;
     // Not "saved" while a change waits. Kept as is if already saving, so this doesn't re-run.
@@ -570,7 +583,7 @@ function GraphPage({ auth }) {
     return () => clearTimeout(timer);
     // saveNow reads the same state as these.
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [autoSave, savedGraph, idle, hasGraph, saveJson, graph, autoSaveStatus]);
+  }, [autoSaving, savedGraph, idle, hasGraph, saveJson, graph, autoSaveStatus]);
 
   // Turning auto-save on saves an unsaved graph at once, named after its anchor.
   const handleAutoSaveChange = async (on) => {
@@ -623,6 +636,8 @@ function GraphPage({ auth }) {
           onBuild={handleBuild}
           onApply={hasGraph ? handleApplyOptions : undefined}
           onAdvanced={openAdvanced}
+          advancedLocked={!auth.can('advancedSearch')}
+          limits={limits}
           canApply={graphOptions != null && !sameOptions(options, graphOptions)}
           busy={busy}
         />
@@ -699,13 +714,14 @@ function GraphPage({ auth }) {
           <div className="canvas-actions">
             <SaveGraph
               user={auth.user}
+              canSave={auth.can('saveGraphs')}
               savedGraph={savedGraph}
               defaultName={anchorWork?.title ?? ''}
               disabled={busy}
               onSave={handleSave}
-              autoSave={autoSave}
+              autoSave={autoSaving}
               autoSaveStatus={autoSaveStatus}
-              onAutoSaveChange={handleAutoSaveChange}
+              onAutoSaveChange={auth.can('autoSave') ? handleAutoSaveChange : undefined}
             />
           </div>
         )}
@@ -767,6 +783,7 @@ function GraphPage({ auth }) {
                   max: maxCoCiters,
                   citers: citerCount,
                   onChange: handleMinCoCitersChange,
+                  locked: !auth.can('coCitations'),
                 }
               : null
           }
@@ -790,6 +807,7 @@ function GraphPage({ auth }) {
                   finding: findingPathFrom === selected.id,
                   result: shownPath,
                   onFind: () => handleFindPath(selected.id),
+                  locked: !auth.can('pathSearch'),
                   onSelect: setSelectedId,
                 }
               : null

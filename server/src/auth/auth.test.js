@@ -50,12 +50,39 @@ describe('passwords', () => {
   });
 });
 
+describe('entitlements', () => {
+  it('come with the account, and signed out are the anonymous plan', async () => {
+    const signedOut = (await api.get('/api/auth/me')).body;
+    expect(signedOut).toMatchObject({
+      user: null,
+      entitlements: { plan: 'anonymous', features: { saveGraphs: false } },
+    });
+
+    await signUp();
+    await User.updateOne({}, { plan: 'scholar', planOverrides: { limits: { maxNodes: 50 } } });
+    const { body } = await api.get('/api/auth/me');
+    // Overrides are applied, not sent.
+    expect(body.user).toEqual({
+      id: expect.any(String),
+      email: 'historian@example.org',
+      plan: 'scholar',
+    });
+    expect(body.entitlements).toMatchObject({ plan: 'scholar', limits: { maxNodes: 50 } });
+    expect((await logIn()).body.entitlements.limits.maxNodes).toBe(50);
+  });
+});
+
 describe('sign up', () => {
   it('creates an account, signs it in, and stores no plain password', async () => {
     const res = await signUp(' Historian@Example.org ');
 
     expect(res.status).toBe(201);
-    expect(res.body.user).toEqual({ id: expect.any(String), email: 'historian@example.org' });
+    expect(res.body.user).toEqual({
+      id: expect.any(String),
+      email: 'historian@example.org',
+      plan: 'free',
+    });
+    expect(res.body.entitlements).toMatchObject({ plan: 'free', features: { saveGraphs: true } });
     const cookie = res.headers['set-cookie'][0];
     expect(cookie).toMatch(/^tracer_session=/);
     expect(cookie).toMatch(/HttpOnly/);

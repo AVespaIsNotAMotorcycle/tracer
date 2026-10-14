@@ -6,12 +6,14 @@ const MAX_NAME_LENGTH = 120;
 /**
  * The "Save graph" button over the graph, and its dialog for naming the graph. A graph opened
  * from (or already saved as) a saved graph can be updated in place or saved as a new one.
- * Signed out, it says to log in instead. Beside it, the "Auto-save" checkbox (`autoSave`,
+ * Signed out, it says to log in instead, and without `canSave` (the plan's saveGraphs) that
+ * saving isn't included. Beside it, the "Auto-save" checkbox (`autoSave`,
  * `onAutoSaveChange`) saves every change as it happens, with `autoSaveStatus` ({ state:
  * 'saving' | 'saved' | 'error', message? }) shown in place of the last save's message.
  */
 export default function SaveGraph({
   user,
+  canSave = true,
   savedGraph,
   defaultName,
   disabled,
@@ -25,6 +27,9 @@ export default function SaveGraph({
 
   if (user === undefined) return null;
   if (!user) return <span className="muted small">Log in to save this graph</span>;
+  if (!canSave) {
+    return <span className="muted small">Saving graphs isn’t included in your plan</span>;
+  }
 
   const status = autoSaveStatus
     ? {

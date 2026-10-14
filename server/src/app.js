@@ -38,7 +38,7 @@ export function createApp({ workService, authService, authOptions, graphService 
     });
   });
 
-  if (workService) app.use('/api/works', createWorksRouter(workService));
+  if (workService) app.use('/api/works', createWorksRouter(workService, authService));
   if (authService) app.use('/api/auth', createAuthRouter(authService, authOptions));
 
   if (process.env.NODE_ENV === 'production') {

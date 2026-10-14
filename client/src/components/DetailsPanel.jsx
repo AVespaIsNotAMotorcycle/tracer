@@ -1,6 +1,7 @@
 import { Minus, Pin, PinOff, Plus } from 'lucide-react';
 import { useEffect, useState } from 'react';
 import { getArchiveItems, getCitationMatch } from '../api.js';
+import { NOT_IN_PLAN } from '../auth/entitlements.js';
 import { canExpand } from '../graph/graphModel.js';
 import { sourceType } from '../graph/sourceTypes.js';
 import WorkNote from './WorkNote.jsx';
@@ -61,18 +62,18 @@ const doiLink = (work) => work.links.find((link) => link.kind === 'doi');
  * given only for works the user expanded, and undoes that. `pinned` works are always shown,
  * whatever the filters; `onTogglePin` pins or unpins it. `note` is the user's note on it, and
  * `onNoteChange` sets it ('' deletes it). The anchor gets `onFindCoCitations`,
- * with `coCitationControl` ({ value, max, citers, onChange }) for the minimum number of works
+ * with `coCitationControl` ({ value, max, citers, onChange, locked }) for the minimum number of works
  * citing it that must cite a work, and `coCitationResult` ({ minCiters, citers, found, left })
  * once it has run; a work co-cited with the anchor
  * has `coCitedBy`, how many works citing the anchor cite it. A work with no path of citations
  * on the graph to the anchor gets `pathControl` ({ disconnected, finding, result, onFind,
- * onSelect }) to look for the shortest one; `result` (see findPath in api.js) stays shown once
- * found, with each step selectable.
+ * onSelect, locked }) to look for the shortest one; `result` (see findPath in api.js) stays shown once
+ * found, with each step selectable. `locked` means the plan doesn't include that search.
  */
 const yearOf = (work) => (work.year == null ? '' : ` (${work.year})`);
 
 /** Looking for, and showing, the shortest path of citations from a work to the anchor. */
-function PathToAnchor({ disconnected, finding, result, onFind, onSelect }) {
+function PathToAnchor({ disconnected, finding, result, onFind, onSelect, locked = false }) {
   const path = result?.path;
   return (
     <div className="path-to-anchor">
@@ -116,9 +117,10 @@ function PathToAnchor({ disconnected, finding, result, onFind, onSelect }) {
             <p className="muted small">
               No citations on the graph link this work to the anchor&rsquo;s.
             </p>
-            <button type="button" onClick={onFind} disabled={finding}>
+            <button type="button" onClick={onFind} disabled={finding || locked}>
               {finding ? 'Finding a path…' : 'Find shortest path to the anchor'}
             </button>
+            {locked && <p className="muted small">{NOT_IN_PLAN}.</p>}
             {result?.outcome === 'none' && (
               <p className="muted small">
                 There&rsquo;s no path on OpenAlex: none of the {result.searched.toLocaleString()}{' '}
@@ -306,10 +308,13 @@ export default function DetailsPanel({
           <button
             type="button"
             onClick={onFindCoCitations}
-            disabled={busy || findingCoCitations || coCitationControl.citers < 2}
+            disabled={
+              busy || findingCoCitations || coCitationControl.citers < 2 || coCitationControl.locked
+            }
           >
             {findingCoCitations ? 'Finding co-citations…' : 'Find Co-Citations'}
           </button>
+          {coCitationControl.locked && <p className="muted small">{NOT_IN_PLAN}.</p>}
           {coCitationResult && (
             <p className="muted small">
               {coCitationResult.found === 0

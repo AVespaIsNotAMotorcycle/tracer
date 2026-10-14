@@ -3,6 +3,10 @@ import mongoose from 'mongoose';
 import request from 'supertest';
 import { afterAll, beforeAll, beforeEach, describe, expect, it, vi } from 'vitest';
 import { createApp } from '../app.js';
+import { createAuthService } from '../auth/authService.js';
+import { Identity } from '../models/Identity.js';
+import { Session } from '../models/Session.js';
+import { User } from '../models/User.js';
 import { CacheEntry } from '../models/CacheEntry.js';
 import { Source } from '../models/Source.js';
 import { ProviderError } from '../providers/errors.js';
@@ -831,5 +835,55 @@ describe('without a database connection', () => {
     } finally {
       await mongoose.connect(mongo.getUri());
     }
+  });
+});
+
+describe('entitlements on works routes', () => {
+  let agent;
+
+  beforeEach(async () => {
+    await Promise.all([User, Identity, Session].map((model) => model.deleteMany({})));
+    const workService = createWorkService({ provider, now: () => clock });
+    agent = request.agent(createApp({ workService, authService: createAuthService() }));
+  });
+
+  const signUpWith = async (planOverrides) => {
+    await agent
+      .post('/api/auth/signup')
+      .send({ email: 'a@example.org', password: 'correct horse' });
+    await User.updateOne({}, { planOverrides });
+  };
+
+  it('are open to signed-out visitors as before', async () => {
+    expect((await agent.get('/api/works/W2/path?to=W5')).status).toBe(200);
+    expect((await agent.get('/api/works/W1/cited?limit=200')).status).toBe(200);
+  });
+
+  it('refuse features the plan lacks, naming them', async () => {
+    await signUpWith({ features: { pathSearch: false, advancedSearch: false } });
+
+    const path = await agent.get('/api/works/W2/path?to=W5');
+    expect(path.status).toBe(403);
+    expect(path.body.feature).toBe('pathSearch');
+    expect((await agent.get('/api/works/search?title=moral')).body.feature).toBe('advancedSearch');
+    expect((await agent.get('/api/works/W1')).status).toBe(200);
+  });
+
+  it('cap citing and cited lists at works per node', async () => {
+    await signUpWith({ limits: { perNode: 10 } });
+
+    expect((await agent.get('/api/works/W1/cited?limit=10')).status).toBe(200);
+    const over = await agent.get('/api/works/W1/citing?limit=11');
+    expect(over.status).toBe(403);
+    expect(over.body).toEqual({
+      error: 'Your plan allows at most 10 works per node',
+      limit: 'perNode',
+    });
+    expect(provider.getCitingWorks).not.toHaveBeenCalled();
+    // Without a limit, the default shrinks to fit.
+    await agent.get('/api/works/W1/citing');
+    expect(provider.getCitingWorks).toHaveBeenCalledWith(expect.anything(), { limit: 10 });
+    // Search pages aren't works per node.
+    expect((await agent.get('/api/works?q=moral&limit=50')).status).toBe(200);
   });
 });

@@ -13,9 +13,22 @@ export const MIN_PASSWORD_LENGTH = 8;
 export const MAX_PASSWORD_LENGTH = 256;
 const EMAIL_PATTERN = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
 
-/** @typedef {{ id: string, email: string }} PublicUser  What the client sees of an account. */
+/**
+ * @typedef {{ id: string, email: string, plan: string, planOverrides?: object }} Account
+ *   A signed-in account, as routes see it (req.user). `planOverrides` is for entitlements and
+ *   isn't sent to the client (see clientUser).
+ */
 
-const publicUser = (user) => ({ id: String(user._id), email: user.email });
+/** @returns {Account} */
+const account = (user) => ({
+  id: String(user._id),
+  email: user.email,
+  plan: user.plan ?? 'free',
+  ...(user.planOverrides ? { planOverrides: user.planOverrides } : {}),
+});
+
+/** What the client sees of an account. */
+export const clientUser = ({ id, email, plan }) => ({ id, email, plan });
 const tokenHash = (token) => createHash('sha256').update(token).digest('base64url');
 
 /** Lowercased, trimmed email, or a 400 if it isn't one. */
@@ -94,7 +107,7 @@ export function createAuthService({ now = () => new Date() } = {}) {
         passwordHash,
         createdAt,
       });
-      return { user: publicUser(user), token: await startSession(user._id) };
+      return { user: account(user), token: await startSession(user._id) };
     },
 
     /**
@@ -116,7 +129,7 @@ export function createAuthService({ now = () => new Date() } = {}) {
       );
       const user = identity && matches && (await User.findById(identity.userId).lean().exec());
       if (!user) throw new HttpError(401, 'Incorrect email or password');
-      return { user: publicUser(user), token: await startSession(user._id) };
+      return { user: account(user), token: await startSession(user._id) };
     },
 
     /** The account a session token belongs to, or null if it's unknown or expired. */
@@ -127,7 +140,7 @@ export function createAuthService({ now = () => new Date() } = {}) {
         .exec();
       if (!session) return null;
       const user = await User.findById(session.userId).lean().exec();
-      return user ? publicUser(user) : null;
+      return user ? account(user) : null;
     },
 
     /** Ends one session (logging out). */

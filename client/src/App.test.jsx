@@ -2,8 +2,17 @@ import { fireEvent, render, screen, waitFor, within } from '@testing-library/rea
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 import * as api from './api.js';
 import App from './App.jsx';
+import { ANONYMOUS } from './auth/entitlements.js';
 
 // jsdom has no canvas, so render visible nodes as buttons instead.
+// What a free account's plan includes, as the server sends it with the account.
+const FREE = {
+  plan: 'free',
+  features: Object.fromEntries(Object.keys(ANONYMOUS.features).map((key) => [key, true])),
+  limits: { ...ANONYMOUS.limits, savedGraphs: 500 },
+};
+const signedInAs = (user, entitlements = FREE) => ({ user, entitlements });
+
 vi.mock('./graph/GraphView.jsx', () => ({
   default: ({ graph, visible, onSelect, axisAngle, expandedIds, coCitedIds, notes }) => (
     <ul aria-label="Graph" data-axis-angle={axisAngle}>
@@ -37,7 +46,7 @@ vi.mock('./api.js', async (importOriginal) => ({
   getCited: vi.fn(),
   getArchiveItems: vi.fn(),
   getCitationMatch: vi.fn(),
-  getCurrentUser: vi.fn(),
+  getAccount: vi.fn(),
   signUp: vi.fn(),
   logIn: vi.fn(),
   logOut: vi.fn(),
@@ -80,7 +89,7 @@ const graph = () => screen.getByRole('list', { name: 'Graph' });
 beforeEach(() => {
   // The URL carries the anchor, and jsdom shares one location across tests.
   window.history.replaceState(null, '', '/');
-  vi.mocked(api.getCurrentUser).mockResolvedValue(null);
+  vi.mocked(api.getAccount).mockResolvedValue({ user: null });
   vi.mocked(api.searchWorks).mockResolvedValue([anchor]);
   vi.mocked(api.getWork).mockResolvedValue(anchor);
   vi.mocked(api.getCiting).mockImplementation(async (id) => (id === 'anchor' ? [citer] : [more]));
@@ -1261,7 +1270,7 @@ describe('accounts', () => {
     fireEvent.change(screen.getByLabelText(label), { target: { value } });
 
   it('signs up from the header', async () => {
-    vi.mocked(api.signUp).mockResolvedValue(user);
+    vi.mocked(api.signUp).mockResolvedValue(signedInAs(user));
     render(<App />);
     fireEvent.click(await screen.findByRole('button', { name: 'Sign up' }));
 
@@ -1301,7 +1310,7 @@ describe('accounts', () => {
   });
 
   it('shows who is signed in, and logs out', async () => {
-    vi.mocked(api.getCurrentUser).mockResolvedValue(user);
+    vi.mocked(api.getAccount).mockResolvedValue(signedInAs(user));
     vi.mocked(api.logOut).mockResolvedValue();
     render(<App />);
     expect(await screen.findByText('historian@example.org')).toBeInTheDocument();
@@ -1325,11 +1334,11 @@ describe('saved graphs', () => {
   });
 
   beforeEach(() => {
-    vi.mocked(api.getCurrentUser).mockResolvedValue(user);
+    vi.mocked(api.getAccount).mockResolvedValue(signedInAs(user));
   });
 
   it('asks you to log in to save', async () => {
-    vi.mocked(api.getCurrentUser).mockResolvedValue(null);
+    vi.mocked(api.getAccount).mockResolvedValue({ user: null });
     await buildFromSearch();
     expect(await screen.findByText('Log in to save this graph')).toBeInTheDocument();
     expect(screen.queryByRole('button', { name: 'Save graph' })).toBeNull();
@@ -1555,7 +1564,7 @@ describe('auto-save', () => {
 
   beforeEach(() => {
     window.localStorage.clear();
-    vi.mocked(api.getCurrentUser).mockResolvedValue(user);
+    vi.mocked(api.getAccount).mockResolvedValue(signedInAs(user));
     vi.mocked(api.saveGraph).mockReset();
     vi.mocked(api.updateGraph).mockReset();
     vi.mocked(api.saveGraph).mockImplementation(async (name, state) => savedFrom(state, { name }));
@@ -1675,7 +1684,7 @@ describe('profile page', () => {
 
   beforeEach(() => {
     window.history.replaceState(null, '', '/profile');
-    vi.mocked(api.getCurrentUser).mockResolvedValue(user);
+    vi.mocked(api.getAccount).mockResolvedValue(signedInAs(user));
     vi.mocked(api.listGraphs).mockResolvedValue([summary('g1', 'Riots'), summary('g2', 'Famine')]);
   });
 
@@ -1722,7 +1731,7 @@ describe('profile page', () => {
   });
 
   it('asks you to log in, and links to it from the header', async () => {
-    vi.mocked(api.getCurrentUser).mockResolvedValue(null);
+    vi.mocked(api.getAccount).mockResolvedValue({ user: null });
     render(<App />);
     expect(await screen.findByText('Log in to see your saved graphs.')).toBeInTheDocument();
   });
@@ -1734,5 +1743,49 @@ describe('profile page', () => {
       'href',
       '/profile',
     );
+  });
+});
+
+describe('plan entitlements', () => {
+  const user = { id: 'u1', email: 'historian@example.org' };
+  const limited = {
+    plan: 'free',
+    features: { ...FREE.features, saveGraphs: false, coCitations: false, advancedSearch: false },
+    limits: { ...FREE.limits, depth: 1, perNode: 10 },
+  };
+
+  beforeEach(() => {
+    vi.mocked(api.getAccount).mockResolvedValue(signedInAs(user, limited));
+  });
+
+  it('builds within the plan’s limits, and the form goes no further', async () => {
+    await buildFromSearch();
+
+    expect(api.getCiting).toHaveBeenCalledWith('anchor', expect.objectContaining({ limit: 10 }));
+    expect(screen.getByLabelText('Works per node')).toHaveAttribute('max', '10');
+    expect(screen.getByLabelText('Works per node')).toHaveValue(10);
+    const depths = within(screen.getByLabelText('Citing depth')).getAllByRole('option');
+    expect(depths.map((option) => option.value)).toEqual(['0', '1']);
+  });
+
+  it('disables what the plan doesn’t include, saying so', async () => {
+    await buildFromSearch();
+
+    expect(screen.getByText('Saving graphs isn’t included in your plan')).toBeInTheDocument();
+    expect(screen.queryByRole('button', { name: 'Save graph' })).toBeNull();
+    expect(screen.queryByRole('checkbox', { name: 'Auto-save' })).toBeNull();
+    expect(screen.getByRole('button', { name: 'Advanced search' })).toBeDisabled();
+    fireEvent.click(within(graph()).getByRole('button', { name: 'Title anchor' }));
+    expect(screen.getByRole('button', { name: 'Find Co-Citations' })).toBeDisabled();
+    expect(screen.getByText('Not included in your plan.')).toBeInTheDocument();
+  });
+
+  it('includes everything for a free account', async () => {
+    vi.mocked(api.getAccount).mockResolvedValue(signedInAs(user));
+    await buildFromSearch();
+
+    expect(api.getCiting).toHaveBeenCalledWith('anchor', expect.objectContaining({ limit: 20 }));
+    expect(screen.getByRole('button', { name: 'Save graph' })).toBeEnabled();
+    expect(screen.getByRole('button', { name: 'Advanced search' })).toBeEnabled();
   });
 });

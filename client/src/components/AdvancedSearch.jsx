@@ -104,7 +104,7 @@ const preview = (text) =>
  * { asAnchors: true })`, up to `anchorLimit`), or join the graph on screen.
  *
  * Stays mounted while hidden, so the form, results and picks are still there when it's
- * reopened.
+ * reopened. The picks are listed in a column on the right, with the actions below them.
  */
 export default function AdvancedSearch({
   hidden,
@@ -244,7 +244,9 @@ export default function AdvancedSearch({
         <h2 id="advanced-search-heading">Advanced search</h2>
       </div>
 
-      <div className="advanced-body">
+      {/* Chosen works get a column of their own on the right (a bar at the bottom on narrow
+          screens), so a long list doesn't squeeze the results. */}
+      <div className={`advanced-body${picked.length > 0 ? ' has-picked' : ''}`}>
         <form className="advanced-form" onSubmit={handleSubmit} aria-label="Search fields">
           {TEXT_FIELDS.map(({ key, label, hint }, index) => (
             <div key={key} className="field">
@@ -462,89 +464,89 @@ export default function AdvancedSearch({
             </button>
           )}
         </div>
-      </div>
 
-      {picked.length > 0 && (
-        <div className="picked-bar" role="region" aria-label="Chosen works">
-          <div className="picked-summary">
-            <strong>
-              {picked.length} work{picked.length === 1 ? '' : 's'} chosen
-            </strong>
-            <span className="muted small">
-              {picked.length > 1 || !hasGraph
-                ? 'A new graph is built around the anchor. The others are added and expanded. '
-                : ''}
-              Chosen works are pinned, so filters don’t hide them.
-            </span>
-          </div>
-          <ul className="chips">
-            {picked.map((work, index) => (
-              <li key={work.id} className={`chip${index === 0 ? ' anchor' : ''}`}>
-                {index === 0 ? (
-                  <Anchor className="icon" aria-label="Anchor" />
-                ) : (
+        {picked.length > 0 && (
+          <div className="picked-panel" role="region" aria-label="Chosen works">
+            <div className="picked-summary">
+              <strong>
+                {picked.length} work{picked.length === 1 ? '' : 's'} chosen
+              </strong>
+              <span className="muted small">
+                {picked.length > 1 || !hasGraph
+                  ? 'A new graph is built around the anchor. The others are added and expanded. '
+                  : ''}
+                Chosen works are pinned, so filters don’t hide them.
+              </span>
+            </div>
+            <ul className="chips">
+              {picked.map((work, index) => (
+                <li key={work.id} className={`chip${index === 0 ? ' anchor' : ''}`}>
+                  {index === 0 ? (
+                    <Anchor className="icon" aria-label="Anchor" />
+                  ) : (
+                    <button
+                      type="button"
+                      className="chip-action"
+                      onClick={() => makeAnchor(work.id)}
+                      aria-label={`Make “${work.title ?? 'Untitled'}” the anchor`}
+                      title="Make this the anchor"
+                    >
+                      <Anchor className="icon" aria-hidden="true" />
+                    </button>
+                  )}
+                  <span className="chip-title">{work.title ?? 'Untitled'}</span>
                   <button
                     type="button"
-                    className="chip-action"
-                    onClick={() => makeAnchor(work.id)}
-                    aria-label={`Make “${work.title ?? 'Untitled'}” the anchor`}
-                    title="Make this the anchor"
+                    className="chip-remove"
+                    onClick={() => togglePick(work)}
+                    aria-label={`Remove “${work.title ?? 'Untitled'}”`}
                   >
-                    <Anchor className="icon" aria-hidden="true" />
+                    <X className="icon" aria-hidden="true" />
                   </button>
-                )}
-                <span className="chip-title">{work.title ?? 'Untitled'}</span>
+                </li>
+              ))}
+            </ul>
+            <div className="picked-actions">
+              <button type="button" className="link-button" onClick={() => setPicked([])}>
+                Clear
+              </button>
+              {hasGraph && (
+                <button type="button" onClick={() => finish(onAdd)} disabled={busy}>
+                  Add to current graph
+                </button>
+              )}
+              {picked.length > 1 && (
                 <button
                   type="button"
-                  className="chip-remove"
-                  onClick={() => togglePick(work)}
-                  aria-label={`Remove “${work.title ?? 'Untitled'}”`}
+                  onClick={() => finish(onBuild, { asAnchors: true })}
+                  disabled={busy || picked.length > anchorLimit}
+                  title={
+                    picked.length > anchorLimit
+                      ? `Your plan allows up to ${anchorLimit} anchors`
+                      : undefined
+                  }
                 >
-                  <X className="icon" aria-hidden="true" />
+                  Build with these as anchors
                 </button>
-              </li>
-            ))}
-          </ul>
-          <div className="picked-actions">
-            <button type="button" className="link-button" onClick={() => setPicked([])}>
-              Clear
-            </button>
-            {hasGraph && (
-              <button type="button" onClick={() => finish(onAdd)} disabled={busy}>
-                Add to current graph
-              </button>
-            )}
-            {picked.length > 1 && (
+              )}
               <button
                 type="button"
-                onClick={() => finish(onBuild, { asAnchors: true })}
-                disabled={busy || picked.length > anchorLimit}
-                title={
-                  picked.length > anchorLimit
-                    ? `Your plan allows up to ${anchorLimit} anchors`
-                    : undefined
-                }
+                className="primary"
+                onClick={() => finish(onBuild)}
+                disabled={busy}
               >
-                Build with these as anchors
+                {hasGraph ? 'Build new graph' : 'Build graph'}
               </button>
+            </div>
+            {picked.length > 1 && picked.length > anchorLimit && (
+              <p className="muted small">
+                Your plan allows up to {anchorLimit} anchors: choose fewer to build with them all as
+                anchors.
+              </p>
             )}
-            <button
-              type="button"
-              className="primary"
-              onClick={() => finish(onBuild)}
-              disabled={busy}
-            >
-              {hasGraph ? 'Build new graph' : 'Build graph'}
-            </button>
           </div>
-          {picked.length > 1 && picked.length > anchorLimit && (
-            <p className="muted small">
-              Your plan allows up to {anchorLimit} anchors: choose fewer to build with them all as
-              anchors.
-            </p>
-          )}
-        </div>
-      )}
+        )}
+      </div>
     </section>
   );
 }

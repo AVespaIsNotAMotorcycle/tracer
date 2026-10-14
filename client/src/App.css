@@ -725,7 +725,7 @@ button.with-icon {
   z-index: 5;
   min-height: 0;
   display: grid;
-  grid-template-rows: auto 1fr auto;
+  grid-template-rows: auto 1fr;
   background: var(--bg);
 }
 
@@ -1003,37 +1003,108 @@ button.with-icon {
   width: auto;
 }
 
-.picked-bar {
+.advanced-body.has-picked {
+  grid-template-columns: minmax(280px, 360px) 1fr minmax(260px, 340px);
+}
+
+/* The chosen works: a column on the right, its list scrolling between the summary and the
+   actions. */
+.picked-panel {
+  min-height: 0;
   display: flex;
-  flex-wrap: wrap;
-  align-items: center;
-  gap: 8px 16px;
-  padding: 12px 16px;
-  border-top: 1px solid var(--border);
+  flex-direction: column;
+  gap: 12px;
+  padding: 16px;
+  border-left: 1px solid var(--border);
   background: var(--surface);
 }
 
 .picked-summary {
   display: flex;
   flex-direction: column;
+  gap: 4px;
 }
 
-.picked-bar .chips {
+.picked-panel .chips {
+  flex: 1;
+  min-height: 0;
+  overflow-y: auto;
+  flex-direction: column;
+  flex-wrap: nowrap;
+  align-content: stretch;
+}
+
+.picked-panel .chip {
+  flex: none;
+  border-radius: 8px;
+  padding: 4px 4px 4px 8px;
+}
+
+.picked-panel .chip-title {
   flex: 1;
   min-width: 0;
-  max-height: 72px;
-  overflow-y: auto;
-}
-
-.picked-bar .chip {
-  max-width: 320px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
 }
 
 .picked-actions {
   display: flex;
-  align-items: center;
+  flex-direction: column;
+  align-items: stretch;
   gap: 8px;
-  margin-left: auto;
+}
+
+.picked-actions .link-button {
+  align-self: flex-start;
+}
+
+.picked-panel > p {
+  margin: 0;
+}
+
+/* Too narrow for three columns: the chosen works go below the form and results, as a bar. */
+@media (max-width: 1100px) {
+  .advanced-body.has-picked {
+    grid-template-columns: minmax(280px, 360px) 1fr;
+    grid-template-rows: 1fr auto;
+  }
+
+  /* Summary and actions on one row, the chosen works wrapping below. */
+  .picked-panel {
+    grid-column: 1 / -1;
+    display: grid;
+    grid-template-columns: 1fr auto;
+    align-items: center;
+    gap: 8px 16px;
+    padding: 12px 16px;
+    border-left: none;
+    border-top: 1px solid var(--border);
+  }
+
+  .picked-panel .chips {
+    grid-column: 1 / -1;
+    grid-row: 2;
+    flex-direction: row;
+    flex-wrap: wrap;
+    max-height: 72px;
+  }
+
+  .picked-panel > p {
+    grid-column: 1 / -1;
+  }
+
+  .picked-panel .chip {
+    max-width: 320px;
+    border-radius: 999px;
+  }
+
+  .picked-actions {
+    flex-direction: row;
+    flex-wrap: wrap;
+    justify-content: flex-end;
+    align-items: center;
+  }
 }
 
 @media (max-width: 900px) {
@@ -1055,9 +1126,19 @@ button.with-icon {
     padding: 16px;
   }
 
-  .picked-bar {
+  .advanced-body.has-picked {
+    grid-template-columns: 1fr;
+    grid-template-rows: none;
+  }
+
+  .picked-panel {
     position: sticky;
     bottom: 0;
+    grid-template-columns: 1fr;
+  }
+
+  .picked-actions {
+    justify-content: flex-start;
   }
 }
 

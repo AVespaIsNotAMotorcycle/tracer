@@ -299,9 +299,11 @@ function useThemeColors(ref) {
       setColors(resolved);
     };
     read();
-    const media = window.matchMedia('(prefers-color-scheme: dark)');
-    media.addEventListener('change', read);
-    return () => media.removeEventListener('change', read);
+    // The theme is `data-theme` on <html> (see theme.js), changed by the user's choice or,
+    // for the browser's default, its setting.
+    const observer = new MutationObserver(read);
+    observer.observe(document.documentElement, { attributeFilter: ['data-theme'] });
+    return () => observer.disconnect();
   }, [ref]);
   return colors;
 }

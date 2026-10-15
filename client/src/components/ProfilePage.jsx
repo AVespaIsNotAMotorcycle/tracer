@@ -1,26 +1,71 @@
 import { useEffect, useState } from 'react';
 import * as defaultApi from '../api.js';
+import { setTheme, storedTheme } from '../theme.js';
 import Header from './Header.jsx';
 
 const MAX_NAME_LENGTH = 120;
 const dateFormat = new Intl.DateTimeFormat(undefined, { dateStyle: 'medium' });
 
-/** The signed-in user's saved graphs: open, rename or delete each one. */
+/**
+ * The signed-in user's saved graphs (open, rename or delete each one), and settings for this
+ * browser.
+ */
 export default function ProfilePage({ auth, api = defaultApi }) {
   return (
     <div className="page">
       <Header auth={auth} />
       <main className="profile">
-        <h2>My graphs</h2>
-        {auth.user === undefined ? (
-          <p className="muted">Loading…</p>
-        ) : auth.user ? (
-          <SavedGraphs api={api} />
-        ) : (
-          <p className="muted">Log in to see your saved graphs.</p>
-        )}
+        <section aria-labelledby="my-graphs-heading">
+          <h2 id="my-graphs-heading">My graphs</h2>
+          {auth.user === undefined ? (
+            <p className="muted">Loading…</p>
+          ) : auth.user ? (
+            <SavedGraphs api={api} />
+          ) : (
+            <p className="muted">Log in to see your saved graphs.</p>
+          )}
+        </section>
+        <Settings />
       </main>
     </div>
+  );
+}
+
+const THEME_OPTIONS = [
+  { value: 'system', label: 'Browser default' },
+  { value: 'light', label: 'Light' },
+  { value: 'dark', label: 'Dark' },
+];
+
+/** Settings kept in this browser: light or dark mode (see theme.js). */
+function Settings() {
+  const [theme, setChoice] = useState(storedTheme);
+  const choose = (value) => {
+    setChoice(value);
+    setTheme(value);
+  };
+  return (
+    <section aria-labelledby="settings-heading">
+      <h2 id="settings-heading">Settings</h2>
+      <fieldset className="theme-setting">
+        <legend>Appearance</legend>
+        {THEME_OPTIONS.map(({ value, label }) => (
+          <label key={value}>
+            <input
+              type="radio"
+              name="theme"
+              value={value}
+              checked={theme === value}
+              onChange={() => choose(value)}
+            />
+            {label}
+          </label>
+        ))}
+      </fieldset>
+      <p className="muted small">
+        Browser default follows your system’s light or dark setting. Saved in this browser.
+      </p>
+    </section>
   );
 }
 

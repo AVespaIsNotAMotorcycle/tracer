@@ -1944,6 +1944,27 @@ describe('profile page', () => {
     expect(items[0]).toHaveTextContent('2 expanded');
   });
 
+  it('switches between light mode, dark mode and the browser’s default', async () => {
+    render(<App />);
+    const settings = await screen.findByRole('region', { name: 'Settings' });
+    expect(within(settings).getByRole('radio', { name: 'Browser default' })).toBeChecked();
+
+    fireEvent.click(within(settings).getByRole('radio', { name: 'Dark' }));
+    expect(document.documentElement.dataset.theme).toBe('dark');
+    expect(window.localStorage.getItem('tracer:theme')).toBe('dark');
+    fireEvent.click(within(settings).getByRole('radio', { name: 'Light' }));
+    expect(document.documentElement.dataset.theme).toBe('light');
+    fireEvent.click(within(settings).getByRole('radio', { name: 'Browser default' }));
+    expect(window.localStorage.getItem('tracer:theme')).toBeNull();
+  });
+
+  it('shows the settings when signed out too', async () => {
+    vi.mocked(api.getAccount).mockResolvedValue({ user: null });
+    render(<App />);
+    expect(await screen.findByText('Log in to see your saved graphs.')).toBeInTheDocument();
+    expect(screen.getByRole('radio', { name: 'Dark' })).toBeInTheDocument();
+  });
+
   it('renames a saved graph', async () => {
     vi.mocked(api.renameGraph).mockResolvedValue(summary('g1', 'Food riots'));
     render(<App />);

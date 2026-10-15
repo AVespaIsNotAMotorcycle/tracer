@@ -1,5 +1,5 @@
 :root {
-  color-scheme: light dark;
+  color-scheme: light;
 
   /*
    * Palette: the color scheme, and the only place colors are defined. Swap these five to
@@ -83,65 +83,67 @@
   line-height: 1.4;
 }
 
-@media (prefers-color-scheme: dark) {
-  :root {
-    --ink: color-mix(in oklab, var(--palette-5) 55%, black);
-    --paper: color-mix(in oklab, var(--palette-4) 85%, white);
+/* Dark mode: the user's choice, or the browser's default (see theme.js, which sets
+   data-theme on <html> to 'light' or 'dark'). */
+:root[data-theme='dark'] {
+  color-scheme: dark;
 
-    --bg: var(--ink);
-    --surface: color-mix(in oklab, var(--palette-5) 80%, black);
-    --surface-2: var(--palette-5);
-    --border: color-mix(in oklab, var(--palette-5) 75%, white);
-    --text: var(--paper);
-    --muted: color-mix(in oklab, var(--paper) 68%, black);
-    /* Lobster pink lightened for 4.5:1 text on dark surfaces. */
-    --accent: color-mix(in oklab, var(--palette-3) 75%, white);
-    --focus: var(--accent);
-    --accent-text: var(--ink);
-    --error: var(--accent);
-    --node-citing: var(--accent);
-    --node-anchor: color-mix(in oklab, var(--palette-2) 85%, white);
-    --node-cited: color-mix(in oklab, var(--palette-1) 80%, white);
-    --node-reference-only: color-mix(in oklab, var(--paper) 55%, black);
-    --node-outline: color-mix(in srgb, black 45%, transparent);
-    --node-icon-on-anchor: var(--ink);
-    --node-icon-on-citing: var(--ink);
-    --node-icon-on-cited: var(--ink);
-    --node-icon-on-reference-only: var(--ink);
-    --node-selected: var(--palette-4);
-    --node-expanded: color-mix(in oklab, var(--palette-2) 85%, white);
-    --node-pin: var(--palette-4);
-    --node-icon-on-pin: var(--ink);
-    --graph-link: color-mix(in srgb, var(--paper) 18%, transparent);
-    --graph-link-active: var(--accent);
-    --graph-axis: color-mix(in srgb, var(--paper) 10%, transparent);
+  --ink: color-mix(in oklab, var(--palette-5) 55%, black);
+  --paper: color-mix(in oklab, var(--palette-4) 85%, white);
 
-    /* Lightened like the other node colors, with tints toward the dark background. */
-    --anchor-1: color-mix(in oklab, var(--palette-2) 80%, white);
-    --anchor-2: color-mix(in oklab, var(--palette-3) 75%, white);
-    --anchor-3: color-mix(in oklab, var(--palette-1) 75%, white);
-    --anchor-4: color-mix(
-      in oklab,
-      color-mix(in oklab, var(--palette-2) 50%, var(--palette-1)) 75%,
-      white
-    );
-    --anchor-5: color-mix(
-      in oklab,
-      color-mix(in oklab, var(--palette-3) 50%, var(--palette-2)) 75%,
-      white
-    );
-    --anchor-6: color-mix(
-      in oklab,
-      color-mix(in oklab, var(--palette-3) 50%, var(--palette-1)) 75%,
-      white
-    );
-    --anchor-tint: 55%;
-    --anchor-tint-base: var(--surface);
-    --node-icon-on-anchor-hue: var(--ink);
-    --node-icon-on-anchor-tint: var(--paper);
-    --node-unlinked: color-mix(in oklab, var(--paper) 22%, var(--surface));
-    --node-icon-on-unlinked: var(--paper);
-  }
+  --bg: var(--ink);
+  --surface: color-mix(in oklab, var(--palette-5) 80%, black);
+  --surface-2: var(--palette-5);
+  --border: color-mix(in oklab, var(--palette-5) 75%, white);
+  --text: var(--paper);
+  --muted: color-mix(in oklab, var(--paper) 68%, black);
+  /* Lobster pink lightened for 4.5:1 text on dark surfaces. */
+  --accent: color-mix(in oklab, var(--palette-3) 75%, white);
+  --focus: var(--accent);
+  --accent-text: var(--ink);
+  --error: var(--accent);
+  --node-citing: var(--accent);
+  --node-anchor: color-mix(in oklab, var(--palette-2) 85%, white);
+  --node-cited: color-mix(in oklab, var(--palette-1) 80%, white);
+  --node-reference-only: color-mix(in oklab, var(--paper) 55%, black);
+  --node-outline: color-mix(in srgb, black 45%, transparent);
+  --node-icon-on-anchor: var(--ink);
+  --node-icon-on-citing: var(--ink);
+  --node-icon-on-cited: var(--ink);
+  --node-icon-on-reference-only: var(--ink);
+  --node-selected: var(--palette-4);
+  --node-expanded: color-mix(in oklab, var(--palette-2) 85%, white);
+  --node-pin: var(--palette-4);
+  --node-icon-on-pin: var(--ink);
+  --graph-link: color-mix(in srgb, var(--paper) 18%, transparent);
+  --graph-link-active: var(--accent);
+  --graph-axis: color-mix(in srgb, var(--paper) 10%, transparent);
+
+  /* Lightened like the other node colors, with tints toward the dark background. */
+  --anchor-1: color-mix(in oklab, var(--palette-2) 80%, white);
+  --anchor-2: color-mix(in oklab, var(--palette-3) 75%, white);
+  --anchor-3: color-mix(in oklab, var(--palette-1) 75%, white);
+  --anchor-4: color-mix(
+    in oklab,
+    color-mix(in oklab, var(--palette-2) 50%, var(--palette-1)) 75%,
+    white
+  );
+  --anchor-5: color-mix(
+    in oklab,
+    color-mix(in oklab, var(--palette-3) 50%, var(--palette-2)) 75%,
+    white
+  );
+  --anchor-6: color-mix(
+    in oklab,
+    color-mix(in oklab, var(--palette-3) 50%, var(--palette-1)) 75%,
+    white
+  );
+  --anchor-tint: 55%;
+  --anchor-tint-base: var(--surface);
+  --node-icon-on-anchor-hue: var(--ink);
+  --node-icon-on-anchor-tint: var(--paper);
+  --node-unlinked: color-mix(in oklab, var(--paper) 22%, var(--surface));
+  --node-icon-on-unlinked: var(--paper);
 }
 
 /* The tints of the anchor hues, for works near each anchor. */
@@ -1518,6 +1520,27 @@ button.with-icon {
   display: flex;
   flex-direction: column;
   gap: 16px;
+}
+
+.theme-setting {
+  border: none;
+  padding: 0;
+  margin: 0;
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px 20px;
+}
+
+.theme-setting legend {
+  font-weight: 600;
+  margin-bottom: 6px;
+}
+
+.theme-setting label {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  cursor: pointer;
 }
 
 .saved-graphs {

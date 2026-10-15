@@ -11,6 +11,22 @@
       href="https://fonts.googleapis.com/css2?family=Bricolage+Grotesque:opsz,wght@12..96,700&display=swap"
     />
     <title>Tracer</title>
+    <script>
+      // Shows the chosen theme before the page first paints (see src/theme.js, which this
+      // repeats in brief).
+      (function () {
+        var choice = 'system';
+        try {
+          choice = localStorage.getItem('tracer:theme') || 'system';
+        } catch (e) {}
+        var dark =
+          choice === 'dark' ||
+          (choice !== 'light' &&
+            window.matchMedia &&
+            window.matchMedia('(prefers-color-scheme: dark)').matches);
+        document.documentElement.dataset.theme = dark ? 'dark' : 'light';
+      })();
+    </script>
   </head>
   <body>
     <div id="root"></div>

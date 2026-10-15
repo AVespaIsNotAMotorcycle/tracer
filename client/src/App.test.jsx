@@ -55,6 +55,7 @@ vi.mock('./api.js', async (importOriginal) => ({
   getCiting: vi.fn(),
   getCited: vi.fn(),
   getArchiveItems: vi.fn(),
+  getAuthorNames: vi.fn(),
   getCitationMatch: vi.fn(),
   getAccount: vi.fn(),
   signUp: vi.fn(),
@@ -105,6 +106,7 @@ beforeEach(() => {
   vi.mocked(api.getCiting).mockImplementation(async (id) => (id === 'anchor' ? [citer] : [more]));
   vi.mocked(api.getCited).mockImplementation(async (id) => (id === 'anchor' ? [ref] : []));
   vi.mocked(api.getArchiveItems).mockResolvedValue([]);
+  vi.mocked(api.getAuthorNames).mockResolvedValue([]);
   vi.mocked(api.getCitationMatch).mockResolvedValue({ match: null });
 });
 
@@ -380,6 +382,44 @@ describe('App', () => {
     fireEvent.click(within(languages).getByRole('checkbox', { name: /English/ }));
     expect(within(graph()).queryByRole('button', { name: 'Title citer' })).toBeNull();
     expect(within(graph()).getByRole('button', { name: 'Title ref' })).toBeInTheDocument();
+  });
+
+  it('shows authors’ names in their own scripts from Wikidata, with links to them', async () => {
+    vi.mocked(api.getWork).mockResolvedValue({
+      ...anchor,
+      authors: [
+        { name: 'Masao Maruyama', orcid: null },
+        { name: 'Mikiso Hane', orcid: null },
+      ],
+    });
+    vi.mocked(api.getAuthorNames).mockResolvedValue([
+      {
+        index: 0,
+        name: 'Masao Maruyama',
+        wikidata: 'Q1143571',
+        otherNames: [
+          { text: '丸山眞男', language: 'ja', reading: 'まるやま まさお', kind: 'native' },
+        ],
+        links: [
+          { kind: 'wikidata', url: 'https://www.wikidata.org/wiki/Q1143571' },
+          { kind: 'viaf', url: 'https://viaf.org/viaf/44407375' },
+        ],
+      },
+    ]);
+    await buildFromSearch();
+
+    fireEvent.click(within(graph()).getByRole('button', { name: 'Title anchor' }));
+    const details = screen.getByRole('complementary', { name: 'Title anchor' });
+    expect(await within(details).findByText('丸山眞男')).toHaveAttribute('lang', 'ja');
+    expect(
+      within(details).getByText(/Masao Maruyama/, { selector: 'p.authors' }),
+    ).toHaveTextContent('Masao Maruyama (丸山眞男 · まるやま まさお), Mikiso Hane');
+    expect(within(details).getByRole('link', { name: 'VIAF' })).toHaveAttribute(
+      'href',
+      'https://viaf.org/viaf/44407375',
+    );
+    expect(within(details).getByText(/names in other scripts from Wikidata/)).toBeInTheDocument();
+    expect(api.getAuthorNames).toHaveBeenCalledWith('anchor', expect.anything());
   });
 
   it('replaces a work not on OpenAlex with the work the server merged it into', async () => {

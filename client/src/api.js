@@ -73,6 +73,15 @@ export async function findPath(id, to, { signal } = {}) {
   return get(`${workPath(id)}/path?${params}`, { signal });
 }
 
+/**
+ * The work's authors Wikidata knows, by index in its `authors`: [{ index, name, wikidata,
+ * otherNames: [{ text, language, reading, kind }], links: [{ kind, url }] }], where
+ * otherNames are their name in their own script, or a romanization of it.
+ */
+export async function getAuthorNames(id, { signal } = {}) {
+  return (await get(`${workPath(id)}/authors`, { signal })).authors;
+}
+
 /** Copies of the work on the Internet Archive (editions of a book, usually), best first. */
 export async function getArchiveItems(id, { signal } = {}) {
   return (await get(`${workPath(id)}/archive`, { signal })).items;

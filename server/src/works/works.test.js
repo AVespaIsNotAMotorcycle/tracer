@@ -840,6 +840,95 @@ describe('merging duplicate works', () => {
   });
 });
 
+describe('GET /api/works/:id/authors', () => {
+  let nameProvider;
+
+  beforeEach(() => {
+    catalog.set('W70', {
+      ...providerWork('W70', { doi: '10.1234/maruyama' }),
+      authors: [
+        { name: 'Masao Maruyama', orcid: null },
+        { name: 'A. Translator', orcid: '0000-0001-2345-6789' },
+      ],
+    });
+    nameProvider = {
+      name: 'wikidata',
+      findByDoi: vi.fn(async () => 'Q9'),
+      findByOrcid: vi.fn(async () => 'Q7'),
+      getWorkCredits: vi.fn(async () => [{ id: 'Q1143571', ordinal: 1, statedAs: null }]),
+      getPeople: vi.fn(async (ids) =>
+        [
+          {
+            id: 'Q1143571',
+            labels: { en: 'Masao Maruyama', ja: '丸山眞男' },
+            aliases: [],
+            nativeNames: [{ text: '丸山眞男', language: 'ja' }],
+            kanaReadings: ['まるやま まさお'],
+            languages: ['ja'],
+            orcid: null,
+            viaf: '44407375',
+          },
+          {
+            id: 'Q7',
+            labels: { en: 'A. Translator' },
+            aliases: [],
+            nativeNames: [],
+            kanaReadings: [],
+            languages: [],
+            orcid: '0000-0001-2345-6789',
+            viaf: null,
+          },
+        ].filter((p) => ids.includes(p.id)),
+      ),
+    };
+    const workService = createWorkService({ provider, nameProvider, now: () => clock });
+    api = request(createApp({ workService }));
+  });
+
+  afterEach(() => catalog.delete('W70'));
+
+  it('gives the authors Wikidata knows, with their names in other scripts, cached', async () => {
+    const res = await api.get('/api/works/W70/authors');
+    expect(res.status).toBe(200);
+    expect(res.body.authors).toEqual([
+      {
+        index: 0,
+        name: 'Masao Maruyama',
+        wikidata: 'Q1143571',
+        otherNames: [
+          { text: '丸山眞男', language: 'ja', reading: 'まるやま まさお', kind: 'native' },
+        ],
+        links: [
+          { kind: 'wikidata', url: 'https://www.wikidata.org/wiki/Q1143571' },
+          { kind: 'viaf', url: 'https://viaf.org/viaf/44407375' },
+        ],
+      },
+      {
+        index: 1,
+        name: 'A. Translator',
+        wikidata: 'Q7',
+        otherNames: [],
+        links: [{ kind: 'wikidata', url: 'https://www.wikidata.org/wiki/Q7' }],
+      },
+    ]);
+    expect(nameProvider.findByDoi).toHaveBeenCalledWith('10.1234/maruyama');
+    expect(nameProvider.findByOrcid).toHaveBeenCalledWith('0000-0001-2345-6789');
+
+    await api.get('/api/works/W70/authors');
+    expect(nameProvider.findByDoi).toHaveBeenCalledTimes(1);
+    // Not a provider of the work's data.
+    expect((await api.get('/api/works/W70')).body.work.providers).toEqual(['openalex']);
+  });
+
+  it('gives the cached authors, or none, when Wikidata fails', async () => {
+    vi.spyOn(console, 'error').mockImplementation(() => {});
+    nameProvider.findByDoi.mockRejectedValue(new ProviderError('wikidata', 'down'));
+    const res = await api.get('/api/works/W70/authors');
+    expect(res.status).toBe(200);
+    expect(res.body.authors).toEqual([]);
+  });
+});
+
 describe('citationKey', () => {
   it('ignores case, punctuation and accents, preferring DOI, then title, then the citation', () => {
     const base = { doi: null, authors: [{ name: 'Zebrowski' }], year: 1983, unstructured: null };

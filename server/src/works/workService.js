@@ -10,6 +10,7 @@ import {
 } from './archiveMatch.js';
 import { citationQuery, doiLinks, matchCitation } from './citationMatch.js';
 import { HttpError } from './errors.js';
+import { matchAuthors, otherNames, personLinks } from './authorNames.js';
 import { canonicalIdMap, mergeSources, sameWork } from './merges.js';
 import { chooseLanguage, otherTitles } from './titles.js';
 import { shortestPath } from './pathSearch.js';
@@ -33,6 +34,7 @@ export const DEFAULT_TTLS = {
   search: 1 * DAY_MS,
   references: 30 * DAY_MS,
   archive: 30 * DAY_MS,
+  authorNames: 30 * DAY_MS,
   citationMatch: 30 * DAY_MS,
 };
 // The shape of stored provider data, as `version` on each record. A record stored by an
@@ -45,6 +47,8 @@ export const RECORD_VERSION = 2;
 const PATH_TIME_MS = 18_000;
 export const PATH_MAX_STEPS = 8;
 export const PATH_MAX_WORKS = 5000;
+// Most authors per work looked up on Wikidata by ORCID iD (one request each).
+const MAX_ORCID_LOOKUPS = 5;
 // Most Internet Archive items returned per work (editions and copies of a book).
 const MAX_ARCHIVE_ITEMS = 5;
 
@@ -153,6 +157,7 @@ export function citationKey(reference) {
  * @param {ReturnType<typeof import('../providers/crossref.js').createCrossrefProvider>} [options.referenceProvider]
  * @param {ReturnType<typeof import('../providers/opencitations.js').createOpenCitationsProvider>} [options.linkProvider]
  * @param {ReturnType<typeof import('../providers/internetarchive.js').createInternetArchiveProvider>} [options.archiveProvider]
+ * @param {ReturnType<typeof import('../providers/wikidata.js').createWikidataProvider>} [options.nameProvider]
  * @param {Partial<typeof DEFAULT_TTLS>} [options.ttls]
  * @param {() => Date} [options.now]  Injected for tests.
  */
@@ -161,6 +166,7 @@ export function createWorkService({
   referenceProvider,
   linkProvider,
   archiveProvider,
+  nameProvider,
   ttls = {},
   now = () => new Date(),
 }) {
@@ -422,9 +428,10 @@ export function createWorkService({
               : null,
         otherTitles: otherTitles(data.title, deposited),
         links: data.links,
-        // The Archive lookup is stored as a record too, but none of the work's data is from it.
+        // The Archive and Wikidata lookups are stored as records too, but they only add links
+        // and authors' names, shown with their source.
         providers: unique(all.flatMap((s) => Object.keys(s.records ?? {}))).filter(
-          (name) => name !== archiveProvider?.name,
+          (name) => name !== archiveProvider?.name && name !== nameProvider?.name,
         ),
         mergedIds: all.slice(1).map((s) => String(s._id)),
       };
@@ -818,6 +825,62 @@ export function createWorkService({
         { $set: { [field]: { data: { items }, fetchedAt: now() } } },
       );
       return items;
+    },
+
+    /**
+     * The work's authors as Wikidata knows them, for those it can be sure of (see
+     * matchAuthors): each one's index in the work's `authors`, Wikidata item, their name in
+     * other scripts (see otherNames) and links to Wikidata and VIAF. People come from the
+     * work's Wikidata item, found by DOI, and from authors' ORCID iDs. Cached on its Source for
+     * 30 days. A failed lookup is logged and gives the cached authors, if any, or none.
+     * Reference-only works aren't looked up: their authors are only surnames.
+     *
+     * @returns {Promise<{ index: number, name: string, wikidata: string,
+     *   otherNames: import('./authorNames.js').OtherName[], links: { kind: string,
+     *   url: string }[] }[]>}
+     */
+    async getAuthorNames(id) {
+      if (!nameProvider) return [];
+      const source = await loadSource(id);
+      if (isReferenceOnly(source)) return [];
+      const field = `records.${nameProvider.name}`;
+      const cached = source.records?.[nameProvider.name];
+      if (isCurrent(cached, ttl.authorNames)) return cached.data.authors;
+      const [work] = await toWorks([source]);
+      if (work.authors.length === 0) return [];
+
+      let authors;
+      try {
+        const doi = work.externalIds.doi;
+        const item = doi ? await nameProvider.findByDoi(doi) : null;
+        const credits = item ? await nameProvider.getWorkCredits(item) : [];
+        // Authors with an ORCID iD the work's item may not credit.
+        const byOrcid = await Promise.all(
+          work.authors
+            .filter((author) => author.orcid)
+            .slice(0, MAX_ORCID_LOOKUPS)
+            .map((author) => nameProvider.findByOrcid(author.orcid).catch(() => null)),
+        );
+        const ids = unique([...credits.map((credit) => credit.id), ...byOrcid.filter(Boolean)]);
+        const people = await nameProvider.getPeople(ids);
+        authors = [...matchAuthors(work.authors, credits, people)]
+          .sort(([a], [b]) => a - b)
+          .map(([index, person]) => ({
+            index,
+            name: work.authors[index].name,
+            wikidata: person.id,
+            otherNames: otherNames(work.authors[index].name, person),
+            links: personLinks(person),
+          }));
+      } catch (err) {
+        console.error(err);
+        return cached?.data.authors ?? [];
+      }
+      await Source.updateOne(
+        { _id: source._id },
+        { $set: { [field]: { data: { authors }, fetchedAt: now(), version: RECORD_VERSION } } },
+      );
+      return authors;
     },
 
     /**

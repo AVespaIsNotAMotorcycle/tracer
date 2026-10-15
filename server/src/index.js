@@ -6,6 +6,7 @@ import { createCrossrefProvider } from './providers/crossref.js';
 import { createInternetArchiveProvider } from './providers/internetarchive.js';
 import { createOpenAlexProvider } from './providers/openalex.js';
 import { createOpenCitationsProvider } from './providers/opencitations.js';
+import { createWikidataProvider } from './providers/wikidata.js';
 import { createWorkService } from './works/workService.js';
 
 const port = process.env.PORT || 5000;
@@ -27,8 +28,20 @@ const linkProvider = createOpenCitationsProvider({
 });
 // The Internet Archive: scanned copies of works, linked from their details.
 const archiveProvider = createInternetArchiveProvider();
+// Wikidata: authors' names in their own scripts, and links to them. Wikimedia throttles
+// clients that don't give a contact address.
+if (!process.env.WIKIDATA_CONTACT) {
+  console.warn('WIKIDATA_CONTACT not set; Wikidata may throttle requests');
+}
+const nameProvider = createWikidataProvider({ contact: process.env.WIKIDATA_CONTACT });
 const app = createApp({
-  workService: createWorkService({ provider, referenceProvider, linkProvider, archiveProvider }),
+  workService: createWorkService({
+    provider,
+    referenceProvider,
+    linkProvider,
+    archiveProvider,
+    nameProvider,
+  }),
   authService: createAuthService(),
   // Session cookies only over HTTPS in production (Heroku serves HTTPS).
   authOptions: { secureCookies: process.env.NODE_ENV === 'production' },

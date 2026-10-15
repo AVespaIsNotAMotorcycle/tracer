@@ -201,6 +201,10 @@ export function createWorksRouter(workService, authService) {
     res.json(await workService.findPath(req.params.id, to));
   });
 
+  router.get('/:id/authors', async (req, res) => {
+    res.json({ authors: await workService.getAuthorNames(req.params.id) });
+  });
+
   router.get('/:id/archive', async (req, res) => {
     res.json({ items: await workService.getArchiveItems(req.params.id) });
   });

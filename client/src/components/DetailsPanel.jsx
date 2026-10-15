@@ -1,6 +1,6 @@
 import { Minus, Pin, PinOff, Plus, TriangleAlert } from 'lucide-react';
-import { useEffect, useState } from 'react';
-import { getArchiveItems, getCitationMatch } from '../api.js';
+import { Fragment, useEffect, useState } from 'react';
+import { getArchiveItems, getAuthorNames, getCitationMatch } from '../api.js';
 import { NOT_IN_PLAN } from '../auth/entitlements.js';
 import { canExpand } from '../graph/graphModel.js';
 import { langFor, languageName, scriptLabel } from '../graph/languages.js';
@@ -19,6 +19,8 @@ const LINK_LABELS = {
   landing_page: 'Publisher page',
   pdf: 'Open-access PDF',
   provider: 'OpenAlex',
+  wikidata: 'Wikidata',
+  viaf: 'VIAF',
 };
 
 // Who can read an Internet Archive copy.
@@ -135,7 +137,46 @@ function providerSummary(links) {
  * how many of its links on the graph each provider has (`links`; see graphLinks), and the
  * links OpenAlex doesn't have, each selectable.
  */
-function DataSources({ work, links, onSelect }) {
+/**
+ * The work's authors, each with their name in other scripts where Wikidata has it (`names`;
+ * see getAuthorNames): "Masao Maruyama (丸山眞男 · まるやま まさお)".
+ */
+function Authors({ authors, names }) {
+  const byIndex = new Map(names.map((entry) => [entry.index, entry.otherNames]));
+  return (
+    <p className="authors">
+      {authors.map((author, index) => {
+        const others = byIndex.get(index) ?? [];
+        return (
+          <Fragment key={index}>
+            {index > 0 && ', '}
+            {author.name}
+            {others.length > 0 && (
+              <span className="other-names">
+                {' ('}
+                {others.map((other, i) => (
+                  <Fragment key={other.text}>
+                    {i > 0 && ', '}
+                    <span lang={other.language ?? undefined}>{other.text}</span>
+                    {other.reading && (
+                      <span className="muted" lang="ja">
+                        {' · '}
+                        {other.reading}
+                      </span>
+                    )}
+                  </Fragment>
+                ))}
+                {')'}
+              </span>
+            )}
+          </Fragment>
+        );
+      })}
+    </p>
+  );
+}
+
+function DataSources({ work, links, onSelect, namesFromWikidata = false }) {
   const cites = links.filter((link) => link.direction === 'cites');
   const citedBy = links.filter((link) => link.direction === 'cited-by');
   const elsewhere = links.filter(
@@ -156,6 +197,7 @@ function DataSources({ work, links, onSelect }) {
               ? 'as deposited with Crossref'
               : `as ${providerLabel(work.languageProvider)} detected it from the title and abstract`
           }.`}
+        {namesFromWikidata && ' Authors’ names in other scripts from Wikidata.'}
       </p>
       {links.length > 0 && (
         <dl className="link-sources">
@@ -406,6 +448,16 @@ export default function DetailsPanel({
   // Copies on the Internet Archive; for a work not on OpenAlex, also the work Crossref
   // matched its citation to.
   const archiveItems = useWorkLookup(getArchiveItems, work.id, NO_ITEMS);
+  // Authors' names in other scripts, and links to them, from Wikidata.
+  const authorNames = useWorkLookup(
+    getAuthorNames,
+    work.id,
+    NO_ITEMS,
+    expandable && work.authors.length > 0,
+  );
+  const authorLinks = authorNames.flatMap((entry) =>
+    entry.links.map((link) => ({ ...link, name: entry.name })),
+  );
   const matched = useWorkLookup(getCitationMatch, work.id, null, !expandable && !work.links.length);
   const match = matched?.match ?? null;
   const mergedWork = matched?.work ?? null;
@@ -430,7 +482,7 @@ export default function DetailsPanel({
       {(work.otherTitles ?? []).map((other) => (
         <OtherTitle key={other.title} other={other} work={work} />
       ))}
-      {work.authors.length > 0 && <p className="authors">{authorsOf(work)}</p>}
+      {work.authors.length > 0 && <Authors authors={work.authors} names={authorNames} />}
       <p className="muted with-icon">
         <TypeIcon className="icon" aria-hidden="true" />
         <span>
@@ -617,7 +669,7 @@ export default function DetailsPanel({
         <WorkNote key={work.id} note={note} onChange={onNoteChange} signedIn={signedIn} />
       )}
 
-      {(links.length > 0 || archiveItems.length > 0) && (
+      {(links.length > 0 || archiveItems.length > 0 || authorLinks.length > 0) && (
         <>
           <h3>Links</h3>
           <ul className="links">
@@ -626,6 +678,14 @@ export default function DetailsPanel({
                 <a href={link.url} target="_blank" rel="noopener noreferrer">
                   {LINK_LABELS[link.kind] ?? link.kind}
                 </a>
+              </li>
+            ))}
+            {authorLinks.map((link) => (
+              <li key={link.url}>
+                <a href={link.url} target="_blank" rel="noopener noreferrer">
+                  {LINK_LABELS[link.kind] ?? link.kind}
+                </a>{' '}
+                <span className="muted small">{link.name}</span>
               </li>
             ))}
             {archiveItems.map((item) => (
@@ -651,7 +711,12 @@ export default function DetailsPanel({
         </>
       )}
 
-      <DataSources work={work} links={graphLinks} onSelect={onSelectWork} />
+      <DataSources
+        work={work}
+        links={graphLinks}
+        onSelect={onSelectWork}
+        namesFromWikidata={authorNames.some((entry) => entry.otherNames.length > 0)}
+      />
 
       {parts.length > 0 && (
         <>

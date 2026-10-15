@@ -53,6 +53,53 @@ function fakeApi(network, years = {}) {
   };
 }
 
+describe('merged works', () => {
+  const graphOf = () => {
+    let graph = addWorks(
+      { ...emptyGraph(), anchorIds: ['a'] },
+      [work('a', ['dup', 'x'])],
+      'anchor',
+    );
+    graph = addWorks(graph, [work('dup'), work('x')], 'cited');
+    graph = addWorks(graph, [work('c', ['a', 'dup'])], 'citing');
+    graph = markExpanded(graph, 'dup', 'citing');
+    return { ...graph, sticky: new Set(['dup']) };
+  };
+
+  it('replaces a work merged into one being added, wherever it is on the graph', () => {
+    const merged = { ...work('main', ['x']), mergedIds: ['dup'] };
+    const graph = addWorks(graphOf(), [merged], 'citing');
+
+    expect([...graph.works.keys()]).toEqual(['a', 'x', 'c', 'main']);
+    expect(graph.works.get('a').references).toEqual(['main', 'x']);
+    expect(graph.works.get('c').references).toEqual(['a', 'main']);
+    // It keeps the relation the merged work had, and its expansions and stickiness.
+    expect(graph.relations.get('main')).toBe('cited');
+    expect(graph.expanded.get('main')).toEqual(new Set(['citing']));
+    expect(graph.sticky).toEqual(new Set(['main']));
+    expect(graph.aliases).toEqual(new Map([['dup', 'main']]));
+    expect(inGraphCitationCounts(graph.works).get('main')).toBe(2);
+  });
+
+  it('merges an anchor, keeping it an anchor, and follows a work merged twice', () => {
+    let graph = addWorks(graphOf(), [{ ...work('a2', ['x']), mergedIds: ['a'] }], 'cited');
+    expect(graph.anchorIds).toEqual(['a2']);
+    expect(graph.relations.get('a2')).toBe('anchor');
+
+    graph = addWorks(graph, [{ ...work('a3'), mergedIds: ['a', 'a2'] }], 'cited');
+    expect(graph.anchorIds).toEqual(['a3']);
+    expect(graph.aliases).toEqual(
+      new Map([
+        ['a', 'a3'],
+        ['a2', 'a3'],
+      ]),
+    );
+    // Seen again, it changes nothing.
+    const again = addWorks(graph, [{ ...work('a3'), mergedIds: ['a', 'a2'] }], 'cited');
+    expect(again.aliases).toBe(graph.aliases);
+  });
+});
+
 describe('deriveEdges', () => {
   it('includes citations between any two works on the graph', () => {
     const works = worksMap(work('R', ['A']), work('A', ['B']), work('B'), work('C', ['A', 'X']));

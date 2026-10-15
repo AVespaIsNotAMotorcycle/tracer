@@ -7,6 +7,7 @@ import { PLANS } from '../entitlements/plans.js';
 import { GraphSnapshot } from '../models/GraphSnapshot.js';
 import { SavedGraph } from '../models/SavedGraph.js';
 import { HttpError } from '../works/errors.js';
+import { canonicalIdMap } from '../works/merges.js';
 
 const gzip = promisify(gzipCallback);
 const gunzip = promisify(gunzipCallback);
@@ -290,6 +291,52 @@ function checkName(name, fallback) {
   return trimmed || (fallback ?? '').trim().slice(0, MAX_NAME_LENGTH) || 'Untitled graph';
 }
 
+const unique = (values) => [...new Set(values)];
+
+/**
+ * Rewrites the Tracer IDs `graph` (a SavedGraph document) stores, its anchors, expansions,
+ * pins and note targets, to the works they were merged into, if any were (see
+ * works/merges.js). Two IDs that became one are kept once (the first), and two notes on them
+ * are joined. Returns whether anything changed.
+ *
+ * @param {(ids: string[]) => Promise<Map<string, string>>} resolveIds
+ */
+async function redirectMerged(graph, resolveIds) {
+  const anchors = anchorsOf(graph);
+  const pinned = graph.view?.pinned ?? [];
+  const notes = graph.annotations.filter((a) => a.target?.type === 'work');
+  const redirects = await resolveIds([
+    ...anchors.map((anchor) => anchor.id),
+    ...graph.expanded,
+    ...pinned,
+    ...notes.map((note) => note.target.workId),
+  ]);
+  if (redirects.size === 0) return false;
+  const to = (id) => redirects.get(id) ?? id;
+  const anchorIds = new Set();
+  graph.anchors = anchors
+    .map((anchor) => ({ ...anchor, id: to(anchor.id) }))
+    .filter((anchor) => !anchorIds.has(anchor.id) && anchorIds.add(anchor.id));
+  graph.anchor = undefined;
+  graph.version = 2;
+  graph.expanded = unique(graph.expanded.map(to));
+  graph.set('view.pinned', unique(pinned.map(to)));
+  const byWork = new Map();
+  graph.annotations = graph.annotations.filter((annotation) => {
+    if (annotation.target?.type !== 'work') return true;
+    const workId = to(annotation.target.workId);
+    const first = byWork.get(workId);
+    if (first) {
+      first.body = `${first.body}\n\n${annotation.body}`.slice(0, MAX_NOTE_LENGTH);
+      return false;
+    }
+    annotation.target.workId = workId;
+    byWork.set(workId, annotation);
+    return true;
+  });
+  return true;
+}
+
 const summary = (graph) => ({
   id: String(graph._id),
   name: graph.name,
@@ -326,6 +373,7 @@ const full = (graph) => ({
 export function createGraphService({
   now = () => Date.now(),
   snapshotTtlMs = SNAPSHOT_TTL_MS,
+  resolveIds = canonicalIdMap,
 } = {}) {
   /** The user's graph with this ID, or a 404. */
   async function owned(userId, id) {
@@ -404,10 +452,23 @@ export function createGraphService({
     /**
      * The graph, with `snapshot`: the graph as last built, if that was within the snapshot TTL
      * and from its current state, or null when the client has to build it.
+     *
+     * Works merged since it was saved (see works/merges.js) are followed first: the stored IDs
+     * are rewritten to the works they were merged into (without counting as a change to the
+     * graph), and a snapshot holding a merged work is dropped, so the rebuild shows it once.
      */
     async get(userId, id) {
       const graph = await owned(userId, id);
-      return { ...full(graph), snapshot: await freshSnapshot(graph) };
+      if (await redirectMerged(graph, resolveIds)) {
+        await graph.save({ timestamps: false });
+        await GraphSnapshot.deleteOne({ _id: graph._id });
+      }
+      let snapshot = await freshSnapshot(graph);
+      if (snapshot && (await resolveIds(snapshot.works.map((work) => work.id))).size > 0) {
+        await GraphSnapshot.deleteOne({ _id: graph._id });
+        snapshot = null;
+      }
+      return { ...full(graph), snapshot };
     },
 
     /**

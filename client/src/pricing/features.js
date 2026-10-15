@@ -89,9 +89,10 @@ export const FEATURE_GROUPS = [
       },
       {
         name: 'Duplicate merging',
+        note: 'One node for a work OpenAlex lists twice, or a printed reference matched to its record.',
         free: true,
         scholar: true,
-        available: false,
+        available: true,
       },
       {
         name: 'Data provenance and missing-data warnings',

@@ -73,6 +73,9 @@ const doiLink = (work) => work.links.find((link) => link.kind === 'doi');
  * With `anchorControl` ({ count, limit, onAdd, onRemove }), a work can be added as another
  * anchor (up to `limit`), and an anchor removed when there are several (`manyAnchors`). Then
  * `neighborhood` lists the anchors it's near ({ id, index, title }; see anchorNeighborhoods).
+ *
+ * When the work Crossref matches a reference-only work to is on OpenAlex, the server merges
+ * them, and `onMerged` gets that work to put in its place.
  */
 const yearOf = (work) => (work.year == null ? '' : ` (${work.year})`);
 
@@ -265,6 +268,7 @@ export default function DetailsPanel({
   anchorControl = null,
   neighborhood = null,
   manyAnchors = false,
+  onMerged,
   onClose,
   inert = false,
 }) {
@@ -278,7 +282,12 @@ export default function DetailsPanel({
   // Copies on the Internet Archive; for a work not on OpenAlex, also the work Crossref
   // matched its citation to.
   const archiveItems = useWorkLookup(getArchiveItems, work.id, NO_ITEMS);
-  const match = useWorkLookup(getCitationMatch, work.id, null, !expandable && !work.links.length);
+  const matched = useWorkLookup(getCitationMatch, work.id, null, !expandable && !work.links.length);
+  const match = matched?.match ?? null;
+  const mergedWork = matched?.work ?? null;
+  useEffect(() => {
+    if (mergedWork) onMerged?.(mergedWork);
+  }, [mergedWork, onMerged]);
   const links = [...work.links, ...(match?.links ?? [])];
   // Known only from a citation printed as text, which is shown as its title.
   const printedOnly = !expandable && Boolean(work.citation) && work.title === work.citation;

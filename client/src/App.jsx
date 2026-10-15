@@ -130,6 +130,7 @@ function GraphPage({ auth }) {
     findCoCitations,
     applyCoCitations,
     findPath,
+    mergeWork,
     reset,
   } = useCitationGraph();
   const busy = status === 'loading' || status === 'reanchoring';
@@ -181,6 +182,30 @@ function GraphPage({ auth }) {
   // The anchor chosen to look for a path to, from one work: { fromId, target }.
   const [pathTarget, setPathTarget] = useState(null);
   const [selectedId, setSelectedId] = useState(null);
+  // Works the server merged into another (see foldAliases) are replaced on the graph; pins,
+  // notes and the selection move to the work they're now part of. Two notes on one are joined.
+  // Adjusted while rendering, when the graph's aliases change, rather than in an effect.
+  const aliases = graph.aliases;
+  const [seenAliases, setSeenAliases] = useState(aliases);
+  if (aliases !== seenAliases) {
+    setSeenAliases(aliases);
+    if (aliases?.size) {
+      const to = (id) => aliases.get(id) ?? id;
+      setPinned((prev) =>
+        [...prev].some((id) => aliases.has(id)) ? new Set([...prev].map(to)) : prev,
+      );
+      setNotes((prev) => {
+        if (![...prev.keys()].some((id) => aliases.has(id))) return prev;
+        const next = new Map();
+        for (const [id, text] of prev) {
+          const key = to(id);
+          next.set(key, next.has(key) ? `${next.get(key)}\n\n${text}` : text);
+        }
+        return next;
+      });
+      setSelectedId((prev) => (prev ? to(prev) : prev));
+    }
+  }
   const [axisAngle, setAxisAngle] = useState(DEFAULT_AXIS_ANGLE);
   // Counts runs (builds, re-anchors, options changes), so the view re-fits after each one.
   const [runCount, setRunCount] = useState(0);
@@ -888,6 +913,7 @@ function GraphPage({ auth }) {
               : null
           }
           manyAnchors={graph.anchorIds.length > 1}
+          onMerged={mergeWork}
           pinned={pinned.has(selected.id)}
           onTogglePin={() => togglePin(selected.id)}
           note={notes.get(selected.id) ?? ''}

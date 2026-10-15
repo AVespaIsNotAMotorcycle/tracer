@@ -9,6 +9,7 @@ import { createGraphService, SNAPSHOT_TTL_MS, stateKey } from './graphService.js
 import { GraphSnapshot } from '../models/GraphSnapshot.js';
 import { Identity } from '../models/Identity.js';
 import { SavedGraph } from '../models/SavedGraph.js';
+import { Source } from '../models/Source.js';
 import { Session } from '../models/Session.js';
 import { User } from '../models/User.js';
 
@@ -187,6 +188,63 @@ const snapshot = (overrides = {}) => ({
   sticky: ['tracer-a'],
   truncated: false,
   ...overrides,
+});
+
+describe('works merged since saving', () => {
+  it('follows merged works to the work they were merged into, dropping the snapshot', async () => {
+    const [kept, merged] = await Source.create([{ externalIds: {} }, { externalIds: {} }]);
+    const [keptId, mergedId] = [String(kept._id), String(merged._id)];
+    const agent = await signedIn();
+    const { graph } = (
+      await agent.post('/api/graphs').send({
+        state: state({
+          anchors: [
+            { id: mergedId, title: 'Duplicate' },
+            { id: keptId, title: 'Original' },
+          ],
+          view: { axisAngle: 30, pinned: [mergedId, 'tracer-b'] },
+          expanded: [mergedId, keptId],
+          annotations: [
+            { target: { type: 'work', workId: keptId }, kind: 'note', body: 'First' },
+            { target: { type: 'work', workId: mergedId }, kind: 'note', body: 'Second' },
+          ],
+        }),
+        snapshot: snapshot({
+          anchorIds: [mergedId, keptId],
+          works: [{ id: mergedId }, { id: keptId }],
+        }),
+      })
+    ).body;
+    await Source.updateOne({ _id: merged._id }, { $set: { mergedInto: kept._id } });
+
+    const opened = (await agent.get(`/api/graphs/${graph.id}`)).body.graph;
+    expect(opened).toMatchObject({
+      anchors: [{ id: keptId, title: 'Duplicate' }],
+      view: { pinned: [keptId, 'tracer-b'] },
+      expanded: [keptId],
+      snapshot: null,
+      updatedAt: graph.updatedAt,
+    });
+    expect(opened.annotations.map((a) => [a.target.workId, a.body])).toEqual([
+      [keptId, 'First\n\nSecond'],
+    ]);
+    // Rewritten for good, so a snapshot of the rebuild matches its state.
+    expect((await agent.get(`/api/graphs/${graph.id}`)).body.graph.stateKey).toBe(opened.stateKey);
+  });
+
+  it('drops a snapshot holding a work merged since', async () => {
+    const [kept, merged] = await Source.create([{ externalIds: {} }, { externalIds: {} }]);
+    const agent = await signedIn();
+    const { graph } = (
+      await agent.post('/api/graphs').send({
+        state: state(),
+        snapshot: snapshot({ works: [{ id: 'tracer-anchor' }, { id: String(merged._id) }] }),
+      })
+    ).body;
+    expect((await agent.get(`/api/graphs/${graph.id}`)).body.graph.snapshot).not.toBeNull();
+    await Source.updateOne({ _id: merged._id }, { $set: { mergedInto: kept._id } });
+    expect((await agent.get(`/api/graphs/${graph.id}`)).body.graph.snapshot).toBeNull();
+  });
 });
 
 describe('snapshots of built graphs', () => {

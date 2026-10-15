@@ -18,6 +18,7 @@ Each entry lists:
 - **Notes on works**, saved with the graph as `annotations`. Done. Reading status is still to do (see 7).
 - **Shortest path to the anchor.** Done. Generalizing it is still to do (see 17).
 - **Multiple anchors** (1): a graph built around several works, colored by anchor with shared works split between their colors; 2 anchors free, 6 on Scholar. Saved graphs are version 2 (`anchors`).
+- **Duplicate merging and stable IDs** (2): OpenAlex records sharing a DOI, and grey reference-only nodes Crossref matched to an OpenAlex work, merge into one work when their records agree (`sameWork`), combining their citations. A merged Source redirects (`mergedInto`) wherever its ID is looked up, and saved graphs are rewritten to follow it when opened. Done.
 - **Entitlements layer** (groundwork): `can(user, feature)` / `limitFor(user, limit)` in `server/src/entitlements/`, checked by the gated routes and controls, with every tier including everything for now. Billing (Stripe) waits for launch.
 
 ---
@@ -31,13 +32,6 @@ These aren't features, but each one gets harder to add later.
 ---
 
 ## Phase 1: Core model
-
-### 2. Duplicate merging and stable IDs
-**Tier:** Free · **Size:** L
-
-Merge Sources that are the same work: two OpenAlex records with one DOI, or a grey reference-only node and the OpenAlex work Crossref matched it to. Merged works combine their citation links so their in-graph importance is right. Be conservative: a book and a review of it share a title, and a wrong merge damages trust more than a visible duplicate.
-
-**Why here:** saved graphs store Tracer IDs (anchor, expanded works, pins, note targets), and so do snapshots. Once two Sources merge, every stored reference to the one that disappears goes stale. The fix is a `mergedInto` redirect on Source that every ID lookup follows, and the sooner it exists, the less stored data predates it. It also has to come before public permalinks (16), which promise that stored IDs keep working.
 
 ### 3. Data provenance and missing-data warnings
 **Tier:** Free · **Size:** M

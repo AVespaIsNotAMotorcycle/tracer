@@ -12,6 +12,11 @@ import mongoose from 'mongoose';
 // records; `citation` holds the reference as deposited, and `externalIds.citation` a key
 // built from it (citationKey), so works citing the same thing share one source.
 // `citationMatch` caches what Crossref's citation search found for it.
+//
+// A merged source is a duplicate of another (works/merges.js): `mergedInto` is the source it
+// now lives in, and every lookup of its Tracer ID or provider IDs is redirected there. It
+// keeps its IDs and records, so lookups still find it and the canonical source can combine
+// its citations. Redirects are one hop: merging a source repoints those merged into it.
 const sourceSchema = new mongoose.Schema(
   {
     externalIds: {
@@ -24,7 +29,12 @@ const sourceSchema = new mongoose.Schema(
     citation: mongoose.Schema.Types.Mixed,
     // For a reference-only source: the work Crossref's citation search matched it to
     // (a CrossrefWork), or null for none, and when that was looked up.
-    citationMatch: { data: mongoose.Schema.Types.Mixed, fetchedAt: Date },
+    // `mergeChecked`: whether the match was looked up on the provider, to merge into it.
+    citationMatch: { data: mongoose.Schema.Types.Mixed, fetchedAt: Date, mergeChecked: Boolean },
+    mergedInto: { type: mongoose.Schema.Types.ObjectId, ref: 'Source' },
+    mergedAt: Date,
+    // Why: 'doi' (same DOI) or 'citation-match' (a reference-only work Crossref matched).
+    mergeReason: String,
     records: {
       type: Map,
       of: new mongoose.Schema(
@@ -46,8 +56,10 @@ sourceSchema.index(
   { 'externalIds.citation': 1 },
   { unique: true, partialFilterExpression: { 'externalIds.citation': { $type: 'string' } } },
 );
-// Not unique: OpenAlex sometimes has several works with the same DOI. Merging duplicates is
-// future work.
+// Not unique: OpenAlex sometimes has several works with the same DOI (they're merged; see
+// works/merges.js).
 sourceSchema.index({ 'externalIds.doi': 1 });
+// Finds the sources merged into one, to combine their citations.
+sourceSchema.index({ mergedInto: 1 }, { sparse: true });
 
 export const Source = mongoose.model('Source', sourceSchema);

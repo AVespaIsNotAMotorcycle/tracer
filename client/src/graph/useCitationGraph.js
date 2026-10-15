@@ -2,6 +2,7 @@ import { useCallback, useEffect, useRef, useState } from 'react';
 import * as defaultApi from '../api.js';
 import {
   addExpandedWorks,
+  addWorks as addWorksTo,
   applyCoCitations as applyCoCitationsTo,
   applyPath,
   buildGraph,
@@ -362,6 +363,19 @@ export function useCitationGraph(api = defaultApi) {
     [api, track, untrack],
   );
 
+  /**
+   * Puts `work` in place of the works the server merged into it (its `mergedIds`) that are on
+   * the graph, such as a reference-only work Crossref matched to it. It takes the relation of
+   * the first of them. Nothing changes if none are on the graph.
+   */
+  const mergeWork = useCallback((work) => {
+    setGraph((latest) => {
+      const merged = (work.mergedIds ?? []).find((id) => latest.works.has(id));
+      if (!merged) return latest;
+      return addWorksTo(latest, [work], latest.relations.get(merged) ?? 'cited');
+    });
+  }, []);
+
   /** Shows the co-citations of an earlier search at a new minimum (see applyCoCitations). */
   const applyCoCitations = useCallback((result, options) => {
     setGraph((latest) => applyCoCitationsTo(latest, result, options));
@@ -383,6 +397,7 @@ export function useCitationGraph(api = defaultApi) {
     findCoCitations,
     applyCoCitations,
     findPath,
+    mergeWork,
     reset,
   };
 }

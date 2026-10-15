@@ -26,6 +26,10 @@ import { REFERENCE_ONLY, sourceTypeKey } from './sourceTypeKeys.js';
  * @property {Set<string>} [coCitationAdded]
  *   Works only on the graph because a co-citation search added them (see applyCoCitations),
  *   so a higher minimum can take them away again. Rebuilding clears it.
+ * @property {Map<string, string>} [aliases]
+ *   Works merged on the server into another (a duplicate record, or a reference-only work
+ *   matched to a work on OpenAlex), by the ID of the work they're now part of (see
+ *   foldAliases). Rebuilding clears it: the server only returns the merged works.
  */
 
 /** @returns {Graph} */
@@ -37,6 +41,7 @@ export function emptyGraph() {
     expanded: new Map(),
     sticky: new Set(),
     coCitationAdded: new Set(),
+    aliases: new Map(),
   };
 }
 
@@ -51,7 +56,8 @@ const anchorWorks = (graph) => graph.anchorIds.map((id) => graph.works.get(id)).
 
 /**
  * Returns a new graph with `works` added. Existing works keep their relation; their data is
- * refreshed.
+ * refreshed. A work with `mergedIds` (works the server merged into it) replaces those works
+ * wherever they are on the graph (see foldAliases).
  *
  * @param {Graph} graph
  * @param {object[]} works
@@ -60,11 +66,63 @@ const anchorWorks = (graph) => graph.anchorIds.map((id) => graph.works.get(id)).
 export function addWorks(graph, works, relation) {
   const nextWorks = new Map(graph.works);
   const nextRelations = new Map(graph.relations);
+  const known = graph.aliases ?? new Map();
+  const aliases = new Map();
   for (const work of works) {
     nextWorks.set(work.id, work);
     if (!nextRelations.has(work.id)) nextRelations.set(work.id, relation);
+    for (const id of work.mergedIds ?? []) {
+      if (id !== work.id && known.get(id) !== work.id) aliases.set(id, work.id);
+    }
   }
-  return { ...graph, works: nextWorks, relations: nextRelations };
+  const next = { ...graph, works: nextWorks, relations: nextRelations };
+  return aliases.size ? foldAliases(next, aliases) : next;
+}
+
+/**
+ * Returns `graph` with each work in `aliases` (merged ID → the ID of the work it was merged
+ * into, which must be on the graph) replaced by the work it's now part of: dropped from the
+ * works, and renamed in references, relations, expansions, sticky works, co-citations and
+ * anchors. Where both were there, an anchor relation wins, otherwise the one there first, and
+ * their expanded directions combine.
+ *
+ * @param {Graph} graph
+ * @param {Map<string, string>} aliases
+ * @returns {Graph}
+ */
+export function foldAliases(graph, aliases) {
+  const to = (id) => aliases.get(id) ?? id;
+  const works = new Map();
+  for (const [id, work] of graph.works) {
+    if (aliases.has(id)) continue;
+    const references = work.references.some((ref) => aliases.has(ref))
+      ? [...new Set(work.references.map(to))].filter((ref) => ref !== id)
+      : work.references;
+    works.set(id, references === work.references ? work : { ...work, references });
+  }
+  const relations = new Map();
+  for (const [id, relation] of graph.relations) {
+    const key = to(id);
+    if (!relations.has(key) || relation === 'anchor') relations.set(key, relation);
+  }
+  const expanded = new Map();
+  for (const [id, directions] of graph.expanded) {
+    const key = to(id);
+    expanded.set(key, new Set([...(expanded.get(key) ?? []), ...directions]));
+  }
+  const rename = (ids) => new Set([...ids].map(to));
+  // Earlier aliases of a work merged again point to where it went.
+  const known = [...(graph.aliases ?? [])].map(([id, target]) => [id, to(target)]);
+  return {
+    ...graph,
+    anchorIds: [...new Set(graph.anchorIds.map(to))],
+    works,
+    relations,
+    expanded,
+    sticky: rename(graph.sticky),
+    coCitationAdded: rename(graph.coCitationAdded ?? []),
+    aliases: new Map([...known, ...aliases]),
+  };
 }
 
 /**
@@ -820,6 +878,7 @@ export function graphFromSnapshot(snapshot) {
       sticky: new Set(snapshot.sticky),
       // Co-citation searches aren't saved, so their works are ordinary ones when reopened.
       coCitationAdded: new Set(),
+      aliases: new Map(),
     },
     truncated: snapshot.truncated === true,
   };

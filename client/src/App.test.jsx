@@ -105,7 +105,7 @@ beforeEach(() => {
   vi.mocked(api.getCiting).mockImplementation(async (id) => (id === 'anchor' ? [citer] : [more]));
   vi.mocked(api.getCited).mockImplementation(async (id) => (id === 'anchor' ? [ref] : []));
   vi.mocked(api.getArchiveItems).mockResolvedValue([]);
-  vi.mocked(api.getCitationMatch).mockResolvedValue(null);
+  vi.mocked(api.getCitationMatch).mockResolvedValue({ match: null });
 });
 
 async function buildFromSearch(expectedNodes = 3) {
@@ -291,16 +291,18 @@ describe('App', () => {
       id === 'anchor' ? [ref, dyarchy] : [],
     );
     vi.mocked(api.getCitationMatch).mockResolvedValue({
-      doi: '10.2307/2942138',
-      title: "The Manchu-Chinese Dyarchy in the 1840's and '50's",
-      authors: [{ name: 'John K. Fairbank', family: 'Fairbank' }],
-      year: 1953,
-      venue: 'The Far Eastern Quarterly',
-      type: 'journal-article',
-      links: [
-        { kind: 'doi', url: 'https://doi.org/10.2307/2942138' },
-        { kind: 'jstor', url: 'https://www.jstor.org/stable/10.2307/2942138' },
-      ],
+      match: {
+        doi: '10.2307/2942138',
+        title: "The Manchu-Chinese Dyarchy in the 1840's and '50's",
+        authors: [{ name: 'John K. Fairbank', family: 'Fairbank' }],
+        year: 1953,
+        venue: 'The Far Eastern Quarterly',
+        type: 'journal-article',
+        links: [
+          { kind: 'doi', url: 'https://doi.org/10.2307/2942138' },
+          { kind: 'jstor', url: 'https://www.jstor.org/stable/10.2307/2942138' },
+        ],
+      },
     });
     await buildFromSearch(4);
 
@@ -318,6 +320,39 @@ describe('App', () => {
     // Works on OpenAlex aren't looked up.
     fireEvent.click(within(graph()).getByRole('button', { name: 'Title ref' }));
     expect(api.getCitationMatch).toHaveBeenCalledTimes(1);
+  });
+
+  it('replaces a work not on OpenAlex with the work the server merged it into', async () => {
+    const grey = work('grey', {
+      type: 'reference-only',
+      title: 'The Manchu-Chinese Dyarchy',
+      citedByCount: null,
+      links: [],
+      providers: ['crossref'],
+    });
+    // Another work on the graph cites the grey work by its old ID.
+    const greyCiter = work('citer', { references: ['anchor', 'ref', 'grey'], year: 1995 });
+    const merged = work('dyarchy', {
+      title: "The Manchu-Chinese Dyarchy in the 1840's and '50's",
+      year: 1953,
+      citedByCount: 40,
+      mergedIds: ['grey'],
+    });
+    vi.mocked(api.getCiting).mockImplementation(async (id) => (id === 'anchor' ? [greyCiter] : []));
+    vi.mocked(api.getCited).mockImplementation(async (id) => (id === 'anchor' ? [ref, grey] : []));
+    vi.mocked(api.getCitationMatch).mockResolvedValue({
+      match: { doi: '10.2307/2942138', title: merged.title, year: 1953, links: [] },
+      work: merged,
+    });
+    await buildFromSearch(4);
+
+    fireEvent.click(within(graph()).getByRole('button', { name: 'The Manchu-Chinese Dyarchy' }));
+    const details = await screen.findByRole('complementary', { name: merged.title });
+    expect(within(details).getByText('Cited by on graph').nextSibling).toHaveTextContent('2');
+    expect(
+      within(graph()).queryByRole('button', { name: 'The Manchu-Chinese Dyarchy' }),
+    ).toBeNull();
+    expect(within(graph()).getAllByRole('button')).toHaveLength(4);
   });
 
   it('names the Internet Archive item found for a citation printed as text', async () => {

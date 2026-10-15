@@ -180,7 +180,7 @@ export function createWorksRouter(workService, authService) {
   });
 
   router.get('/:id/match', async (req, res) => {
-    res.json({ match: await workService.getCitationMatch(req.params.id) });
+    res.json(await workService.getCitationMatch(req.params.id));
   });
 
   // `to` is one work or several, comma-separated (a graph's anchors): the path ends at the

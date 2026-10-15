@@ -1,7 +1,7 @@
 import { MongoMemoryServer } from 'mongodb-memory-server';
 import mongoose from 'mongoose';
 import request from 'supertest';
-import { afterAll, beforeAll, beforeEach, describe, expect, it, vi } from 'vitest';
+import { afterAll, afterEach, beforeAll, beforeEach, describe, expect, it, vi } from 'vitest';
 import { createApp } from '../app.js';
 import { createAuthService } from '../auth/authService.js';
 import { Identity } from '../models/Identity.js';
@@ -667,6 +667,43 @@ describe('GET /api/works/:id/match', () => {
     expect(referenceProvider.searchCitation).not.toHaveBeenCalled();
   });
 
+  it('merges the work into the matched work when OpenAlex has it, once', async () => {
+    const dyarchy = {
+      ...providerWork('W40', { doi: '10.2307/2942138', citedByCount: 12 }),
+      title: found.title,
+      authors: [{ name: 'John King Fairbank', orcid: null }],
+      year: 1953,
+    };
+    provider.getWorksByDoi = vi.fn(async (dois) =>
+      dois.includes(dyarchy.externalIds.doi) ? [dyarchy] : [],
+    );
+    const res = await api.get(`/api/works/${source._id}/match`);
+
+    expect(res.body.match.doi).toBe('10.2307/2942138');
+    expect(res.body.work).toMatchObject({
+      id: await tracerIdOf('W40'),
+      mergedIds: [String(source._id)],
+      citedByCount: 12,
+    });
+    expect((await api.get(`/api/works/${source._id}`)).body.work.id).toBe(res.body.work.id);
+    const again = await api.get(`/api/works/${source._id}/match`);
+    expect(again.body.work.id).toBe(res.body.work.id);
+    expect(referenceProvider.searchCitation).toHaveBeenCalledTimes(1);
+    expect(provider.getWorksByDoi).toHaveBeenCalledTimes(1);
+  });
+
+  it('doesn’t merge into a matched work whose record disagrees, or look it up again', async () => {
+    provider.getWorksByDoi = vi.fn(async () => [
+      { ...providerWork('W41', { doi: '10.2307/2942138' }), title: 'A Review', year: 1953 },
+    ]);
+    const res = await api.get(`/api/works/${source._id}/match`);
+    expect(res.body.match.doi).toBe('10.2307/2942138');
+    expect(res.body.work).toBeUndefined();
+    await api.get(`/api/works/${source._id}/match`);
+    expect(provider.getWorksByDoi).toHaveBeenCalledTimes(1);
+    expect((await api.get(`/api/works/${source._id}`)).body.work.type).toBe(REFERENCE_ONLY);
+  });
+
   it('gives the cached match, or none, when Crossref fails', async () => {
     vi.spyOn(console, 'error').mockImplementation(() => {});
     await api.get(`/api/works/${source._id}/match`);
@@ -675,6 +712,76 @@ describe('GET /api/works/:id/match', () => {
     const res = await api.get(`/api/works/${source._id}/match`);
     expect(res.status).toBe(200);
     expect(res.body.match.doi).toBe('10.2307/2942138');
+  });
+});
+
+describe('merging duplicate works', () => {
+  const titled = (id, fields, extra = {}) => ({ ...providerWork(id, fields), ...extra });
+  const added = [];
+  const add = (...works) => {
+    for (const work of works) {
+      catalog.set(work.providerId, work);
+      added.push(work.providerId);
+    }
+  };
+
+  afterEach(() => {
+    for (const id of added.splice(0)) catalog.delete(id);
+  });
+
+  it('merges two records with one DOI into the more cited, adding up their citations', async () => {
+    add(
+      titled(
+        'W20',
+        { doi: '10.5555/dup', citedByCount: 10, referencedIds: ['W2'] },
+        { title: 'Moral Economy' },
+      ),
+      titled(
+        'W21',
+        { doi: '10.5555/dup', citedByCount: 3, referencedIds: ['W4'] },
+        { title: 'Moral economy.' },
+      ),
+      providerWork('W22', { referencedIds: ['W21'], citedByCount: 1 }),
+      providerWork('W23', { referencedIds: ['W20'], citedByCount: 2 }),
+    );
+    const main = (await api.get('/api/works/W20')).body.work;
+    const dup = (await api.get('/api/works/W21')).body.work;
+    const dupId = await tracerIdOf('W21');
+
+    expect(dup.id).toBe(main.id);
+    expect(dup).toMatchObject({ citedByCount: 13, mergedIds: [dupId] });
+    expect(dup.references).toEqual([await tracerIdOf('W2'), await tracerIdOf('W4')]);
+    // The duplicate's own Tracer ID leads to the merged work.
+    expect((await api.get(`/api/works/${dupId}`)).body.work.id).toBe(main.id);
+
+    // Works citing either record cite the merged work.
+    const citing = (await api.get(`/api/works/${dupId}/citing`)).body.works;
+    expect(citing.map((w) => w.externalIds.openalex)).toEqual(['W23', 'W22']);
+    for (const work of citing) expect(work.references).toEqual([main.id]);
+    const cited = (await api.get('/api/works/W20/cited')).body.works;
+    expect(cited.map((w) => w.externalIds.openalex)).toEqual(['W2', 'W4']);
+  });
+
+  it('doesn’t merge records that share a DOI but aren’t the same work', async () => {
+    add(
+      titled('W30', { doi: '10.5555/book' }, { title: 'The Great Arch', type: 'book' }),
+      titled(
+        'W31',
+        { doi: '10.5555/book' },
+        { title: 'The Great Arch', authors: [{ name: 'A. Reviewer', orcid: null }] },
+      ),
+      titled('W32', { doi: '10.5555/book' }, { title: 'The Great Arch', type: 'book', year: 1990 }),
+    );
+    await api.get('/api/works/W30');
+    await api.get('/api/works/W31');
+    await api.get('/api/works/W32');
+    const ids = new Set(
+      await Promise.all(
+        ['W30', 'W31', 'W32'].map(async (id) => (await api.get(`/api/works/${id}`)).body.work.id),
+      ),
+    );
+    expect(ids.size).toBe(3);
+    expect(await Source.countDocuments({ mergedInto: { $exists: true } })).toBe(0);
   });
 });
 

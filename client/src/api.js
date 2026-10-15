@@ -79,11 +79,13 @@ export async function getArchiveItems(id, { signal } = {}) {
 }
 
 /**
- * For a work not on OpenAlex, the work Crossref's citation search matched it to
- * ({ doi, title, authors, year, venue, type, links }), or null.
+ * For a work not on OpenAlex, the work Crossref's citation search matched it to: { match },
+ * where match is { doi, title, authors, year, venue, type, links } or null. When OpenAlex has
+ * the matched work, the server merges the two, and `work` is that work (its `mergedIds`
+ * include `id`).
  */
 export async function getCitationMatch(id, { signal } = {}) {
-  return (await get(`${workPath(id)}/match`, { signal })).match;
+  return get(`${workPath(id)}/match`, { signal });
 }
 
 // Accounts. The session lives in an httpOnly cookie the browser sends with same-origin

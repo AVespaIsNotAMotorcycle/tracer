@@ -19,6 +19,7 @@ Each entry lists:
 - **Shortest path to the anchor.** Done. Generalizing it is still to do (see 17).
 - **Multiple anchors** (1): a graph built around several works, colored by anchor with shared works split between their colors; 2 anchors free, 6 on Scholar. Saved graphs are version 2 (`anchors`).
 - **Duplicate merging and stable IDs** (2): OpenAlex records sharing a DOI, and grey reference-only nodes Crossref matched to an OpenAlex work, merge into one work when their records agree (`sameWork`), combining their citations. A merged Source redirects (`mergedInto`) wherever its ID is looked up, and saved graphs are rewritten to follow it when opened. Done.
+- **Data provenance and missing-data warnings** (3): each citation lists the providers that have it (`referenceProviders`), shown per link in the details panel, and works whose reference list is empty or suspiciously short for how often they're cited carry a warning badge. Done.
 - **Entitlements layer** (groundwork): `can(user, feature)` / `limitFor(user, limit)` in `server/src/entitlements/`, checked by the gated routes and controls, with every tier including everything for now. Billing (Stripe) waits for launch.
 
 ---
@@ -32,13 +33,6 @@ These aren't features, but each one gets harder to add later.
 ---
 
 ## Phase 1: Core model
-
-### 3. Data provenance and missing-data warnings
-**Tier:** Free · **Size:** M
-
-Show which provider supplied each work and each citation link (OpenAlex, Crossref, OpenCitations, later Semantic Scholar and others). Flag works whose reference list is empty or suspiciously short compared with their citation count, such as Thompson's 1971 article with thousands of citers and no references, so an apparent origin point isn't mistaken for one.
-
-**Why here:** edges are currently merged into a single `references` list, which loses where each link came from. Recording the source per link means changing how Sources store links, and cached Sources and snapshots made before the change won't have it until they refresh. Every provider added later (12, 22) should be built with provenance from the start, not have it retrofitted.
 
 ### 4. Language metadata
 **Tier:** Free · **Size:** S

@@ -56,6 +56,10 @@ const MAX_ARCHIVE_ITEMS = 5;
  * @property {string | null} abstract
  * @property {number | null} citedByCount
  * @property {string[]} references       Tracer IDs of the works this one cites.
+ * @property {Record<string, string[]>} referenceProviders
+ *   For each reference, the providers that have the citation: the provider's own reference
+ *   list (openalex), a deposited reference list (crossref), or a citation index
+ *   (opencitations). A citation several have lists them all.
  * @property {{ kind: string, url: string }[]} links
  * @property {string[]} providers        Providers that contributed data.
  * @property {string[]} mergedIds        Tracer IDs of duplicates merged into this work (see
@@ -324,16 +328,22 @@ export function createWorkService({
     const foundElsewhere = (s) =>
       Object.entries(s.records ?? {})
         .filter(([name]) => name !== providerName)
-        .flatMap(([, record]) => record?.data?.tracerIds ?? []);
+        .flatMap(([name, record]) => (record?.data?.tracerIds ?? []).map((id) => [id, name]));
     const redirects = await canonicalIdMap(
-      unique(listed.flatMap((source) => withMembers(source).flatMap(foundElsewhere))),
+      unique(
+        listed.flatMap((source) =>
+          withMembers(source).flatMap((s) => foundElsewhere(s).map(([id]) => id)),
+        ),
+      ),
     );
+    // Each reference with the provider that has it, in order: [Tracer ID, provider name].
     const referencesOf = (source) =>
       withMembers(source).flatMap((s) => [
         ...(recordOf(s)?.data.referencedIds ?? [])
           .map((id) => tracerIdByProviderId.get(id))
-          .filter(Boolean),
-        ...foundElsewhere(s).map((id) => redirects.get(id) ?? id),
+          .filter(Boolean)
+          .map((id) => [id, providerName]),
+        ...foundElsewhere(s).map(([id, name]) => [redirects.get(id) ?? id, name]),
       ]);
 
     return sources.map((source) => {
@@ -355,6 +365,7 @@ export function createWorkService({
           abstract: null,
           citedByCount: null,
           references: [],
+          referenceProviders: {},
           links: citation.doi ? doiLinks(citation.doi) : [],
           providers: [referenceProvider?.name ?? 'crossref'],
           mergedIds: [],
@@ -366,6 +377,13 @@ export function createWorkService({
       const all = withMembers(source);
       // Duplicates split a work's citations between them, so their counts add up.
       const counts = all.map((s) => recordOf(s)?.data.citedByCount).filter((n) => n != null);
+      // Which providers have each citation, so the client can say where a link came from.
+      const referenceProviders = {};
+      for (const [ref, name] of referencesOf(source)) {
+        if (ref === id) continue;
+        referenceProviders[ref] ??= [];
+        if (!referenceProviders[ref].includes(name)) referenceProviders[ref].push(name);
+      }
       return {
         id,
         externalIds,
@@ -376,7 +394,8 @@ export function createWorkService({
         venue: data.venue,
         abstract: data.abstract,
         citedByCount: counts.length ? counts.reduce((sum, n) => sum + n, 0) : null,
-        references: unique(referencesOf(source)).filter((ref) => ref !== id),
+        references: Object.keys(referenceProviders),
+        referenceProviders,
         links: data.links,
         // The Archive lookup is stored as a record too, but none of the work's data is from it.
         providers: unique(all.flatMap((s) => Object.keys(s.records ?? {}))).filter(

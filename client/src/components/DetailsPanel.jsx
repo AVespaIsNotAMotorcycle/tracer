@@ -1,8 +1,14 @@
-import { Minus, Pin, PinOff, Plus } from 'lucide-react';
+import { Minus, Pin, PinOff, Plus, TriangleAlert } from 'lucide-react';
 import { useEffect, useState } from 'react';
 import { getArchiveItems, getCitationMatch } from '../api.js';
 import { NOT_IN_PLAN } from '../auth/entitlements.js';
 import { canExpand } from '../graph/graphModel.js';
+import {
+  groupByProviders,
+  describeWarning,
+  listProviders,
+  providerLabel,
+} from '../graph/provenance.js';
 import { sourceType } from '../graph/sourceTypes.js';
 import WorkNote from './WorkNote.jsx';
 
@@ -76,7 +82,95 @@ const doiLink = (work) => work.links.find((link) => link.kind === 'doi');
  *
  * When the work Crossref matches a reference-only work to is on OpenAlex, the server merges
  * them, and `onMerged` gets that work to put in its place.
+ *
+ * `referenceWarning` (see referenceWarning) says its references are probably missing.
+ * `graphLinks` are its citations on the graph with where each came from (see graphLinks),
+ * and `onSelectWork` selects one of the works they link to.
  */
+/** Where a group of links came from: "from OpenAlex only", "from both OpenAlex and Crossref". */
+function groupSource(providers) {
+  if (providers.length === 0) return 'source not recorded';
+  if (providers.length === 1) return `from ${providerLabel(providers[0])} only`;
+  return `from ${providers.length === 2 ? 'both ' : ''}${listProviders(providers)}`;
+}
+
+/**
+ * How many links, and where they came from, each link counted once: "15: 13 from OpenAlex
+ * only, 2 from both OpenAlex and Crossref", or when one group holds them all, "20, all from
+ * OpenAlex" or "15, source not recorded".
+ */
+function providerSummary(links) {
+  const groups = groupByProviders(links);
+  const total = links.length;
+  if (groups.length === 1) {
+    const [{ providers }] = groups;
+    if (providers.length === 0) return `${total}, source not recorded`;
+    const both = providers.length === 2 ? 'both ' : '';
+    return `${total}, ${total === 1 ? '' : 'all '}from ${both}${listProviders(providers)}`;
+  }
+  return `${total}: ${groups.map(({ providers, count }) => `${count} ${groupSource(providers)}`).join(', ')}`;
+}
+
+/**
+ * Where a work's data comes from: its record's provider and the others that added citations,
+ * how many of its links on the graph each provider has (`links`; see graphLinks), and the
+ * links OpenAlex doesn't have, each selectable.
+ */
+function DataSources({ work, links, onSelect }) {
+  const cites = links.filter((link) => link.direction === 'cites');
+  const citedBy = links.filter((link) => link.direction === 'cited-by');
+  const elsewhere = links.filter(
+    (link) => link.providers.length > 0 && !link.providers.includes('openalex'),
+  );
+  const onOpenAlex = work.providers.includes('openalex');
+  const others = work.providers.filter((name) => name !== 'openalex');
+  return (
+    <section className="data-sources" aria-labelledby="data-sources-title">
+      <h3 id="data-sources-title">Where the data comes from</h3>
+      <p className="muted small">
+        {onOpenAlex
+          ? `Record from OpenAlex${others.length ? `; citations also from ${listProviders(others)}` : ''}.`
+          : `Known from a reference list deposited with ${listProviders(work.providers)}.`}
+      </p>
+      {links.length > 0 && (
+        <dl className="link-sources">
+          {cites.length > 0 && (
+            <div>
+              <dt>Links to works it cites</dt>
+              <dd>{providerSummary(cites)}</dd>
+            </div>
+          )}
+          {citedBy.length > 0 && (
+            <div>
+              <dt>Links from works citing it</dt>
+              <dd>{providerSummary(citedBy)}</dd>
+            </div>
+          )}
+        </dl>
+      )}
+      {elsewhere.length > 0 && (
+        <details>
+          <summary>
+            {elsewhere.length} {elsewhere.length === 1 ? 'link' : 'links'} OpenAlex doesn&rsquo;t
+            have
+          </summary>
+          <ul className="elsewhere-links">
+            {elsewhere.map(({ work: other, direction, providers }) => (
+              <li key={`${direction}:${other.id}`}>
+                <span className="muted small">{direction === 'cites' ? 'Cites' : 'Cited by'}</span>{' '}
+                <button type="button" className="link-button" onClick={() => onSelect?.(other.id)}>
+                  {other.title ?? 'Untitled'}
+                </button>{' '}
+                <span className="muted small">from {listProviders(providers)}</span>
+              </li>
+            ))}
+          </ul>
+        </details>
+      )}
+    </section>
+  );
+}
+
 const yearOf = (work) => (work.year == null ? '' : ` (${work.year})`);
 
 // Anchor titles in running text.
@@ -269,6 +363,9 @@ export default function DetailsPanel({
   neighborhood = null,
   manyAnchors = false,
   onMerged,
+  referenceWarning = null,
+  graphLinks = [],
+  onSelectWork,
   onClose,
   inert = false,
 }) {
@@ -309,6 +406,12 @@ export default function DetailsPanel({
         </span>
       </p>
       {neighborhood && <Neighborhood anchors={neighborhood} isAnchor={relation === 'anchor'} />}
+      {referenceWarning && (
+        <p className="reference-warning small with-icon">
+          <TriangleAlert className="icon" aria-hidden="true" />
+          <span>{describeWarning(referenceWarning)}</span>
+        </p>
+      )}
       {implausible && (
         <p className="muted small">
           OpenAlex gives {yearInfo.listedYear}, but works on this graph cite it from{' '}
@@ -516,7 +619,7 @@ export default function DetailsPanel({
         </>
       )}
 
-      <p className="muted small">Data from {work.providers.join(', ')}</p>
+      <DataSources work={work} links={graphLinks} onSelect={onSelectWork} />
 
       {parts.length > 0 && (
         <>

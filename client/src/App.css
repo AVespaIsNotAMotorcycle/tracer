@@ -46,6 +46,10 @@
   /* Resolved on :root, so they follow the pin's colors into dark mode. */
   --node-note: var(--node-pin);
   --node-icon-on-note: var(--node-icon-on-pin);
+  /* Works whose references are probably missing: a badge like the pin's, told apart by its
+     icon (red would read as a citing work). Resolved on :root, so they follow the pin. */
+  --node-warning: var(--node-pin);
+  --node-icon-on-warning: var(--node-icon-on-pin);
   /* Resolved on :root, so it follows --node-citing into dark mode. */
   --node-co-cited: var(--node-citing);
   --graph-link: color-mix(in srgb, var(--ink) 22%, transparent);
@@ -675,7 +679,8 @@ button.with-icon {
 
 /* A pin badge, as pinned works carry on the graph, and the note badge likewise. */
 .swatch.pinned,
-.swatch.noted {
+.swatch.noted,
+.swatch.warned {
   display: inline-grid;
   place-items: center;
   width: 14px;
@@ -691,8 +696,55 @@ button.with-icon {
   color: var(--node-icon-on-note);
 }
 
+.reference-warning {
+  margin: 0.5rem 0;
+  padding: 0.4rem 0.6rem;
+  border-left: 3px solid var(--error);
+  align-items: flex-start;
+}
+
+.reference-warning .icon {
+  flex: none;
+  margin-top: 0.15em;
+  color: var(--error);
+}
+
+.link-sources {
+  margin: 0.25rem 0;
+  font-size: 0.85em;
+}
+
+.link-sources div {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0 0.5rem;
+}
+
+.link-sources dt {
+  color: var(--muted);
+}
+
+.link-sources dd {
+  margin: 0;
+}
+
+.elsewhere-links {
+  margin: 0.25rem 0;
+  padding-left: 1.1rem;
+}
+
+.elsewhere-links .link-button {
+  text-align: left;
+}
+
+.swatch.warned {
+  background: var(--node-warning);
+  color: var(--node-icon-on-warning);
+}
+
 .swatch.pinned svg,
-.swatch.noted svg {
+.swatch.noted svg,
+.swatch.warned svg {
   width: 9px;
   height: 9px;
 }

@@ -96,9 +96,10 @@ export const FEATURE_GROUPS = [
       },
       {
         name: 'Data provenance and missing-data warnings',
+        note: 'Which database each citation came from, and a flag on works whose references are missing.',
         free: true,
         scholar: true,
-        available: false,
+        available: true,
       },
       {
         name: 'Language metadata and filter',

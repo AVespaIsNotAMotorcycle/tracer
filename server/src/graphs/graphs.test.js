@@ -5,7 +5,8 @@ import request from 'supertest';
 import { afterAll, beforeAll, beforeEach, describe, expect, it } from 'vitest';
 import { createApp } from '../app.js';
 import { createAuthService } from '../auth/authService.js';
-import { createGraphService, SNAPSHOT_TTL_MS, stateKey } from './graphService.js';
+import { createGraphService, SNAPSHOT_TTL_MS, SNAPSHOT_VERSION, stateKey } from './graphService.js';
+import { SNAPSHOT_VERSION as CLIENT_SNAPSHOT_VERSION } from '../../../client/src/graph/graphModel.js';
 import { GraphSnapshot } from '../models/GraphSnapshot.js';
 import { Identity } from '../models/Identity.js';
 import { SavedGraph } from '../models/SavedGraph.js';
@@ -175,6 +176,7 @@ describe('saving and opening graphs', () => {
 
 // A built graph as the client serializes it (serializeGraph).
 const snapshot = (overrides = {}) => ({
+  version: SNAPSHOT_VERSION,
   anchorIds: ['tracer-anchor'],
   works: [
     { id: 'tracer-anchor', title: 'The Moral Economy', year: 1971, references: ['tracer-a'] },
@@ -248,6 +250,17 @@ describe('works merged since saving', () => {
 });
 
 describe('snapshots of built graphs', () => {
+  it('drops a snapshot older than the current shape, so the graph is rebuilt', async () => {
+    expect(SNAPSHOT_VERSION).toBe(CLIENT_SNAPSHOT_VERSION);
+    const agent = await signedIn();
+    // From before snapshots had a version.
+    const old = { ...snapshot(), version: undefined };
+    const { graph } = (await agent.post('/api/graphs').send({ state: state(), snapshot: old }))
+      .body;
+    expect((await agent.get(`/api/graphs/${graph.id}`)).body.graph.snapshot).toBeNull();
+    expect(await GraphSnapshot.countDocuments({ _id: graph.id })).toBe(0);
+  });
+
   it('opens a graph saved with its snapshot as built, for a week', async () => {
     const agent = await signedIn();
     const { graph } = (

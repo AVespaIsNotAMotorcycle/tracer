@@ -21,6 +21,11 @@ const MAX_NOTE_LENGTH = 10_000;
 // How long a snapshot of a built graph is used before reopening the graph rebuilds it, so its
 // works' data (citation counts, newly found citations) doesn't go stale for long.
 export const SNAPSHOT_TTL_MS = 7 * 24 * 60 * 60 * 1000;
+// The oldest snapshot shape still served, as the client numbers them (SNAPSHOT_VERSION in its
+// graphModel.js; one without `version` is 1). Older ones lack data the client now shows (2:
+// where each citation came from), so they're dropped and the graph is rebuilt. Raise it with
+// the client's version when works gain such data.
+export const SNAPSHOT_VERSION = 2;
 const MAX_SNAPSHOT_WORKS = 20_000;
 // Compressed. MongoDB's documents top out at 16 MB.
 const MAX_SNAPSHOT_BYTES = 12 * 1024 * 1024;
@@ -267,7 +272,9 @@ export function checkSnapshot(snapshot, anchorIds) {
   const directions = (list) => Array.isArray(list) && list.every((d) => DIRECTIONS.has(d));
   if (!pairs(expanded, directions)) throw bad('Invalid snapshot expansions');
   if (!Array.isArray(sticky) || !sticky.every(isId)) throw bad('Invalid snapshot sticky works');
-  return { anchorIds, works, relations, expanded, sticky, truncated: truncated === true };
+  const version = snapshot.version ?? 1;
+  if (!isInt(version) || version < 1) throw bad('Invalid snapshot version');
+  return { version, anchorIds, works, relations, expanded, sticky, truncated: truncated === true };
 }
 
 /**
@@ -409,7 +416,13 @@ export function createGraphService({
       expiresAt: { $gt: new Date(now()) },
     }).exec();
     if (!found) return null;
-    return JSON.parse((await gunzip(found.data)).toString('utf8'));
+    const snapshot = JSON.parse((await gunzip(found.data)).toString('utf8'));
+    // Built before works carried data the client now shows: rebuild instead.
+    if ((snapshot.version ?? 1) < SNAPSHOT_VERSION) {
+      await GraphSnapshot.deleteOne({ _id: graph._id });
+      return null;
+    }
+    return snapshot;
   }
 
   return {

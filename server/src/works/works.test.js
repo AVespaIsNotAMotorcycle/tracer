@@ -349,6 +349,17 @@ describe('cited works from deposited reference lists', () => {
     for (const { id } of cited) expect(work.references).toContain(id);
   });
 
+  it('says which provider has each citation', async () => {
+    const [w2, w6, painting] = (await api.get('/api/works/W1/cited')).body.works;
+    const { work } = (await api.get('/api/works/W1')).body;
+
+    expect(work.referenceProviders[w2.id]).toEqual(['openalex']);
+    expect(work.referenceProviders[await tracerIdOf('W3')]).toEqual(['openalex']);
+    expect(work.referenceProviders[w6.id]).toEqual(['crossref']);
+    expect(work.referenceProviders[painting.id]).toEqual(['crossref']);
+    expect(Object.keys(work.referenceProviders)).toEqual(work.references);
+  });
+
   it('shares one reference-only work between reference lists', async () => {
     deposited['10.1234/other'] = [{ ...deccani }];
     catalog.set('W7', providerWork('W7', { doi: '10.1234/other' }));
@@ -456,6 +467,7 @@ describe('citation links from OpenCitations', () => {
     const { work } = (await api.get('/api/works/W1')).body;
     expect(work.references).toContain(await tracerIdOf('W10'));
     expect(work.providers).toEqual(['openalex', 'opencitations']);
+    expect(work.referenceProviders[await tracerIdOf('W10')]).toEqual(['opencitations']);
   });
 
   it('caches the links it found', async () => {

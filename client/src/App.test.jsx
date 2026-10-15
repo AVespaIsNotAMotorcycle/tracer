@@ -322,6 +322,40 @@ describe('App', () => {
     expect(api.getCitationMatch).toHaveBeenCalledTimes(1);
   });
 
+  it('says where each link came from, and warns when references are probably missing', async () => {
+    vi.mocked(api.getWork).mockResolvedValue({
+      ...anchor,
+      referenceProviders: { ref: ['openalex', 'crossref'] },
+    });
+    vi.mocked(api.getCiting).mockImplementation(async (id) =>
+      id === 'anchor'
+        ? [{ ...citer, referenceProviders: { anchor: ['opencitations'], ref: ['openalex'] } }]
+        : [],
+    );
+    await buildFromSearch();
+    expect(screen.getByText('References probably missing')).toBeInTheDocument();
+
+    // ref: 4,693 citations and no references.
+    fireEvent.click(within(graph()).getByRole('button', { name: 'Title ref' }));
+    const details = screen.getByRole('complementary', { name: 'Title ref' });
+    expect(
+      within(details).getByText(/No references are recorded for this work in OpenAlex/),
+    ).toBeVisible();
+    const sources = within(details).getByRole('region', { name: 'Where the data comes from' });
+    expect(within(sources).getByText('Links from works citing it').nextSibling).toHaveTextContent(
+      '2: 1 from both OpenAlex and Crossref, 1 from OpenAlex only',
+    );
+
+    fireEvent.click(within(graph()).getByRole('button', { name: 'Title anchor' }));
+    const anchorDetails = screen.getByRole('complementary', { name: 'Title anchor' });
+    expect(
+      within(anchorDetails).getByText('Links from works citing it').nextSibling,
+    ).toHaveTextContent(/^1, from OpenCitations$/);
+    fireEvent.click(within(anchorDetails).getByText('1 link OpenAlex doesn’t have'));
+    fireEvent.click(within(anchorDetails).getByRole('button', { name: 'Title citer' }));
+    expect(screen.getByRole('complementary', { name: 'Title citer' })).toBeInTheDocument();
+  });
+
   it('replaces a work not on OpenAlex with the work the server merged it into', async () => {
     const grey = work('grey', {
       type: 'reference-only',

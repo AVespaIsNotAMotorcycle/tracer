@@ -80,6 +80,25 @@ export function addWorks(graph, works, relation) {
 }
 
 /**
+ * The `referenceProviders` (see provenance.js) of `works` combined, with each reference
+ * renamed by `rename`: a citation of two works that became one is from every provider of
+ * either.
+ *
+ * @param {object[]} works
+ * @param {(id: string) => string} rename
+ */
+function renameProviders(works, rename) {
+  const combined = {};
+  for (const work of works) {
+    for (const [ref, providers] of Object.entries(work.referenceProviders ?? {})) {
+      const key = rename(ref);
+      combined[key] = [...new Set([...(combined[key] ?? []), ...providers])];
+    }
+  }
+  return combined;
+}
+
+/**
  * Returns `graph` with each work in `aliases` (merged ID → the ID of the work it was merged
  * into, which must be on the graph) replaced by the work it's now part of: dropped from the
  * works, and renamed in references, relations, expansions, sticky works, co-citations and
@@ -95,10 +114,15 @@ export function foldAliases(graph, aliases) {
   const works = new Map();
   for (const [id, work] of graph.works) {
     if (aliases.has(id)) continue;
-    const references = work.references.some((ref) => aliases.has(ref))
-      ? [...new Set(work.references.map(to))].filter((ref) => ref !== id)
-      : work.references;
-    works.set(id, references === work.references ? work : { ...work, references });
+    if (!work.references.some((ref) => aliases.has(ref))) {
+      works.set(id, work);
+      continue;
+    }
+    works.set(id, {
+      ...work,
+      references: [...new Set(work.references.map(to))].filter((ref) => ref !== id),
+      referenceProviders: renameProviders([work], to),
+    });
   }
   const relations = new Map();
   for (const [id, relation] of graph.relations) {
@@ -245,11 +269,13 @@ export function foldBookParts(graph) {
   const works = new Map();
   for (const work of graph.works.values()) {
     if (bookOf.has(work.id)) continue;
-    const references = [
-      ...(partsOf.get(work.id) ?? []).flatMap((part) => part.references),
-      ...work.references,
-    ].map(fold);
-    works.set(work.id, { ...work, references: [...new Set(references)] });
+    const members = [...(partsOf.get(work.id) ?? []), work];
+    const references = members.flatMap((member) => member.references).map(fold);
+    works.set(work.id, {
+      ...work,
+      references: [...new Set(references)],
+      referenceProviders: renameProviders(members, fold),
+    });
   }
   return { graph: { ...graph, works }, partsOf, bookOf };
 }
@@ -757,7 +783,12 @@ export function applyPath(graph, path) {
         : [path[i].work.id, path[i - 1].work.id];
     const work = works.get(citing);
     if (work && !work.references.includes(cited)) {
-      works.set(citing, { ...work, references: [...work.references, cited] });
+      // The path search follows OpenAlex's links.
+      works.set(citing, {
+        ...work,
+        references: [...work.references, cited],
+        referenceProviders: { ...work.referenceProviders, [cited]: ['openalex'] },
+      });
     }
   });
   return { ...next, works };
@@ -846,6 +877,14 @@ export async function addExpandedWorks(
 }
 
 /**
+ * The shape of snapshots this client writes. Bumped when works gain data that older snapshots
+ * lack, so the server discards those and the graph is rebuilt (see SNAPSHOT_VERSION in the
+ * server's graphService.js, which a test keeps equal). 1 (no `version`): before
+ * `referenceProviders`; 2: works list where each citation came from.
+ */
+export const SNAPSHOT_VERSION = 2;
+
+/**
  * A built graph as plain JSON, for the server to keep as a saved graph's snapshot (so reopening
  * it needn't fetch every work again). `graphFromSnapshot` reverses it.
  *
@@ -854,6 +893,7 @@ export async function addExpandedWorks(
  */
 export function graphSnapshot(graph, truncated) {
   return {
+    version: SNAPSHOT_VERSION,
     anchorIds: [...graph.anchorIds],
     works: [...graph.works.values()],
     relations: [...graph.relations],

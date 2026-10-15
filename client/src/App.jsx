@@ -1,4 +1,4 @@
-import { Pin, NotebookPen } from 'lucide-react';
+import { Pin, NotebookPen, TriangleAlert } from 'lucide-react';
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { getSavedGraph, saveGraph, saveGraphSnapshot, updateGraph } from './api.js';
 import './App.css';
@@ -33,6 +33,7 @@ import {
   NO_FILTERS,
   visibleIds,
 } from './graph/graphModel.js';
+import { graphLinks, referenceWarnings } from './graph/provenance.js';
 import { connectedComponents } from './graph/lanes.js';
 import { useCitationGraph } from './graph/useCitationGraph.js';
 import { readUrlState, shareableId, withSavedGraph, writeUrlState } from './urlState.js';
@@ -243,6 +244,8 @@ function GraphPage({ auth }) {
   const connections = useMemo(() => inGraphConnectionCounts(view.works), [view.works]);
   const sizes = useMemo(() => totalCitationCounts(view.works, partsOf), [view.works, partsOf]);
   const years = useMemo(() => layoutYears(view), [view]);
+  // Works whose reference lists are probably incomplete (see referenceWarning).
+  const warnings = useMemo(() => referenceWarnings(view.works), [view.works]);
   const outgoing = useMemo(() => outgoingCounts(view.works), [view.works]);
   const visible = useMemo(
     () => visibleIds(view, filters, connections, [...pinned, ...(shownId ? [shownId] : [])], years),
@@ -559,6 +562,11 @@ function GraphPage({ auth }) {
   };
 
   const selected = shownId ? view.works.get(shownId) : null;
+  // The selected work's citations on the graph, with where each came from.
+  const selectedLinks = useMemo(
+    () => (shownId ? graphLinks(view.works, shownId) : []),
+    [view.works, shownId],
+  );
   const shownPath =
     selected && pathSearch?.fromId === selected.id && pathSearch.anchorsKey === anchorsKey
       ? pathSearch
@@ -812,6 +820,14 @@ function GraphPage({ auth }) {
               </i>{' '}
               Has a note
             </span>
+            {warnings.size > 0 && (
+              <span>
+                <i className="swatch warned">
+                  <TriangleAlert aria-hidden="true" />
+                </i>{' '}
+                References probably missing
+              </span>
+            )}
             <span className="muted small">
               Older works toward the top left, newer toward the bottom right
             </span>
@@ -860,6 +876,7 @@ function GraphPage({ auth }) {
             expandedIds={expandedIds}
             pinnedIds={pinned}
             notes={notes}
+            warnings={warnings}
             coCitedIds={coCited}
             neighborhoods={neighborhoods}
             years={years}
@@ -914,6 +931,9 @@ function GraphPage({ auth }) {
           }
           manyAnchors={graph.anchorIds.length > 1}
           onMerged={mergeWork}
+          referenceWarning={warnings.get(selected.id) ?? null}
+          graphLinks={selectedLinks}
+          onSelectWork={setSelectedId}
           pinned={pinned.has(selected.id)}
           onTogglePin={() => togglePin(selected.id)}
           note={notes.get(selected.id) ?? ''}

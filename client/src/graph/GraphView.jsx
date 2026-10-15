@@ -1,5 +1,5 @@
 import { forceCollide } from 'd3-force';
-import { Pin as PinShape, NotebookPen as NoteShape } from 'lucide';
+import { Pin as PinShape, NotebookPen as NoteShape, TriangleAlert as WarningShape } from 'lucide';
 import { useEffect, useMemo, useRef, useState } from 'react';
 import ForceGraph2D from 'react-force-graph-2d';
 import { axisGeometry, DEFAULT_AXIS_ANGLE } from './axis.js';
@@ -48,6 +48,16 @@ let notePath = null;
 const notePath2D = () => {
   if (!notePath && typeof Path2D !== 'undefined') notePath = new Path2D(iconPathData(NoteShape));
   return notePath;
+};
+
+// Works whose reference list is probably incomplete (see referenceWarning) get a warning
+// badge, the same size, on the circle's bottom right edge.
+let warningPath = null;
+const warningPath2D = () => {
+  if (!warningPath && typeof Path2D !== 'undefined') {
+    warningPath = new Path2D(iconPathData(WarningShape));
+  }
+  return warningPath;
 };
 
 // Source-type icons are drawn inside circles at least this many screen pixels in radius;
@@ -197,6 +207,8 @@ const COLOR_VARS = {
   iconOnNote: '--node-icon-on-note',
   coCited: '--node-co-cited',
   iconOnPin: '--node-icon-on-pin',
+  warning: '--node-warning',
+  iconOnWarning: '--node-icon-on-warning',
   outline: '--node-outline',
   iconOnAnchor: '--node-icon-on-anchor',
   iconOnCiting: '--node-icon-on-citing',
@@ -341,6 +353,7 @@ export default function GraphView({
   expandedIds = new Set(),
   pinnedIds = new Set(),
   notes = new Map(),
+  warnings = new Map(),
   coCitedIds = new Map(),
   neighborhoods = null,
   years,
@@ -638,12 +651,12 @@ export default function GraphView({
   const isActiveLink = (link) =>
     selectedId != null && (endId(link.source) === selectedId || endId(link.target) === selectedId);
 
-  // A badge on the circle's top edge, right (side 1) or left (-1): `icon` on a disc, both
-  // a constant size on screen.
-  const paintBadge = (ctx, node, r, side, icon, fill, stroke, scale) => {
+  // A badge on the circle's edge, right (side 1) or left (-1), top (up 1) or bottom (-1):
+  // `icon` on a disc, both a constant size on screen.
+  const paintBadge = (ctx, node, r, side, icon, fill, stroke, scale, up = 1) => {
     if (!icon) return;
     const cx = node.x + side * r * Math.SQRT1_2;
-    const cy = node.y - r * Math.SQRT1_2;
+    const cy = node.y - up * r * Math.SQRT1_2;
     ctx.beginPath();
     ctx.arc(cx, cy, PIN_BADGE_RADIUS / scale, 0, 2 * Math.PI);
     ctx.fillStyle = fill;
@@ -762,6 +775,10 @@ export default function GraphView({
     }
     if (notes.has(node.id)) {
       paintBadge(ctx, node, r, -1, notePath2D(), colors.note, colors.iconOnNote, scale);
+    }
+    // Works whose references are probably missing get a warning badge on their bottom right.
+    if (warnings.has(node.id)) {
+      paintBadge(ctx, node, r, 1, warningPath2D(), colors.warning, colors.iconOnWarning, scale, -1);
     }
 
     // Label the anchor and selection always, other works once zoomed in enough to read them.
@@ -987,8 +1004,18 @@ export default function GraphView({
             const label = escapeHtml(
               `${node.work.title ?? 'Untitled'}${yearLabel(node.work, years.get(node.id))}`,
             );
+            const warning = warnings.get(node.id);
             const note = notes.get(node.id);
-            return note ? `${label}<br><i>Note: ${escapeHtml(truncate(note, 140))}</i>` : label;
+            return [
+              label,
+              warning &&
+                (warning.kind === 'none'
+                  ? 'No references recorded'
+                  : `Only ${warning.references} references recorded`),
+              note && `<i>Note: ${escapeHtml(truncate(note, 140))}</i>`,
+            ]
+              .filter(Boolean)
+              .join('<br>');
           }}
           nodeVisibility={(node) => visible.has(node.id)}
           linkVisibility={isLinkVisible}

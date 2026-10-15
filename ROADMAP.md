@@ -29,7 +29,7 @@ Each entry lists:
 
 These aren't features, but each one gets harder to add later.
 
-- **Request outside access now.** Apply for a Semantic Scholar API key (needed for 12), ask OpenAlex about a higher credit limit, and contact data providers for non-English sources (22). These take days to months to come back and don't depend on any code.
+- **Request outside access now.** Apply for a Semantic Scholar API key (needed for 12), ask OpenAlex about a higher credit limit, and contact data providers for non-English sources (22): apply for commercial use of the J-STAGE Web API (JST), NDL Search (for metadata without an open licence) and CiNii Research (NII, ciniiadm@nii.ac.jp), and ask KCI to confirm commercial use of its Open API (see the licensing findings under 22). These take days to months to come back and don't depend on any code.
 
 ---
 
@@ -178,5 +178,27 @@ Let users enter their library's OpenURL link resolver, and show "find it at my l
 **Tier:** Free · **Size:** XL, depends on outside parties
 
 Add providers for scholarship English-language indexes cover poorly: CiNii (Japanese, open API), Persée and Cairn (French), HathiTrust (full-text public-domain books), Wikidata, and Chinese databases such as CNKI or Taiwan's NCL where access can be arranged. Match the same work across scripts and romanizations (Hepburn, Wade-Giles, pinyin).
+
+**Licensing for commercial use** (researched October 2026 from published terms; not legal advice, and some only from secondary sources, so confirm before building on one). Once the Scholar tier is on sale, Tracer is a commercial service, free tier included, so a source must allow commercial use.
+
+| Source | Data | Commercial use | Notes |
+| --- | --- | --- | --- |
+| Wikidata | Multilingual metadata, titles in several scripts, some citations (P2860) | Yes: CC0 | Best open source for matching across scripts and romanizations. |
+| OpenCitations (in use) | Citation links, including JaLC's (Japan's DOI agency) since about 2024 | Yes: CC0 | Links to works OpenAlex lacks are dropped today (`linkedExtras`). Keeping them as reference-only works, described through OpenCitations Meta or JaLC, would add Japanese links cheaply. |
+| Crossref (in use) | Metadata, deposited reference lists | Yes: metadata are facts | References only where the publisher made them open; abstracts stay under copyright. |
+| OpenEdition | French humanities metadata (OAI-PMH) | Yes: CC0 1.0 | References are in the full text, not structured. |
+| HAL | French open archive metadata (API, OAI-PMH) | Yes: CC0 (per CCSD) | No citation links; useful for matching. |
+| KCI (Korea Citation Index) | Korean articles and citation links (Open API, key required) | Probably: Korea's data portal lists it with no restriction on use | KCI's own API terms not found; confirm. If so, the best open source of non-English citation links. |
+| J-STAGE (JST) | Japanese journals (Web API) | With an application to JST, paid or not | JST may block unapproved commercial use by IP. Whether the API returns reference lists is unconfirmed. |
+| NDL Search | Japanese catalog records, with kana readings of titles | Companies must apply, except for metadata its source licenses openly (CC0, CC BY) | The list of API-providing databases marks which are open; NDL Search must be credited. |
+| CiNii Research (NII) | Japanese articles, books, dissertations | Reportedly needs contacting NII first (ciniiadm@nii.ac.jp) | Governed by NII's Web API regulations, not yet read. |
+| JaLC REST API | Japanese DOI metadata, some citations | Unknown: open, no key, but no licence found | Its citations reach Tracer under CC0 through OpenCitations anyway. |
+| SciELO | Latin American journals | Unknown for the metadata API (ArticleMeta) | Articles are CC BY; some journals put metadata under CC0. |
+| Érudit | Québec journals | Unknown | Deposits many reference lists with Crossref, so partly covered already. |
+| CNKI, CSSCI, RSCI / eLIBRARY.ru, TCI-HSS, Dialnet (citation data) | Chinese, Russian, Taiwanese, Spanish citation indexes | No: subscription or commercial | Need licensing agreements. |
+
+Persée, Cairn and HathiTrust weren't checked.
+
+**Suggested order:** Wikidata, HAL and OpenEdition first (open, no permission needed); OpenCitations' links to works OpenAlex lacks (no new provider); KCI once its terms are confirmed; J-STAGE, NDL Search and CiNii once their applications are approved. Sources: [J-STAGE Web API terms](https://www.jstage.jst.go.jp/static/pages/WebAPI/-char/ja), [NDL Search API help](https://ndlsearch.ndl.go.jp/en/help/api), [CiNii terms](https://support.nii.ac.jp/en/cinii/terms), [KCI on data.go.kr](https://www.data.go.kr/biz/dcat/metadata/3049042.do), [OpenEdition OAI licence](https://oai-openedition.readthedocs.io/en/latest/license.html), [HAL (CCSD)](https://www.ccsd.cnrs.fr/?p=18242), [OpenCitations Index](https://link.springer.com/article/10.1007/s11192-024-05160-7), [SciELO open access](https://www.scielo.org/en/open-access-statement).
 
 **Why last:** it depends on language metadata (4), provenance (3) and duplicate merging (2), and each source is its own project on its own timeline. Some, CNKI especially, may need a licensing agreement that takes months or never happens. Start the access requests during the groundwork phase and add each provider when its access comes through, in parallel with everything else.

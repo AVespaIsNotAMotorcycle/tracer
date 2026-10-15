@@ -89,6 +89,12 @@ function uniqueWorks(works, selfId) {
   return works.filter((work) => !seen.has(work.id) && seen.add(work.id));
 }
 
+/**
+ * Whether a work has anything to build a graph from: works citing it, or references (its
+ * provider's, or found through Crossref or OpenCitations).
+ */
+const hasLinks = (work) => (work.citedByCount ?? 0) > 0 || work.references.length > 0;
+
 const mostCitedFirst = (works) =>
   [...works].sort((a, b) => (b.citedByCount ?? 0) - (a.citedByCount ?? 0));
 
@@ -1109,12 +1115,22 @@ export function createWorkService({
       return { ...result, path };
     },
 
-    /** @returns {Promise<Work[]>} */
+    /**
+     * Works matching `query`, in the provider's relevance order, except that works with no
+     * links (nothing cites them and they have no references) come last: built from, they'd be
+     * a lone anchor. A search for "Cixi" otherwise starts with eight such short titles (and
+     * articles about Cixi city) ahead of works with dozens of links.
+     *
+     * @returns {Promise<Work[]>}
+     */
     async searchWorks(query, { limit }) {
       const normalized = query.trim().toLowerCase().replace(/\s+/g, ' ');
-      return cachedList(`${providerName}:search:${limit}:${normalized}`, ttl.search, () =>
-        provider.searchWorks(normalized, { limit }),
+      const works = await cachedList(
+        `${providerName}:search:${limit}:${normalized}`,
+        ttl.search,
+        () => provider.searchWorks(normalized, { limit }),
       );
+      return [...works.filter(hasLinks), ...works.filter((work) => !hasLinks(work))];
     },
   };
 }

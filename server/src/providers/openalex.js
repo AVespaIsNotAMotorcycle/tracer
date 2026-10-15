@@ -33,6 +33,11 @@ const SELECT_FIELDS = [
   'language',
 ].join(',');
 
+// Search results whose relevance scores are within this fraction of the top score of their run
+// count as equally relevant, and are ordered most-cited first (see breakRelevanceTies).
+// OpenAlex's scores are decimals that almost never tie exactly, even for identical titles.
+export const RELEVANCE_TIE = 0.03;
+
 const OPENALEX_ID_PATTERN = /^(?:https?:\/\/openalex\.org\/)?(W\d+)$/i;
 
 /**
@@ -59,6 +64,34 @@ export function reconstructAbstract(index) {
   }
   const text = words.filter(Boolean).join(' ');
   return text || null;
+}
+
+/**
+ * Search results (raw, with `relevance_score`) with near-equally relevant ones ordered by
+ * citations: walking down in OpenAlex's order, each run of results whose scores are within
+ * RELEVANCE_TIE of the run's first is sorted by `cited_by_count`, most first (stable). Runs are
+ * measured from their first score, not from neighbor to neighbor, so a long gentle slope
+ * doesn't become one run. Results without a score keep their places.
+ *
+ * @param {any[]} results
+ * @returns {any[]}
+ */
+export function breakRelevanceTies(results, tie = RELEVANCE_TIE) {
+  const sorted = [];
+  let run = [];
+  const flush = () => {
+    sorted.push(...run.sort((a, b) => (b.cited_by_count ?? 0) - (a.cited_by_count ?? 0)));
+    run = [];
+  };
+  for (const result of results) {
+    const score = result.relevance_score;
+    const top = run[0]?.relevance_score;
+    if (typeof score !== 'number' || (run.length && !(score >= top * (1 - tie)))) flush();
+    if (typeof score !== 'number') sorted.push(result);
+    else run.push(result);
+  }
+  flush();
+  return sorted;
 }
 
 /**
@@ -232,21 +265,26 @@ export function createOpenAlexProvider({
    * @param {Record<string, string>} params
    * @param {number} limit
    */
-  async function listWorks(params, limit) {
-    const works = [];
+  /** Up to `limit` raw works matching `params`, following cursors across pages. */
+  async function listRaw(params, limit) {
+    const results = [];
     let cursor = '*';
-    while (cursor && works.length < limit) {
+    while (cursor && results.length < limit) {
       const data = await request('/works', {
-        ...params,
         select: SELECT_FIELDS,
-        per_page: Math.min(MAX_PER_PAGE, limit - works.length),
+        ...params,
+        per_page: Math.min(MAX_PER_PAGE, limit - results.length),
         cursor,
       });
       if (!data) break;
-      works.push(...data.results.map(normalizeWork));
+      results.push(...data.results);
       cursor = data.results.length > 0 ? data.meta?.next_cursor : null;
     }
-    return works.slice(0, limit);
+    return results.slice(0, limit);
+  }
+
+  async function listWorks(params, limit) {
+    return (await listRaw(params, limit)).map(normalizeWork);
   }
 
   /** Accepts an OpenAlex ID or a DOI and returns the path segment OpenAlex expects. */
@@ -303,7 +341,11 @@ export function createOpenAlexProvider({
   }
 
   async function searchWorks(query, { limit = 25 } = {}) {
-    return listWorks({ search: query }, limit);
+    const results = await listRaw(
+      { search: query, select: `${SELECT_FIELDS},relevance_score` },
+      limit,
+    );
+    return breakRelevanceTies(results).map(normalizeWork);
   }
 
   /**

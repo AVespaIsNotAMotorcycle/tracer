@@ -6,6 +6,20 @@ import { sourceType } from '../graph/sourceTypes.js';
 const DEPTHS = [0, 1, 2, 3];
 
 /**
+ * What a search result has to build a graph from: "Cited by 45 · cites 16", or "No citations or
+ * references" (built from, it would be a lone anchor; such works are listed last).
+ */
+function linkSummary(work) {
+  const cited = work.citedByCount ?? 0;
+  const cites = work.references.length;
+  if (cited === 0 && cites === 0) return 'No citations or references';
+  const parts = [];
+  if (cited > 0) parts.push(`Cited by ${cited.toLocaleString('en')}`);
+  if (cites > 0) parts.push(`${parts.length ? 'cites' : 'Cites'} ${cites.toLocaleString('en')}`);
+  return parts.join(' · ');
+}
+
+/**
  * Finds an anchor work (by search, or directly by DOI / OpenAlex ID) and sets build options.
  * With `onApply`, the options can also be applied to the current graph; `canApply` says
  * whether they differ from the ones it was built with. The options go only as far as the
@@ -173,6 +187,7 @@ export default function SearchPanel({
                   <span className="muted">
                     {[work.authors[0]?.name, work.year, work.venue].filter(Boolean).join(' · ')}
                   </span>
+                  <span className="muted result-links">{linkSummary(work)}</span>
                 </button>
               </li>
             );

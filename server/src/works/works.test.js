@@ -953,6 +953,12 @@ describe('GET /api/works?q=', () => {
     expect(provider.searchWorks).toHaveBeenCalledWith('moral economy', { limit: 2 });
   });
 
+  it('puts works with no links last, keeping the provider’s order otherwise', async () => {
+    // The fake provider returns W1, W2, W4, W5. Nothing cites W2 and it cites nothing.
+    const res = await api.get('/api/works?q=anything&limit=4');
+    expect(res.body.works.map((w) => w.externalIds.openalex)).toEqual(['W1', 'W4', 'W5', 'W2']);
+  });
+
   it('requires q', async () => {
     expect((await api.get('/api/works')).status).toBe(400);
     expect((await api.get('/api/works?q=%20')).status).toBe(400);

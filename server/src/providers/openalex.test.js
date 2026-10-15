@@ -2,6 +2,7 @@ import { describe, expect, it, vi } from 'vitest';
 import { ProviderError } from './errors.js';
 import {
   advancedSearchParams,
+  breakRelevanceTies,
   createOpenAlexProvider,
   normalizeWork,
   reconstructAbstract,
@@ -317,6 +318,49 @@ describe('createOpenAlexProvider', () => {
 
       expect(requestedUrl(0).searchParams.get('search')).toBe('french revolution');
       expect(requestedUrl(0).searchParams.get('per_page')).toBe('5');
+      expect(requestedUrl(0).searchParams.get('select')).toMatch(/,relevance_score$/);
+    });
+
+    it('puts the most cited first among near-equally relevant results', async () => {
+      // As OpenAlex ranked "moral economy": Thompson's article 6th, its score under 1% below.
+      const scored = (id, score, cited) =>
+        rawWork(id, { relevance_score: score, cited_by_count: cited });
+      const { provider } = setup(
+        listResponse([
+          scored('W1', 198.2, 483),
+          scored('W2', 186.3, 149),
+          scored('W3', 184.9, 196),
+          scored('W4', 181.8, 258),
+          scored('W5', 181.7, 4672),
+          scored('W6', 170.0, 900),
+        ]),
+      );
+      const works = await provider.searchWorks('moral economy', { limit: 6 });
+      expect(works.map((work) => work.providerId)).toEqual(['W1', 'W5', 'W4', 'W3', 'W2', 'W6']);
+    });
+  });
+
+  describe('breakRelevanceTies', () => {
+    const result = (id, score, cited) => ({ id, relevance_score: score, cited_by_count: cited });
+
+    it('measures each run from its first score, not neighbor to neighbor', () => {
+      // Each step is 2%, but 96 is over 3% below 100, so it starts the next run (with 94).
+      const ids = breakRelevanceTies([
+        result('a', 100, 1),
+        result('b', 98, 2),
+        result('c', 96, 3),
+        result('d', 94, 50),
+      ]).map((r) => r.id);
+      expect(ids).toEqual(['b', 'a', 'd', 'c']);
+    });
+
+    it('keeps results without a score in place', () => {
+      const ids = breakRelevanceTies([
+        result('a', 100, 1),
+        { id: 'x', cited_by_count: 999 },
+        result('b', 99, 5),
+      ]).map((r) => r.id);
+      expect(ids).toEqual(['a', 'x', 'b']);
     });
   });
 

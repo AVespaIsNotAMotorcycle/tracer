@@ -150,6 +150,33 @@ describe('App', () => {
     expect(within(results).getByRole('button', { name: /^Book:\s*Title b/ })).toBeVisible();
   });
 
+  it('shows what each search result has to build a graph from', async () => {
+    vi.mocked(api.searchWorks).mockResolvedValue([
+      anchor,
+      work('thesis', {
+        citedByCount: 0,
+        references: Array.from({ length: 16 }, (_, i) => `r${i}`),
+      }),
+      work('empty', { citedByCount: 0 }),
+    ]);
+    render(<App />);
+    fireEvent.change(screen.getByLabelText('Title, DOI, or OpenAlex ID'), {
+      target: { value: 'cixi' },
+    });
+    fireEvent.click(screen.getByRole('button', { name: 'Go' }));
+    const results = await screen.findByRole('list', { name: 'Search results' });
+
+    expect(within(results).getByRole('button', { name: /Title anchor/ })).toHaveTextContent(
+      'Cited by 4,693 · cites 1',
+    );
+    expect(within(results).getByRole('button', { name: /Title thesis/ })).toHaveTextContent(
+      'Cites 16',
+    );
+    expect(within(results).getByRole('button', { name: /Title empty/ })).toHaveTextContent(
+      'No citations or references',
+    );
+  });
+
   it('closes the search results, keeping the graph', async () => {
     await buildFromSearch();
     fireEvent.click(screen.getByRole('button', { name: 'Close search results' }));

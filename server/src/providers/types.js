@@ -38,6 +38,19 @@
  *   the graph, not only edges to the root.
  * @property {ProviderLink[]} links
  * @property {string | null} language  ISO 639 code (normalizeLanguage), e.g. "fr".
+ * @property {ProviderTopic | null} topic  Its primary topic, with the subfield, field and
+ *   domain it falls under.
+ */
+
+/**
+ * A topic and the levels above it, each a provider ID and name.
+ *
+ * @typedef {object} ProviderTopic
+ * @property {string} id
+ * @property {string} name
+ * @property {{ id: string, name: string } | null} subfield
+ * @property {{ id: string, name: string } | null} field
+ * @property {{ id: string, name: string } | null} domain
  */
 
 /**

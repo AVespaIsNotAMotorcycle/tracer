@@ -892,9 +892,9 @@ export async function addExpandedWorks(
  * lack, so the server discards those and the graph is rebuilt (see SNAPSHOT_VERSION in the
  * server's graphService.js, which a test keeps equal). 1 (no `version`): before
  * `referenceProviders`; 2: works list where each citation came from; 3: works have their
- * language and other titles.
+ * language and other titles; 4: works have their topic.
  */
-export const SNAPSHOT_VERSION = 3;
+export const SNAPSHOT_VERSION = 4;
 
 /**
  * A built graph as plain JSON, for the server to keep as a saved graph's snapshot (so reopening

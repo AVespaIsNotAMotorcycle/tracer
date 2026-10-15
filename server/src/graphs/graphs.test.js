@@ -59,7 +59,7 @@ const state = (overrides = {}) => ({
     excludedTypes: ['dataset'],
     excludedLanguages: ['unknown'],
   },
-  view: { axisAngle: 45, pinned: ['tracer-b'] },
+  view: { axisAngle: 45, pinned: ['tracer-b'], colorScheme: 'field', fieldLevel: 'topic' },
   expanded: ['tracer-a', 'tracer-b'],
   ...overrides,
 });
@@ -83,7 +83,7 @@ describe('saving and opening graphs', () => {
         excludedTypes: ['dataset'],
         excludedLanguages: ['unknown'],
       },
-      view: { axisAngle: 45, pinned: ['tracer-b'] },
+      view: { axisAngle: 45, pinned: ['tracer-b'], colorScheme: 'field', fieldLevel: 'topic' },
       expanded: ['tracer-a', 'tracer-b'],
       annotations: [],
     });
@@ -202,6 +202,16 @@ const snapshot = (overrides = {}) => ({
   sticky: ['tracer-a'],
   truncated: false,
   ...overrides,
+});
+
+describe('color schemes', () => {
+  it('refuses an unknown color scheme or field level', async () => {
+    const agent = await signedIn();
+    const post = (view) => agent.post('/api/graphs').send({ state: state({ view }) });
+    expect((await post({ colorScheme: 'rainbow' })).status).toBe(400);
+    expect((await post({ colorScheme: 'field', fieldLevel: 'domain' })).status).toBe(400);
+    expect((await post({ colorScheme: 'neighborhood' })).status).toBe(201);
+  });
 });
 
 describe('works merged since saving', () => {

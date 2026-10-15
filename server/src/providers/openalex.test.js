@@ -102,6 +102,17 @@ describe('normalizeWork', () => {
         cited_by_count: 1217,
         referenced_works: ['https://openalex.org/W1', 'https://openalex.org/W2'],
         language: 'en',
+        primary_topic: {
+          id: 'https://openalex.org/T13073',
+          display_name: "China's Ethnic Minorities and Relations",
+          score: 0.93,
+          subfield: {
+            id: 'https://openalex.org/subfields/3312',
+            display_name: 'Sociology and Political Science',
+          },
+          field: { id: 'https://openalex.org/fields/33', display_name: 'Social Sciences' },
+          domain: { id: 'https://openalex.org/domains/2', display_name: 'Social Sciences' },
+        },
       }),
     );
 
@@ -132,6 +143,13 @@ describe('normalizeWork', () => {
         { kind: 'pdf', url: 'https://peerj.com/articles/4375.pdf' },
       ],
       language: 'en',
+      topic: {
+        id: 'T13073',
+        name: "China's Ethnic Minorities and Relations",
+        subfield: { id: 'subfields/3312', name: 'Sociology and Political Science' },
+        field: { id: 'fields/33', name: 'Social Sciences' },
+        domain: { id: 'domains/2', name: 'Social Sciences' },
+      },
     });
   });
 

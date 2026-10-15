@@ -23,13 +23,17 @@ const MAX_NOTE_LENGTH = 10_000;
 export const SNAPSHOT_TTL_MS = 7 * 24 * 60 * 60 * 1000;
 // The oldest snapshot shape still served, as the client numbers them (SNAPSHOT_VERSION in its
 // graphModel.js; one without `version` is 1). Older ones lack data the client now shows (2:
-// where each citation came from; 3: language and other titles), so they're dropped and the
-// graph is rebuilt. Raise it with the client's version when works gain such data.
-export const SNAPSHOT_VERSION = 3;
+// where each citation came from; 3: language and other titles; 4: topics), so they're dropped
+// and the graph is rebuilt. Raise it with the client's version when works gain such data.
+export const SNAPSHOT_VERSION = 4;
 const MAX_SNAPSHOT_WORKS = 20_000;
 // Compressed. MongoDB's documents top out at 16 MB.
 const MAX_SNAPSHOT_BYTES = 12 * 1024 * 1024;
 const DIRECTIONS = new Set(['citing', 'cited']);
+// How nodes are colored, and which level of OpenAlex's topics the 'field' scheme uses (as the
+// client names them; see colorSchemes.js).
+const COLOR_SCHEMES = new Set(['relation', 'neighborhood', 'field']);
+const FIELD_LEVELS = new Set(['field', 'subfield', 'topic']);
 const RELATIONS = new Set(['anchor', 'citing', 'cited']);
 
 // Allowed ranges for build options, as in the client's URL handling (urlState.js).
@@ -113,6 +117,10 @@ export function checkState(state, limits = PLANS.free.limits) {
   };
   const excludedTypes = keyList(filters.excludedTypes ?? [], 'Invalid type filter');
   const excludedLanguages = keyList(filters.excludedLanguages ?? [], 'Invalid language filter');
+  const colorScheme = view.colorScheme ?? null;
+  if (colorScheme != null && !COLOR_SCHEMES.has(colorScheme)) throw bad('Invalid color scheme');
+  const fieldLevel = view.fieldLevel ?? null;
+  if (fieldLevel != null && !FIELD_LEVELS.has(fieldLevel)) throw bad('Invalid field level');
   const axisAngle = view.axisAngle ?? null;
   if (axisAngle != null && (typeof axisAngle !== 'number' || axisAngle < 0 || axisAngle > 90)) {
     throw bad('Invalid axis angle');
@@ -146,7 +154,7 @@ export function checkState(state, limits = PLANS.free.limits) {
       excludedTypes,
       excludedLanguages,
     },
-    view: { axisAngle, pinned: [...new Set(pinned)] },
+    view: { axisAngle, pinned: [...new Set(pinned)], colorScheme, fieldLevel },
     expanded: [...new Set(expanded)],
   };
   if (state.annotations !== undefined) checked.annotations = checkAnnotations(state.annotations);

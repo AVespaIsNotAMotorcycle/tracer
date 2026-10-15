@@ -497,6 +497,13 @@ export default function DetailsPanel({
           {typeLabel} · {byline}
         </span>
       </p>
+      {work.topic && (
+        <p className="muted small topic">
+          Topic: {work.topic.name}
+          {[work.topic.subfield?.name, work.topic.field?.name].filter(Boolean).length > 0 &&
+            ` (${[work.topic.subfield?.name, work.topic.field?.name].filter(Boolean).join(', ')})`}
+        </p>
+      )}
       {neighborhood && <Neighborhood anchors={neighborhood} isAnchor={relation === 'anchor'} />}
       {referenceWarning && (
         <p className="reference-warning small with-icon">

@@ -12,6 +12,18 @@
   --palette-4: #ffede1; /* Linen: backgrounds, dark-mode text */
   --palette-5: #363537; /* Jet: text, dark-mode backgrounds */
 
+  /*
+   * Data palette: colors for categories, used only to color works by academic field, where
+   * any two fields can sit side by side. The five brand slots can't supply three hues
+   * distinct enough for that (fern and the mixes read grey), so these come from the dataviz
+   * skill's validated categorical palette, the three of its slots that pass every pairwise
+   * check (color-vision deficiency and normal vision) in both themes. Stepped for dark mode
+   * below.
+   */
+  --palette-field-1: #2a78d6; /* Blue */
+  --palette-field-2: #eb6834; /* Orange */
+  --palette-field-3: #1baf7a; /* Aqua */
+
   /* Neutrals. */
   --ink: var(--palette-5);
   --paper: color-mix(in oklab, var(--palette-4) 10%, white);
@@ -49,6 +61,13 @@
   /* Charts in the details panel: citations per year are citing works, so their color.
      Resolved on :root, so it follows --node-citing into dark mode. */
   --chart-bar: var(--node-citing);
+  /* Works by academic field (FIELD_COLORS in colorSchemes.js), with icons that meet 3:1. */
+  --node-field-1: var(--palette-field-1);
+  --node-field-2: var(--palette-field-2);
+  --node-field-3: var(--palette-field-3);
+  --node-icon-on-field-1: var(--paper);
+  --node-icon-on-field-2: var(--ink);
+  --node-icon-on-field-3: var(--ink);
   /* Works whose references are probably missing: a badge like the pin's, told apart by its
      icon (red would read as a citing work). Resolved on :root, so they follow the pin. */
   --node-warning: var(--node-pin);
@@ -90,6 +109,12 @@
    data-theme on <html> to 'light' or 'dark'). */
 :root[data-theme='dark'] {
   color-scheme: dark;
+
+  --palette-field-1: #3987e5;
+  --palette-field-2: #d95926;
+  --palette-field-3: #199e70;
+  --node-icon-on-field-1: var(--ink);
+  --node-icon-on-field-2: var(--paper);
 
   --ink: color-mix(in oklab, var(--palette-5) 55%, black);
   --paper: color-mix(in oklab, var(--palette-4) 85%, white);
@@ -652,6 +677,31 @@ button.with-icon {
   border: 1px solid var(--node-outline);
 }
 
+.swatch.field {
+  background: var(--swatch);
+  border: 1px solid var(--node-outline);
+}
+
+.swatch.reference-only {
+  background: var(--node-reference-only);
+  border: 1px solid var(--node-outline);
+}
+
+/* The color scheme menu, and the topic level for the field scheme, above the legend. */
+.legend-controls {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px 12px;
+  margin-bottom: 4px;
+}
+
+.legend-controls label {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  font-size: 0.9em;
+}
+
 .legend-anchor {
   display: flex;
   align-items: center;
@@ -662,6 +712,13 @@ button.with-icon {
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
+}
+
+/* A field's count stays visible when its name is cut short. */
+.legend-anchor .legend-count {
+  flex: none;
+  margin-left: 4px;
+  overflow: visible;
 }
 
 .neighborhood {

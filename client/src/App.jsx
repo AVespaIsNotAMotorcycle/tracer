@@ -1,4 +1,3 @@
-import { Pin, NotebookPen, TriangleAlert } from 'lucide-react';
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { getSavedGraph, saveGraph, saveGraphSnapshot, updateGraph } from './api.js';
 import './App.css';
@@ -7,6 +6,7 @@ import { useAuth } from './auth/useAuth.js';
 import AdvancedSearch from './components/AdvancedSearch.jsx';
 import DetailsPanel from './components/DetailsPanel.jsx';
 import FiltersPanel from './components/FiltersPanel.jsx';
+import Legend from './components/Legend.jsx';
 import Header from './components/Header.jsx';
 import LoadingProgress from './components/LoadingProgress.jsx';
 import PricingPage from './components/PricingPage.jsx';
@@ -15,6 +15,13 @@ import SaveGraph from './components/SaveGraph.jsx';
 import SearchPanel from './components/SearchPanel.jsx';
 import ViewPanel from './components/ViewPanel.jsx';
 import { DEFAULT_AXIS_ANGLE } from './graph/axis.js';
+import {
+  assignFieldColors,
+  DEFAULT_FIELD_LEVEL,
+  defaultColorScheme,
+  fieldCounts,
+  workFieldColors,
+} from './graph/colorSchemes.js';
 import GraphView from './graph/GraphView.jsx';
 import {
   anchorNeighborhoods,
@@ -208,6 +215,11 @@ function GraphPage({ auth }) {
     }
   }
   const [axisAngle, setAxisAngle] = useState(DEFAULT_AXIS_ANGLE);
+  // How nodes are colored: the user's choice of scheme ('relation', 'neighborhood' or
+  // 'field'), or null for the default (by anchor with several anchors, else by relation), and
+  // the level of topics the field scheme uses. View state, saved with a graph.
+  const [colorSchemeChoice, setColorSchemeChoice] = useState(null);
+  const [fieldLevel, setFieldLevel] = useState(DEFAULT_FIELD_LEVEL);
   // Counts runs (builds, re-anchors, options changes), so the view re-fits after each one.
   const [runCount, setRunCount] = useState(0);
   // The options the current graph was built with, once a run finishes.
@@ -340,6 +352,8 @@ function GraphPage({ auth }) {
         excludedLanguages: saved.filters?.excludedLanguages ?? [],
       });
       setAxisAngle(saved.view?.axisAngle ?? DEFAULT_AXIS_ANGLE);
+      setColorSchemeChoice(saved.view?.colorScheme ?? null);
+      setFieldLevel(saved.view?.fieldLevel ?? DEFAULT_FIELD_LEVEL);
       setPinned(new Set(saved.view?.pinned ?? []));
       setNotes(notesFrom(saved.annotations));
       setCoCitations(null);
@@ -546,12 +560,51 @@ function GraphPage({ auth }) {
     );
     return parts;
   }, [view]);
-  // Which anchors each work is near, for coloring a graph with several (see
-  // anchorNeighborhoods), at the depths the graph was built with.
+  const colorScheme = colorSchemeChoice ?? defaultColorScheme(view.anchorIds.length);
+  // Which anchors each work is near (see anchorNeighborhoods), at the depths the graph was
+  // built with: for coloring by anchor, and with several anchors for the details panel.
   const neighborhoods = useMemo(
-    () => (view.anchorIds.length > 1 ? anchorNeighborhoods(view, graphOptions ?? options) : null),
-    [view, graphOptions, options],
+    () =>
+      view.anchorIds.length > 1 || colorScheme === 'neighborhood'
+        ? anchorNeighborhoods(view, graphOptions ?? options)
+        : null,
+    [view, graphOptions, options, colorScheme],
   );
+  // Coloring by academic field: how many works are in each field at the chosen level, which
+  // of the most common get a color (each keeping it while it stays among them; adjusted while
+  // rendering when the counts change), and each work's color.
+  const fieldTally = useMemo(
+    () => (colorScheme === 'field' ? fieldCounts(view.works.values(), fieldLevel) : null),
+    [colorScheme, view.works, fieldLevel],
+  );
+  const [fieldColorState, setFieldColorState] = useState({ counts: null, colors: new Map() });
+  if (fieldTally && fieldTally !== fieldColorState.counts) {
+    setFieldColorState({
+      counts: fieldTally,
+      colors: assignFieldColors(fieldColorState.colors, fieldTally),
+    });
+  }
+  const fieldColors = fieldTally === fieldColorState.counts ? fieldColorState.colors : null;
+  const workFields = useMemo(
+    () => (fieldColors ? workFieldColors(view.works.values(), fieldLevel, fieldColors) : null),
+    [fieldColors, view.works, fieldLevel],
+  );
+  const fieldLegend = useMemo(() => {
+    if (!workFields || !fieldTally) return { fields: [], other: 0, noTopic: 0 };
+    const fields = [...fieldColors]
+      .map(([key, slot]) => ({
+        slot,
+        name: fieldTally.get(key).name,
+        count: fieldTally.get(key).count,
+      }))
+      .sort((a, b) => b.count - a.count || a.name.localeCompare(b.name));
+    const values = [...workFields.values()];
+    return {
+      fields,
+      other: values.filter((value) => value === 'other').length,
+      noTopic: values.filter((value) => value == null).length,
+    };
+  }, [workFields, fieldColors, fieldTally]);
 
   // Looks for the shortest path from `fromId` to the nearest of `targetIds` (anchors).
   const handleFindPath = async (fromId, targetIds) => {
@@ -612,7 +665,12 @@ function GraphPage({ auth }) {
       options: graphOptions ?? options,
       filters,
       // Pins of works no longer on the graph (dropped by a re-anchor) aren't worth keeping.
-      view: { axisAngle, pinned: [...pinned].filter((id) => view.works.has(id)) },
+      view: {
+        axisAngle,
+        pinned: [...pinned].filter((id) => view.works.has(id)),
+        colorScheme: colorSchemeChoice,
+        fieldLevel,
+      },
       expanded: [...graph.sticky],
       annotations: [...notes].map(([workId, body]) => ({
         target: { type: 'work', workId },
@@ -620,7 +678,18 @@ function GraphPage({ auth }) {
         body,
       })),
     }),
-    [graph, graphOptions, options, filters, axisAngle, pinned, view, notes],
+    [
+      graph,
+      graphOptions,
+      options,
+      filters,
+      axisAngle,
+      pinned,
+      colorSchemeChoice,
+      fieldLevel,
+      view,
+      notes,
+    ],
   );
   const saveJson = useMemo(() => JSON.stringify(saveState), [saveState]);
   const idle = !busy && expanding.size === 0;
@@ -765,75 +834,18 @@ function GraphPage({ auth }) {
         )}
         {hasGraph && <ViewPanel axisAngle={axisAngle} onAxisAngleChange={setAxisAngle} />}
         {hasGraph && (
-          <section className="panel legend" aria-label="Legend">
-            {neighborhoods ? (
-              <>
-                {/* Colored by anchor: each anchor, then works near several or none. */}
-                {anchorWorks.map((work, index) => (
-                  <span key={work.id} className="legend-anchor">
-                    <i
-                      className="anchor-swatch"
-                      style={{ '--swatch': `var(--anchor-${index + 1})` }}
-                    />
-                    <span title={work.title ?? 'Untitled'}>
-                      {short(work.title ?? 'Untitled', 50)} and works near it
-                    </span>
-                  </span>
-                ))}
-                <span>
-                  <i className="swatch shared" /> Near several anchors
-                </span>
-                <span>
-                  <i className="swatch unlinked" /> Not linked to an anchor
-                </span>
-              </>
-            ) : (
-              <>
-                <span>
-                  <i className="swatch anchor" /> Anchor
-                </span>
-                <span>
-                  <i className="swatch citing" /> Citing works
-                </span>
-                <span>
-                  <i className="swatch cited" /> Cited works
-                </span>
-              </>
-            )}
-            <span>
-              <i className="swatch expanded" /> Expanded
-            </span>
-            {coCited.size > 0 && (
-              <span>
-                <i className="swatch co-cited" /> Co-cited with{' '}
-                {neighborhoods ? 'an anchor' : 'the anchor'}
-              </span>
-            )}
-            <span>
-              <i className="swatch pinned">
-                <Pin aria-hidden="true" />
-              </i>{' '}
-              Pinned: always shown
-            </span>
-            <span>
-              <i className="swatch noted">
-                <NotebookPen aria-hidden="true" />
-              </i>{' '}
-              Has a note
-            </span>
-            {warnings.size > 0 && (
-              <span>
-                <i className="swatch warned">
-                  <TriangleAlert aria-hidden="true" />
-                </i>{' '}
-                References probably missing
-              </span>
-            )}
-            <span className="muted small">
-              Older works toward the top left, newer toward the bottom right
-            </span>
-            <span className="muted small">Circle size: total times cited</span>
-          </section>
+          <Legend
+            scheme={colorScheme}
+            onSchemeChange={setColorSchemeChoice}
+            fieldLevel={fieldLevel}
+            onFieldLevelChange={setFieldLevel}
+            anchorWorks={anchorWorks}
+            fields={fieldLegend.fields}
+            otherFields={fieldLegend.other}
+            noTopic={fieldLegend.noTopic}
+            coCited={coCited.size > 0}
+            warnings={warnings.size > 0}
+          />
         )}
       </aside>
 
@@ -879,7 +891,8 @@ function GraphPage({ auth }) {
             notes={notes}
             warnings={warnings}
             coCitedIds={coCited}
-            neighborhoods={neighborhoods}
+            neighborhoods={colorScheme === 'neighborhood' ? neighborhoods : null}
+            fieldColors={workFields}
             years={years}
             visible={visible}
             selectedId={shownId}
@@ -922,7 +935,7 @@ function GraphPage({ auth }) {
             onRemove: () => handleRemoveAnchor(selected.id),
           }}
           neighborhood={
-            neighborhoods
+            neighborhoods && graph.anchorIds.length > 1
               ? (neighborhoods.get(selected.id) ?? []).map((id) => ({
                   id,
                   index: graph.anchorIds.indexOf(id),

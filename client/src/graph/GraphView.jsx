@@ -208,6 +208,13 @@ const COLOR_VARS = {
   coCited: '--node-co-cited',
   iconOnPin: '--node-icon-on-pin',
   warning: '--node-warning',
+  // Works by academic field (FIELD_COLORS in colorSchemes.js).
+  field0: '--node-field-1',
+  field1: '--node-field-2',
+  field2: '--node-field-3',
+  iconOnField0: '--node-icon-on-field-1',
+  iconOnField1: '--node-icon-on-field-2',
+  iconOnField2: '--node-icon-on-field-3',
   iconOnWarning: '--node-icon-on-warning',
   outline: '--node-outline',
   iconOnAnchor: '--node-icon-on-anchor',
@@ -345,6 +352,10 @@ const escapeHtml = (text) =>
  * Every work stays in the simulation; filtered-out works are only hidden (nodeVisibility),
  * so filtering doesn't reshuffle the layout.
  *
+ * With `fieldColors` (see workFieldColors), works are colored by academic field instead: each
+ * of the most common fields in a color of its own (--node-field-*), the rest in a neutral
+ * color, and works with no topic grey.
+ *
  * With several anchors, `neighborhoods` (see anchorNeighborhoods) colors works by anchor
  * instead of by relation: each anchor in its hue, works near one in its tint, works near
  * several in wedges of each, and works near none in a neutral color.
@@ -358,6 +369,7 @@ export default function GraphView({
   warnings = new Map(),
   coCitedIds = new Map(),
   neighborhoods = null,
+  fieldColors = null,
   years,
   visible,
   selectedId,
@@ -681,6 +693,12 @@ export default function GraphView({
     // Works not on OpenAlex are grey whichever way they joined the graph.
     if (node.work.type === REFERENCE_ONLY) {
       return { fill: colors.referenceOnly, icon: colors.iconOnReferenceOnly };
+    }
+    if (fieldColors) {
+      const field = fieldColors.get(node.id);
+      if (field == null) return { fill: colors.referenceOnly, icon: colors.iconOnReferenceOnly };
+      if (field === 'other') return { fill: colors.unlinked, icon: colors.iconOnUnlinked };
+      return { fill: colors[`field${field}`], icon: colors[`iconOnField${field}`] };
     }
     if (!node.anchors) {
       return {

@@ -481,6 +481,47 @@ describe('App', () => {
     ]);
   });
 
+  it('colors works by relation, anchor neighborhood or academic field', async () => {
+    const topic = (id, name, subfield) => ({
+      id,
+      name,
+      subfield: { id: `subfields/${subfield}`, name: `Subfield ${subfield}` },
+      field: { id: 'fields/33', name: 'Social Sciences' },
+    });
+    vi.mocked(api.getWork).mockResolvedValue({ ...anchor, topic: topic('T1', 'Moral economy', 1) });
+    vi.mocked(api.getCiting).mockImplementation(async (id) =>
+      id === 'anchor' ? [{ ...citer, topic: topic('T2', 'Riots', 1) }] : [],
+    );
+    vi.mocked(api.getCited).mockImplementation(async (id) => (id === 'anchor' ? [ref] : []));
+    await buildFromSearch();
+    const legend = screen.getByRole('region', { name: 'Legend' });
+    const scheme = within(legend).getByLabelText('Color scheme');
+
+    // One anchor: by relation until the user picks another scheme.
+    expect(scheme).toHaveValue('relation');
+    expect(within(legend).getByText('Citing works')).toBeInTheDocument();
+
+    fireEvent.change(scheme, { target: { value: 'field' } });
+    expect(within(legend).getByLabelText('Level')).toHaveValue('subfield');
+    expect(within(legend).getByText('Subfield 1')).toBeInTheDocument();
+    expect(within(legend).getByText(/No topic on OpenAlex/)).toHaveTextContent('1');
+
+    fireEvent.change(within(legend).getByLabelText('Level'), { target: { value: 'topic' } });
+    expect(within(legend).getByText('Moral economy')).toBeInTheDocument();
+    expect(within(legend).getByText('Riots')).toBeInTheDocument();
+
+    fireEvent.change(scheme, { target: { value: 'neighborhood' } });
+    expect(within(legend).getByText(/and works near it/)).toBeInTheDocument();
+
+    // The details name a work's topic.
+    fireEvent.click(within(graph()).getByRole('button', { name: 'Title anchor' }));
+    expect(
+      within(screen.getByRole('complementary', { name: 'Title anchor' })).getByText(
+        'Topic: Moral economy (Subfield 1, Social Sciences)',
+      ),
+    ).toBeInTheDocument();
+  });
+
   it('replaces a work not on OpenAlex with the work the server merged it into', async () => {
     const grey = work('grey', {
       type: 'reference-only',
@@ -1671,7 +1712,7 @@ describe('saved graphs', () => {
         excludedTypes: ['article'],
         excludedLanguages: [],
       },
-      view: { axisAngle: 30, pinned: ['ref'] },
+      view: { axisAngle: 30, pinned: ['ref'], colorScheme: null, fieldLevel: 'subfield' },
       expanded: ['ref'],
       annotations: [
         { target: { type: 'work', workId: 'ref' }, kind: 'note', body: 'On grain riots' },

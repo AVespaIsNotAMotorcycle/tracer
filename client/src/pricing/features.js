@@ -174,9 +174,10 @@ export const FEATURE_GROUPS = [
       },
       {
         name: 'Color by discipline or topic',
+        note: 'Color works by OpenAlex field, subfield or topic, to see an idea cross disciplines.',
         free: true,
         scholar: true,
-        available: false,
+        available: true,
       },
       {
         name: '“What am I missing?” suggestions',

@@ -40,8 +40,8 @@ export const DEFAULT_TTLS = {
 // The shape of stored provider data, as `version` on each record. A record stored by an
 // earlier version lacks fields toWorks now reads, so it counts as expired and is fetched again
 // when next needed. Bump it when ProviderWork or the Crossref record gains a field.
-// 1 (no version): before language; 2: language, and Crossref's titles.
-export const RECORD_VERSION = 2;
+// 1 (no version): before language; 2: language, and Crossref's titles; 3: topic.
+export const RECORD_VERSION = 3;
 // Path searches (see findPath) stop starting new levels after this long, well inside Heroku's
 // 30-second request limit; one level takes a few seconds at most.
 const PATH_TIME_MS = 18_000;
@@ -71,6 +71,8 @@ const MAX_ARCHIVE_ITEMS = 5;
  * @property {string | null} languageProvider  Which of those it came from.
  * @property {import('./titles.js').OtherTitle[]} otherTitles  Its original title, or its title
  *   in another script, where Crossref has one (see otherTitles).
+ * @property {import('../providers/types.js').ProviderTopic | null} topic  Its primary topic
+ *   on OpenAlex, with its subfield, field and domain, for coloring by discipline.
  * @property {Record<string, string[]>} referenceProviders
  *   For each reference, the providers that have the citation: the provider's own reference
  *   list (openalex), a deposited reference list (crossref), or a citation index
@@ -393,6 +395,7 @@ export function createWorkService({
           language: null,
           languageProvider: null,
           otherTitles: [],
+          topic: null,
           links: citation.doi ? doiLinks(citation.doi) : [],
           providers: [referenceProvider?.name ?? 'crossref'],
           mergedIds: [],
@@ -433,6 +436,7 @@ export function createWorkService({
               ? providerName
               : null,
         otherTitles: otherTitles(data.title, deposited),
+        topic: data.topic ?? null,
         links: data.links,
         // The Archive and Wikidata lookups are stored as records too, but they only add links
         // and authors' names, shown with their source.

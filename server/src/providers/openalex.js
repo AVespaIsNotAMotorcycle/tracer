@@ -31,6 +31,7 @@ const SELECT_FIELDS = [
   'cited_by_count',
   'referenced_works',
   'language',
+  'primary_topic',
 ].join(',');
 
 // Search results whose relevance scores are within this fraction of the top score of their run
@@ -94,6 +95,28 @@ export function breakRelevanceTies(results, tie = RELEVANCE_TIE) {
   return sorted;
 }
 
+/** "https://openalex.org/subfields/3312" → "subfields/3312"; "…/T13073" → "T13073". */
+const shortId = (url) => String(url ?? '').replace(/^https?:\/\/openalex\.org\//, '') || null;
+
+/**
+ * A work's primary topic and the subfield, field and domain it falls under (OpenAlex's
+ * hierarchy: about 4,500 topics, 252 subfields, 26 fields, 4 domains), each `{ id, name }`.
+ *
+ * @returns {import('./types.js').ProviderTopic | null}
+ */
+export function normalizeTopic(topic) {
+  if (!topic?.display_name) return null;
+  const level = (value) =>
+    value?.display_name ? { id: shortId(value.id), name: value.display_name } : null;
+  return {
+    id: shortId(topic.id),
+    name: topic.display_name,
+    subfield: level(topic.subfield),
+    field: level(topic.field),
+    domain: level(topic.domain),
+  };
+}
+
 /**
  * @param {any} raw  A work object from the OpenAlex API.
  * @returns {ProviderWork}
@@ -135,6 +158,8 @@ export function normalizeWork(raw) {
     links,
     // Detected by OpenAlex from the title and abstract, not deposited.
     language: normalizeLanguage(raw.language),
+    // Assigned by OpenAlex's classifier from the title, abstract, venue and citations.
+    topic: normalizeTopic(raw.primary_topic),
   };
 }
 

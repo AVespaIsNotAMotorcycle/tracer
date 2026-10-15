@@ -22,6 +22,7 @@ Each entry lists:
 - **Data provenance and missing-data warnings** (3): each citation lists the providers that have it (`referenceProviders`), shown per link in the details panel, and works whose reference list is empty or suspiciously short for how often they're cited carry a warning badge. Done.
 - **Language metadata** (4): each work's language (OpenAlex's detection, or Crossref's deposit where that fits the title's script better) in the details panel and a language filter, and original-script or original titles where Crossref has them. Stored provider records now carry a `version`, so records from before a new field are fetched again. Done.
 - **Citations per year** (5): a column chart in the details panel of how many works cite a work each year, from OpenAlex's citing works grouped by year (every year, unlike `counts_by_year`, which starts in 2012 and missed 1,457 of Thompson's 4,672 citations). Fetched when details open and cached, so the work record didn't change. Done.
+- **Color by discipline or topic** (6): a "Color scheme" menu (relation to anchor, anchor neighborhood, academic field), the last coloring works by OpenAlex's primary topic at the field, subfield (default) or topic level, the three most common in colors of their own. Done.
 - **Entitlements layer** (groundwork): `can(user, feature)` / `limitFor(user, limit)` in `server/src/entitlements/`, checked by the gated routes and controls, with every tier including everything for now. Billing (Stripe) waits for launch.
 
 ---
@@ -35,14 +36,6 @@ These aren't features, but each one gets harder to add later.
 ---
 
 ## Phase 1: Core model
-
-### 6. Color by discipline or topic
-
-**Tier:** Free · **Size:** S
-
-Optionally color nodes by OpenAlex field or topic instead of by relation to the anchor, to show an idea moving between history, anthropology, political science and so on.
-
-**Why here:** the same schema change as 4 and 5. The coloring itself is UI-only and could come later; the data should be stored now.
 
 ### 7. Reading status and a personal library
 

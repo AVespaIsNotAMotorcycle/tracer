@@ -48,7 +48,9 @@ const savedGraphSchema = new mongoose.Schema(
       excludedLanguages: [String],
     },
     // Pinned works (Tracer IDs) are always shown, whatever the filters.
-    view: { axisAngle: Number, pinned: [String] },
+    // colorScheme: how nodes are colored ('relation', 'neighborhood' or 'field'; none means
+    // by the number of anchors), and fieldLevel: which level of topics 'field' uses.
+    view: { axisAngle: Number, pinned: [String], colorScheme: String, fieldLevel: String },
     expanded: [String],
     annotations: { type: [annotationSchema], default: [] },
   },

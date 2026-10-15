@@ -3,6 +3,7 @@ import { useEffect, useState } from 'react';
 import { getArchiveItems, getCitationMatch } from '../api.js';
 import { NOT_IN_PLAN } from '../auth/entitlements.js';
 import { canExpand } from '../graph/graphModel.js';
+import { langFor, languageName, scriptLabel } from '../graph/languages.js';
 import {
   groupByProviders,
   describeWarning,
@@ -87,6 +88,24 @@ const doiLink = (work) => work.links.find((link) => link.kind === 'doi');
  * `graphLinks` are its citations on the graph with where each came from (see graphLinks),
  * and `onSelectWork` selects one of the works they link to.
  */
+/**
+ * A work's original title, or its title in another script (see otherTitles on the server),
+ * labeled with its script when that differs from the title shown.
+ */
+function OtherTitle({ other, work }) {
+  const label = other.kind === 'original' ? 'Original title' : 'Also titled';
+  const script = scriptLabel(other.script);
+  return (
+    <p className="other-title">
+      <span className="muted small">
+        {label}
+        {script && ` (${script})`}
+      </span>{' '}
+      <span lang={langFor(other.script, work.language)}>{other.title}</span>
+    </p>
+  );
+}
+
 /** Where a group of links came from: "from OpenAlex only", "from both OpenAlex and Crossref". */
 function groupSource(providers) {
   if (providers.length === 0) return 'source not recorded';
@@ -131,6 +150,12 @@ function DataSources({ work, links, onSelect }) {
         {onOpenAlex
           ? `Record from OpenAlex${others.length ? `; citations also from ${listProviders(others)}` : ''}.`
           : `Known from a reference list deposited with ${listProviders(work.providers)}.`}
+        {work.language &&
+          ` Language ${
+            work.languageProvider === 'crossref'
+              ? 'as deposited with Crossref'
+              : `as ${providerLabel(work.languageProvider)} detected it from the title and abstract`
+          }.`}
       </p>
       {links.length > 0 && (
         <dl className="link-sources">
@@ -373,7 +398,9 @@ export default function DetailsPanel({
   // A listed year set aside as implausible (see layoutYears) shows as a bound instead.
   const implausible = yearInfo?.listedYear != null;
   const year = implausible ? `Before ${yearInfo.citedFrom}` : (work.year ?? 'Year unknown');
-  const byline = [year, work.venue].filter(Boolean).join(' · ');
+  const byline = [year, work.venue, work.language && languageName(work.language)]
+    .filter(Boolean)
+    .join(' · ');
   const { label: typeLabel, Icon: TypeIcon } = sourceType(work.type);
   const expandable = canExpand(work);
   // Copies on the Internet Archive; for a work not on OpenAlex, also the work Crossref
@@ -397,7 +424,12 @@ export default function DetailsPanel({
           ×
         </button>
       </div>
-      <h2 id="details-title">{work.title ?? 'Untitled'}</h2>
+      <h2 id="details-title" lang={work.language ?? undefined}>
+        {work.title ?? 'Untitled'}
+      </h2>
+      {(work.otherTitles ?? []).map((other) => (
+        <OtherTitle key={other.title} other={other} work={work} />
+      ))}
       {work.authors.length > 0 && <p className="authors">{authorsOf(work)}</p>}
       <p className="muted with-icon">
         <TypeIcon className="icon" aria-hidden="true" />

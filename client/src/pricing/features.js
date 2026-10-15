@@ -103,9 +103,10 @@ export const FEATURE_GROUPS = [
       },
       {
         name: 'Language metadata and filter',
+        note: 'Each work’s language, a language filter, and original-script titles where Crossref has them.',
         free: true,
         scholar: true,
-        available: false,
+        available: true,
       },
       {
         name: 'Semantic Scholar as a source',

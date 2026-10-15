@@ -153,6 +153,24 @@ describe('inGraphConnectionCounts', () => {
 });
 
 describe('visibleIds', () => {
+  it('hides works in excluded languages, unknown ones included', () => {
+    const graph = {
+      ...emptyGraph(),
+      anchorIds: ['a'],
+      works: worksMap(
+        { ...work('a'), language: 'zh' },
+        { ...work('b'), language: 'zh' },
+        { ...work('c'), language: 'en' },
+        work('d'),
+      ),
+    };
+    const connections = new Map(['a', 'b', 'c', 'd'].map((id) => [id, 1]));
+    const visible = (excludedLanguages) =>
+      [...visibleIds(graph, { ...NO_FILTERS, excludedLanguages }, connections)].sort();
+    expect(visible(['zh'])).toEqual(['a', 'c', 'd']);
+    expect(visible(['unknown', 'en'])).toEqual(['a', 'b']);
+  });
+
   const graph = {
     ...addWorks(
       emptyGraph(),

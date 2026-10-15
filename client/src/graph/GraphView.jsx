@@ -1006,8 +1006,10 @@ export default function GraphView({
             );
             const warning = warnings.get(node.id);
             const note = notes.get(node.id);
+            const other = node.work.otherTitles?.[0];
             return [
               label,
+              other && escapeHtml(other.title),
               warning &&
                 (warning.kind === 'none'
                   ? 'No references recorded'

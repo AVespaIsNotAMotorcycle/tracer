@@ -100,6 +100,7 @@ describe('normalizeWork', () => {
         abstract_inverted_index: { Despite: [0], growing: [1] },
         cited_by_count: 1217,
         referenced_works: ['https://openalex.org/W1', 'https://openalex.org/W2'],
+        language: 'en',
       }),
     );
 
@@ -129,6 +130,7 @@ describe('normalizeWork', () => {
         { kind: 'landing_page', url: 'https://peerj.com/articles/4375' },
         { kind: 'pdf', url: 'https://peerj.com/articles/4375.pdf' },
       ],
+      language: 'en',
     });
   });
 

@@ -5,6 +5,7 @@
 // Filters decide what is visible; they never remove works from the graph.
 
 import { noProgress } from './progress.js';
+import { languageKey } from './languages.js';
 import { REFERENCE_ONLY, sourceTypeKey } from './sourceTypeKeys.js';
 
 /** @typedef {'citing' | 'cited'} Direction */
@@ -323,12 +324,20 @@ export function inGraphConnectionCounts(works) {
  * @property {number} minConnections
  *   Minimum number of works on the graph that cite it or that it cites (see
  *   inGraphConnectionCounts). 1, the lowest setting, shows every work linked to another.
+ * @property {string[]} [excludedLanguages]  Language keys to hide (see languageKey): codes,
+ *   or 'unknown'. Like types, an exclusion list.
  * @property {string[]} excludedTypes  Source type keys to hide (see sourceTypeKeys.js). An
  *   exclusion list, so types that first appear after expanding a node are shown.
  */
 
 /** @type {Filters} */
-export const NO_FILTERS = { minYear: null, maxYear: null, minConnections: 1, excludedTypes: [] };
+export const NO_FILTERS = {
+  minYear: null,
+  maxYear: null,
+  minConnections: 1,
+  excludedTypes: [],
+  excludedLanguages: [],
+};
 
 /**
  * IDs of works that pass the filters. The anchors and any `alwaysShow` IDs (e.g. the selection)
@@ -345,6 +354,7 @@ export const NO_FILTERS = { minYear: null, maxYear: null, minConnections: 1, exc
 export function visibleIds(graph, filters, connections, alwaysShow = [], years = null) {
   const keep = new Set([...graph.anchorIds, ...alwaysShow].filter(Boolean));
   const excluded = new Set(filters.excludedTypes ?? []);
+  const excludedLanguages = new Set(filters.excludedLanguages ?? []);
   const visible = new Set();
   for (const work of graph.works.values()) {
     const layout = years?.get(work.id);
@@ -353,7 +363,8 @@ export function visibleIds(graph, filters, connections, alwaysShow = [], years =
       (filters.minYear == null || (year != null && year >= filters.minYear)) &&
       (filters.maxYear == null || (year != null && year <= filters.maxYear)) &&
       (connections.get(work.id) ?? 0) >= filters.minConnections &&
-      !excluded.has(sourceTypeKey(work.type));
+      !excluded.has(sourceTypeKey(work.type)) &&
+      !excludedLanguages.has(languageKey(work));
     if (passes || keep.has(work.id)) visible.add(work.id);
   }
   return visible;
@@ -880,9 +891,10 @@ export async function addExpandedWorks(
  * The shape of snapshots this client writes. Bumped when works gain data that older snapshots
  * lack, so the server discards those and the graph is rebuilt (see SNAPSHOT_VERSION in the
  * server's graphService.js, which a test keeps equal). 1 (no `version`): before
- * `referenceProviders`; 2: works list where each citation came from.
+ * `referenceProviders`; 2: works list where each citation came from; 3: works have their
+ * language and other titles.
  */
-export const SNAPSHOT_VERSION = 2;
+export const SNAPSHOT_VERSION = 3;
 
 /**
  * A built graph as plain JSON, for the server to keep as a saved graph's snapshot (so reopening

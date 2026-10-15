@@ -38,7 +38,8 @@ const sourceSchema = new mongoose.Schema(
     records: {
       type: Map,
       of: new mongoose.Schema(
-        { data: mongoose.Schema.Types.Mixed, fetchedAt: Date },
+        // `version`: the shape of `data` (RECORD_VERSION in works/workService.js).
+        { data: mongoose.Schema.Types.Mixed, fetchedAt: Date, version: Number },
         { _id: false },
       ),
       default: {},

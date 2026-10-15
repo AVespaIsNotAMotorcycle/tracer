@@ -84,6 +84,25 @@ describe('normalizeReference', () => {
 });
 
 describe('createCrossrefProvider', () => {
+  it('reads a DOI’s deposited titles and language along with its references', async () => {
+    const { provider } = setup(
+      jsonResponse({
+        message: {
+          title: ['Manchus and Han: <i>ethnic</i>  relations'],
+          'original-title': ['满人与汉人'],
+          language: 'en-GB',
+          reference: [],
+        },
+      }),
+    );
+    expect(await provider.getRecord('10.1234/a')).toEqual({
+      references: [],
+      title: 'Manchus and Han: ethnic relations',
+      originalTitle: '满人与汉人',
+      language: 'en',
+    });
+  });
+
   it('fetches the reference list for a DOI', async () => {
     const { provider, fetch } = setup(
       jsonResponse({ message: { reference: [{ unstructured: 'A source.' }] } }),

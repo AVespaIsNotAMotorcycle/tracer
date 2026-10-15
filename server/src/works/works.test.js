@@ -349,6 +349,23 @@ describe('cited works from deposited reference lists', () => {
     for (const { id } of cited) expect(work.references).toContain(id);
   });
 
+  it('falls back on the language deposited with Crossref, and gives its other titles', async () => {
+    referenceProvider.getRecord = vi.fn(async (doi) => ({
+      references: (deposited[doi] ?? []).map(reference),
+      title: '清代满洲史',
+      originalTitle: null,
+      language: 'zh',
+    }));
+    await api.get('/api/works/W1/cited');
+    const { work } = (await api.get('/api/works/W1')).body;
+    expect(work).toMatchObject({
+      language: 'zh',
+      languageProvider: 'crossref',
+      otherTitles: [{ title: '清代满洲史', kind: 'alternate', script: 'han' }],
+    });
+    expect(referenceProvider.getReferences).not.toHaveBeenCalled();
+  });
+
   it('says which provider has each citation', async () => {
     const [w2, w6, painting] = (await api.get('/api/works/W1/cited')).body.works;
     const { work } = (await api.get('/api/works/W1')).body;
@@ -724,6 +741,32 @@ describe('GET /api/works/:id/match', () => {
     const res = await api.get(`/api/works/${source._id}/match`);
     expect(res.status).toBe(200);
     expect(res.body.match.doi).toBe('10.2307/2942138');
+  });
+});
+
+describe('language and stored record versions', () => {
+  it('gives the language OpenAlex detected', async () => {
+    catalog.set('W60', { ...providerWork('W60'), language: 'fr' });
+    try {
+      const { work } = (await api.get('/api/works/W60')).body;
+      expect(work).toMatchObject({ language: 'fr', languageProvider: 'openalex', otherTitles: [] });
+    } finally {
+      catalog.delete('W60');
+    }
+  });
+
+  it('fetches again a record stored before the current version', async () => {
+    await api.get('/api/works/W1');
+    expect(provider.getWork).toHaveBeenCalledTimes(1);
+    await api.get('/api/works/W1');
+    expect(provider.getWork).toHaveBeenCalledTimes(1);
+
+    await Source.updateOne(
+      { 'externalIds.openalex': 'W1' },
+      { $unset: { 'records.openalex.version': 1 } },
+    );
+    await api.get('/api/works/W1');
+    expect(provider.getWork).toHaveBeenCalledTimes(2);
   });
 });
 

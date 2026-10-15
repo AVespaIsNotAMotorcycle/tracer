@@ -37,6 +37,7 @@
  *   Provider IDs of the works this one cites. Used to draw edges between any two works on
  *   the graph, not only edges to the root.
  * @property {ProviderLink[]} links
+ * @property {string | null} language  ISO 639 code (normalizeLanguage), e.g. "fr".
  */
 
 /**

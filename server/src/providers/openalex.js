@@ -1,5 +1,5 @@
 import { ProviderError } from './errors.js';
-import { normalizeDoi } from './ids.js';
+import { normalizeDoi, normalizeLanguage } from './ids.js';
 
 /** @typedef {import('./types.js').Provider} Provider */
 /** @typedef {import('./types.js').ProviderWork} ProviderWork */
@@ -30,6 +30,7 @@ const SELECT_FIELDS = [
   'abstract_inverted_index',
   'cited_by_count',
   'referenced_works',
+  'language',
 ].join(',');
 
 const OPENALEX_ID_PATTERN = /^(?:https?:\/\/openalex\.org\/)?(W\d+)$/i;
@@ -99,6 +100,8 @@ export function normalizeWork(raw) {
     citedByCount: raw.cited_by_count ?? null,
     referencedIds: (raw.referenced_works ?? []).map(toOpenAlexId).filter(Boolean),
     links,
+    // Detected by OpenAlex from the title and abstract, not deposited.
+    language: normalizeLanguage(raw.language),
   };
 }
 

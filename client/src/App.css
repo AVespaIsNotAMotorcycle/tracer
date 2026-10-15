@@ -696,6 +696,10 @@ button.with-icon {
   color: var(--node-icon-on-note);
 }
 
+.other-title {
+  margin: -0.25rem 0 0.5rem;
+}
+
 .reference-warning {
   margin: 0.5rem 0;
   padding: 0.4rem 0.6rem;
@@ -775,6 +779,15 @@ button.with-icon {
   align-items: center;
   gap: 8px;
   cursor: pointer;
+}
+
+/* No icon column. */
+.languages label {
+  grid-template-columns: auto 1fr auto;
+}
+
+.type-filter + .type-filter {
+  margin-top: 0.75rem;
 }
 
 /* Advanced search: fills the page below the header, over the graph (which stays mounted

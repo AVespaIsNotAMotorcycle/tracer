@@ -356,6 +356,32 @@ describe('App', () => {
     expect(screen.getByRole('complementary', { name: 'Title citer' })).toBeInTheDocument();
   });
 
+  it('shows each work’s language and other titles, and filters by language', async () => {
+    vi.mocked(api.getWork).mockResolvedValue({
+      ...anchor,
+      language: 'zh',
+      languageProvider: 'crossref',
+      otherTitles: [{ title: '满洲与汉', kind: 'original', script: 'han' }],
+    });
+    vi.mocked(api.getCiting).mockImplementation(async (id) =>
+      id === 'anchor' ? [{ ...citer, language: 'en', languageProvider: 'openalex' }] : [],
+    );
+    await buildFromSearch();
+
+    fireEvent.click(within(graph()).getByRole('button', { name: 'Title anchor' }));
+    const details = screen.getByRole('complementary', { name: 'Title anchor' });
+    expect(within(details).getByText(/1971 · Past & Present · Chinese/)).toBeInTheDocument();
+    expect(within(details).getByText('满洲与汉')).toHaveAttribute('lang', 'zh');
+    expect(within(details).getByText('Original title (Chinese characters)')).toBeInTheDocument();
+    expect(within(details).getByText(/Language as deposited with Crossref/)).toBeInTheDocument();
+
+    const languages = screen.getByRole('group', { name: 'Languages' });
+    expect(within(languages).getByRole('checkbox', { name: /Unknown language/ })).toBeChecked();
+    fireEvent.click(within(languages).getByRole('checkbox', { name: /English/ }));
+    expect(within(graph()).queryByRole('button', { name: 'Title citer' })).toBeNull();
+    expect(within(graph()).getByRole('button', { name: 'Title ref' })).toBeInTheDocument();
+  });
+
   it('replaces a work not on OpenAlex with the work the server merged it into', async () => {
     const grey = work('grey', {
       type: 'reference-only',
@@ -1539,7 +1565,13 @@ describe('saved graphs', () => {
     expect(state).toEqual({
       anchors: [{ id: 'anchor', ref: 'Wanchor', title: 'Title anchor' }],
       options: { citingDepth: 1, citedDepth: 1, limit: 20, maxNodes: 300 },
-      filters: { minYear: null, maxYear: null, minConnections: 1, excludedTypes: ['article'] },
+      filters: {
+        minYear: null,
+        maxYear: null,
+        minConnections: 1,
+        excludedTypes: ['article'],
+        excludedLanguages: [],
+      },
       view: { axisAngle: 30, pinned: ['ref'] },
       expanded: ['ref'],
       annotations: [

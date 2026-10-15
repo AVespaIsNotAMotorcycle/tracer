@@ -1,5 +1,6 @@
 import { Minus, Plus } from 'lucide-react';
 import { NO_FILTERS } from '../graph/graphModel.js';
+import { languageKey, languageName, UNKNOWN_LANGUAGE } from '../graph/languages.js';
 import { sourceType } from '../graph/sourceTypes.js';
 
 const parseYear = (value) => (value === '' ? null : Number(value));
@@ -12,6 +13,22 @@ function typeCounts(works) {
     counts.set(key, (counts.get(key) ?? 0) + 1);
   }
   return [...counts].sort((a, b) => b[1] - a[1] || a[0].localeCompare(b[0]));
+}
+
+/** Languages on the graph with their counts, most common first, unknown last. */
+function languageCounts(works) {
+  const counts = new Map();
+  for (const work of works.values()) {
+    const key = languageKey(work);
+    counts.set(key, (counts.get(key) ?? 0) + 1);
+  }
+  const unknownLast = (key) => (key === UNKNOWN_LANGUAGE ? 1 : 0);
+  return [...counts].sort(
+    (a, b) =>
+      unknownLast(a[0]) - unknownLast(b[0]) ||
+      b[1] - a[1] ||
+      languageName(a[0]).localeCompare(languageName(b[0])),
+  );
 }
 
 /**
@@ -33,12 +50,13 @@ export default function FiltersPanel({
   const minConnections = Math.min(filters.minConnections, maxConnections);
   const setMinConnections = (value) =>
     onChange({ ...filters, minConnections: Math.max(1, Math.min(maxConnections, value)) });
-  const toggleType = (key) => {
-    const next = new Set(excluded);
+  const toggle = (field, key) => {
+    const next = new Set(filters[field] ?? []);
     if (next.has(key)) next.delete(key);
     else next.add(key);
-    onChange({ ...filters, excludedTypes: [...next] });
+    onChange({ ...filters, [field]: [...next] });
   };
+  const excludedLanguages = new Set(filters.excludedLanguages ?? []);
 
   return (
     <section className="panel" aria-labelledby="filters-heading">
@@ -103,7 +121,7 @@ export default function FiltersPanel({
                   <input
                     type="checkbox"
                     checked={!excluded.has(key)}
-                    onChange={() => toggleType(key)}
+                    onChange={() => toggle('excludedTypes', key)}
                   />
                   <Icon className="icon" aria-hidden="true" />
                   <span>{label}</span>
@@ -112,6 +130,24 @@ export default function FiltersPanel({
               </li>
             );
           })}
+        </ul>
+      </fieldset>
+      <fieldset className="type-filter">
+        <legend>Languages</legend>
+        <ul className="source-types languages">
+          {languageCounts(works).map(([key, count]) => (
+            <li key={key}>
+              <label>
+                <input
+                  type="checkbox"
+                  checked={!excludedLanguages.has(key)}
+                  onChange={() => toggle('excludedLanguages', key)}
+                />
+                <span>{languageName(key)}</span>
+                <span className="muted">{count}</span>
+              </label>
+            </li>
+          ))}
         </ul>
       </fieldset>
       <div className="filter-footer">

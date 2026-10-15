@@ -20,6 +20,7 @@ Each entry lists:
 - **Multiple anchors** (1): a graph built around several works, colored by anchor with shared works split between their colors; 2 anchors free, 6 on Scholar. Saved graphs are version 2 (`anchors`).
 - **Duplicate merging and stable IDs** (2): OpenAlex records sharing a DOI, and grey reference-only nodes Crossref matched to an OpenAlex work, merge into one work when their records agree (`sameWork`), combining their citations. A merged Source redirects (`mergedInto`) wherever its ID is looked up, and saved graphs are rewritten to follow it when opened. Done.
 - **Data provenance and missing-data warnings** (3): each citation lists the providers that have it (`referenceProviders`), shown per link in the details panel, and works whose reference list is empty or suspiciously short for how often they're cited carry a warning badge. Done.
+- **Language metadata** (4): each work's language (OpenAlex's detection, or Crossref's deposit where that fits the title's script better) in the details panel and a language filter, and original-script or original titles where Crossref has them. Stored provider records now carry a `version`, so records from before a new field are fetched again. Done.
 - **Entitlements layer** (groundwork): `can(user, feature)` / `limitFor(user, limit)` in `server/src/entitlements/`, checked by the gated routes and controls, with every tier including everything for now. Billing (Stripe) waits for launch.
 
 ---
@@ -33,13 +34,6 @@ These aren't features, but each one gets harder to add later.
 ---
 
 ## Phase 1: Core model
-
-### 4. Language metadata
-**Tier:** Free · **Size:** S
-
-Add each work's language to the normalized work record. Show it in the details panel, add a language filter to the Filters panel, and show original-script titles next to romanized ones where a provider has both.
-
-**Why here:** advanced search already filters by language, but works on the graph don't carry it. Adding fields to `ProviderWork` is cheap, but Sources cache records for 30 days and snapshots store works as they were built, so the sooner the field exists, the sooner stored data has it. Non-English sources (22) depend on it.
 
 ### 5. Citations per year
 **Tier:** Free · **Size:** S

@@ -1,5 +1,5 @@
 import { ProviderError } from './errors.js';
-import { normalizeDoi } from './ids.js';
+import { normalizeDoi, normalizeLanguage } from './ids.js';
 
 /** @typedef {import('./types.js').ProviderReference} ProviderReference */
 
@@ -15,6 +15,27 @@ import { normalizeDoi } from './ids.js';
  * @property {string | null} venue   Journal or book series.
  * @property {string | null} url     Where the DOI resolves (the publisher's or JSTOR's page).
  */
+
+/**
+ * What Crossref has on one DOI beyond a search result: the reference list the publisher
+ * deposited, and the work's title, original title (for a translation, or a title in another
+ * script) and language as deposited.
+ *
+ * @typedef {object} CrossrefRecord
+ * @property {ProviderReference[]} references  Empty when none were deposited.
+ * @property {string | null} title
+ * @property {string | null} originalTitle
+ * @property {string | null} language  ISO 639 code (normalizeLanguage).
+ */
+
+/** The first of a list of titles, without the markup some publishers deposit (<i>…</i>). */
+function firstTitle(titles) {
+  const title = titles?.[0]
+    ?.replace(/<[^>]+>/g, '')
+    .replace(/\s+/g, ' ')
+    .trim();
+  return title || null;
+}
 
 // Fields a citation search returns, to keep responses small.
 const SEARCH_FIELDS = 'DOI,title,author,issued,type,container-title,resource';
@@ -142,8 +163,28 @@ export function createCrossrefProvider({
     }
   }
 
+  /**
+   * @param {string} doi
+   * @returns {Promise<CrossrefRecord | null>}  Null when Crossref doesn't know the DOI.
+   */
+  async function getRecord(doi) {
+    const normalized = normalizeDoi(doi);
+    if (!normalized) throw new ProviderError(NAME, `not a DOI: ${doi}`);
+    const data = await enqueue(() => request(`/works/${encodeURIComponent(normalized)}`));
+    if (!data) return null;
+    const message = data.message ?? {};
+    return {
+      references: (message.reference ?? []).map(normalizeReference),
+      title: firstTitle(message.title),
+      originalTitle: firstTitle(message['original-title']),
+      language: normalizeLanguage(message.language),
+    };
+  }
+
   return {
     name: NAME,
+
+    getRecord,
 
     /**
      * The reference list deposited for a DOI, in deposit order. Empty when the publisher
@@ -153,11 +194,7 @@ export function createCrossrefProvider({
      * @returns {Promise<ProviderReference[] | null>}
      */
     async getReferences(doi) {
-      const normalized = normalizeDoi(doi);
-      if (!normalized) throw new ProviderError(NAME, `not a DOI: ${doi}`);
-      const data = await enqueue(() => request(`/works/${encodeURIComponent(normalized)}`));
-      if (!data) return null;
-      return (data.message?.reference ?? []).map(normalizeReference);
+      return (await getRecord(doi))?.references ?? null;
     },
 
     /**

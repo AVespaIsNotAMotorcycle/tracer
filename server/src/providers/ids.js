@@ -17,3 +17,18 @@ export function normalizeDoi(value) {
     .toLowerCase();
   return DOI_PATTERN.test(bare) ? bare : null;
 }
+
+const LANGUAGE_PATTERN = /^[a-z]{2,3}$/;
+
+/**
+ * Normalize a language tag to its lowercase primary subtag, an ISO 639 code ("zh-CN" → "zh",
+ * "FR" → "fr"), so codes match across providers. Returns null if it isn't one.
+ *
+ * @param {string | null | undefined} value
+ * @returns {string | null}
+ */
+export function normalizeLanguage(value) {
+  if (typeof value !== 'string') return null;
+  const primary = value.trim().toLowerCase().split(/[-_]/)[0];
+  return LANGUAGE_PATTERN.test(primary) ? primary : null;
+}

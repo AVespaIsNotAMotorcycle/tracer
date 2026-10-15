@@ -44,6 +44,8 @@ const savedGraphSchema = new mongoose.Schema(
       maxYear: Number,
       minConnections: Number,
       excludedTypes: [String],
+      // Language codes (or 'unknown') to hide.
+      excludedLanguages: [String],
     },
     // Pinned works (Tracer IDs) are always shown, whatever the filters.
     view: { axisAngle: Number, pinned: [String] },

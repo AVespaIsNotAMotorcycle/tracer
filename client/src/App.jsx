@@ -337,6 +337,7 @@ function GraphPage({ auth }) {
         ...NO_FILTERS,
         ...saved.filters,
         excludedTypes: saved.filters?.excludedTypes ?? [],
+        excludedLanguages: saved.filters?.excludedLanguages ?? [],
       });
       setAxisAngle(saved.view?.axisAngle ?? DEFAULT_AXIS_ANGLE);
       setPinned(new Set(saved.view?.pinned ?? []));

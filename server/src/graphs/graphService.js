@@ -23,9 +23,9 @@ const MAX_NOTE_LENGTH = 10_000;
 export const SNAPSHOT_TTL_MS = 7 * 24 * 60 * 60 * 1000;
 // The oldest snapshot shape still served, as the client numbers them (SNAPSHOT_VERSION in its
 // graphModel.js; one without `version` is 1). Older ones lack data the client now shows (2:
-// where each citation came from), so they're dropped and the graph is rebuilt. Raise it with
-// the client's version when works gain such data.
-export const SNAPSHOT_VERSION = 2;
+// where each citation came from; 3: language and other titles), so they're dropped and the
+// graph is rebuilt. Raise it with the client's version when works gain such data.
+export const SNAPSHOT_VERSION = 3;
 const MAX_SNAPSHOT_WORKS = 20_000;
 // Compressed. MongoDB's documents top out at 16 MB.
 const MAX_SNAPSHOT_BYTES = 12 * 1024 * 1024;
@@ -101,14 +101,18 @@ export function checkState(state, limits = PLANS.free.limits) {
   };
   const minConnections = filters.minConnections ?? 1;
   if (!isInt(minConnections) || minConnections < 0) throw bad('Invalid connections filter');
-  const excludedTypes = filters.excludedTypes ?? [];
-  if (
-    !Array.isArray(excludedTypes) ||
-    excludedTypes.length > 100 ||
-    !excludedTypes.every((t) => typeof t === 'string' && t.length <= 64)
-  ) {
-    throw bad('Invalid type filter');
-  }
+  const keyList = (list, message) => {
+    if (
+      !Array.isArray(list) ||
+      list.length > 100 ||
+      !list.every((key) => typeof key === 'string' && key.length <= 64)
+    ) {
+      throw bad(message);
+    }
+    return list;
+  };
+  const excludedTypes = keyList(filters.excludedTypes ?? [], 'Invalid type filter');
+  const excludedLanguages = keyList(filters.excludedLanguages ?? [], 'Invalid language filter');
   const axisAngle = view.axisAngle ?? null;
   if (axisAngle != null && (typeof axisAngle !== 'number' || axisAngle < 0 || axisAngle > 90)) {
     throw bad('Invalid axis angle');
@@ -140,6 +144,7 @@ export function checkState(state, limits = PLANS.free.limits) {
       maxYear: year(filters.maxYear),
       minConnections,
       excludedTypes,
+      excludedLanguages,
     },
     view: { axisAngle, pinned: [...new Set(pinned)] },
     expanded: [...new Set(expanded)],

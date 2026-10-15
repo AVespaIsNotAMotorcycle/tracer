@@ -11,6 +11,7 @@ import {
 import { citationQuery, doiLinks, matchCitation } from './citationMatch.js';
 import { HttpError } from './errors.js';
 import { canonicalIdMap, mergeSources, sameWork } from './merges.js';
+import { chooseLanguage, otherTitles } from './titles.js';
 import { shortestPath } from './pathSearch.js';
 
 /** @typedef {import('../providers/types.js').Provider} Provider */
@@ -34,6 +35,11 @@ export const DEFAULT_TTLS = {
   archive: 30 * DAY_MS,
   citationMatch: 30 * DAY_MS,
 };
+// The shape of stored provider data, as `version` on each record. A record stored by an
+// earlier version lacks fields toWorks now reads, so it counts as expired and is fetched again
+// when next needed. Bump it when ProviderWork or the Crossref record gains a field.
+// 1 (no version): before language; 2: language, and Crossref's titles.
+export const RECORD_VERSION = 2;
 // Path searches (see findPath) stop starting new levels after this long, well inside Heroku's
 // 30-second request limit; one level takes a few seconds at most.
 const PATH_TIME_MS = 18_000;
@@ -56,6 +62,11 @@ const MAX_ARCHIVE_ITEMS = 5;
  * @property {string | null} abstract
  * @property {number | null} citedByCount
  * @property {string[]} references       Tracer IDs of the works this one cites.
+ * @property {string | null} language  ISO 639 code: as OpenAlex detected it, or as deposited
+ *   with Crossref where that's more plausible (see chooseLanguage).
+ * @property {string | null} languageProvider  Which of those it came from.
+ * @property {import('./titles.js').OtherTitle[]} otherTitles  Its original title, or its title
+ *   in another script, where Crossref has one (see otherTitles).
  * @property {Record<string, string[]>} referenceProviders
  *   For each reference, the providers that have the citation: the provider's own reference
  *   list (openalex), a deposited reference list (crossref), or a citation index
@@ -160,13 +171,14 @@ export function createWorkService({
 
   const recordOf = (source) => source?.records?.[providerName];
   const referencesField = referenceProvider && `records.${referenceProvider.name}`;
-  const referencesOf = (source) =>
+  // The Crossref record: the deposited reference list resolved to Tracer IDs, and the work's
+  // titles and language as deposited.
+  const depositOf = (source) =>
     referenceProvider ? source?.records?.[referenceProvider.name] : null;
   const isReferenceOnly = (source) => Boolean(source?.citation) && !recordOf(source);
-  const isFresh = (source) => {
-    const record = recordOf(source);
-    return Boolean(record) && now() - record.fetchedAt < ttl.work;
-  };
+  const isCurrent = (record, ttlMs) =>
+    Boolean(record) && (record.version ?? 1) >= RECORD_VERSION && now() - record.fetchedAt < ttlMs;
+  const isFresh = (source) => isCurrent(recordOf(source), ttl.work);
 
   /**
    * Stores provider works on their Sources, creating Sources as needed, and creates stub
@@ -179,7 +191,7 @@ export function createWorkService({
     const fetchedAt = now();
 
     const workOps = works.map((work) => {
-      const set = { [recordField]: { data: work, fetchedAt } };
+      const set = { [recordField]: { data: work, fetchedAt, version: RECORD_VERSION } };
       for (const [key, value] of Object.entries(work.externalIds)) {
         set[`externalIds.${key}`] = key === 'doi' ? normalizeDoi(value) : value;
       }
@@ -366,6 +378,9 @@ export function createWorkService({
           citedByCount: null,
           references: [],
           referenceProviders: {},
+          language: null,
+          languageProvider: null,
+          otherTitles: [],
           links: citation.doi ? doiLinks(citation.doi) : [],
           providers: [referenceProvider?.name ?? 'crossref'],
           mergedIds: [],
@@ -374,6 +389,8 @@ export function createWorkService({
       }
       const { data } = recordOf(source);
       const id = String(source._id);
+      const deposited = depositOf(source)?.data;
+      const language = chooseLanguage(data.title, data.language, deposited?.language);
       const all = withMembers(source);
       // Duplicates split a work's citations between them, so their counts add up.
       const counts = all.map((s) => recordOf(s)?.data.citedByCount).filter((n) => n != null);
@@ -396,6 +413,14 @@ export function createWorkService({
         citedByCount: counts.length ? counts.reduce((sum, n) => sum + n, 0) : null,
         references: Object.keys(referenceProviders),
         referenceProviders,
+        language: language.language,
+        languageProvider:
+          language.from === 'deposited'
+            ? referenceProvider.name
+            : language.from === 'detected'
+              ? providerName
+              : null,
+        otherTitles: otherTitles(data.title, deposited),
         links: data.links,
         // The Archive lookup is stored as a record too, but none of the work's data is from it.
         providers: unique(all.flatMap((s) => Object.keys(s.records ?? {}))).filter(
@@ -416,12 +441,18 @@ export function createWorkService({
   async function resolveReferences(source) {
     const doi = source.externalIds?.doi;
     if (!referenceProvider || !doi) return null;
-    const cached = referencesOf(source);
-    if (cached && now() - cached.fetchedAt < ttl.references) return cached.data;
+    const cached = depositOf(source);
+    if (isCurrent(cached, ttl.references)) return cached.data;
 
     let references;
+    let deposited = null;
     try {
-      references = (await referenceProvider.getReferences(doi)) ?? [];
+      if (referenceProvider.getRecord) {
+        deposited = await referenceProvider.getRecord(doi);
+        references = deposited?.references ?? [];
+      } else {
+        references = (await referenceProvider.getReferences(doi)) ?? [];
+      }
     } catch (err) {
       console.error(err);
       return cached?.data ?? null;
@@ -485,10 +516,16 @@ export function createWorkService({
       tracerIds.push(id);
       if (!byDoi) referenceOnly.push(id);
     }
-    const data = { tracerIds, referenceOnly };
+    const data = {
+      tracerIds,
+      referenceOnly,
+      title: deposited?.title ?? null,
+      originalTitle: deposited?.originalTitle ?? null,
+      language: deposited?.language ?? null,
+    };
     await Source.updateOne(
       { _id: source._id },
-      { $set: { [referencesField]: { data, fetchedAt: now() } } },
+      { $set: { [referencesField]: { data, fetchedAt: now(), version: RECORD_VERSION } } },
     );
     return data;
   }

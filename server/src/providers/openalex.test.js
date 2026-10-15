@@ -364,6 +364,28 @@ describe('createOpenAlexProvider', () => {
     });
   });
 
+  describe('getCitationsByYear', () => {
+    it('groups the works citing any of the IDs by year, oldest first', async () => {
+      const { provider, requestedUrl } = setup(
+        jsonResponse({
+          meta: { count: 7 },
+          group_by: [
+            { key: '2024', count: 4 },
+            { key: '1971', count: 2 },
+            { key: 'unknown', count: 1 },
+            { key: '1980', count: 0 },
+          ],
+        }),
+      );
+      expect(await provider.getCitationsByYear(['W1', 'W2'])).toEqual([
+        { year: 1971, count: 2 },
+        { year: 2024, count: 4 },
+      ]);
+      expect(requestedUrl(0).searchParams.get('filter')).toBe('cites:W1|W2');
+      expect(requestedUrl(0).searchParams.get('group_by')).toBe('publication_year');
+    });
+  });
+
   describe('searchWorksAdvanced', () => {
     it('requests one page of the filter, with the total', async () => {
       const { provider, requestedUrl } = setup(

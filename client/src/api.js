@@ -74,6 +74,14 @@ export async function findPath(id, to, { signal } = {}) {
 }
 
 /**
+ * How many works cite the work each year, by their year of publication, oldest first:
+ * [{ year, count }], years with none left out.
+ */
+export async function getCitationsByYear(id, { signal } = {}) {
+  return (await get(`${workPath(id)}/citations-by-year`, { signal })).years;
+}
+
+/**
  * The work's authors Wikidata knows, by index in its `authors`: [{ index, name, wikidata,
  * otherNames: [{ text, language, reading, kind }], links: [{ kind, url }] }], where
  * otherNames are their name in their own script, or a romanization of it.

@@ -21,6 +21,7 @@ Each entry lists:
 - **Duplicate merging and stable IDs** (2): OpenAlex records sharing a DOI, and grey reference-only nodes Crossref matched to an OpenAlex work, merge into one work when their records agree (`sameWork`), combining their citations. A merged Source redirects (`mergedInto`) wherever its ID is looked up, and saved graphs are rewritten to follow it when opened. Done.
 - **Data provenance and missing-data warnings** (3): each citation lists the providers that have it (`referenceProviders`), shown per link in the details panel, and works whose reference list is empty or suspiciously short for how often they're cited carry a warning badge. Done.
 - **Language metadata** (4): each work's language (OpenAlex's detection, or Crossref's deposit where that fits the title's script better) in the details panel and a language filter, and original-script or original titles where Crossref has them. Stored provider records now carry a `version`, so records from before a new field are fetched again. Done.
+- **Citations per year** (5): a column chart in the details panel of how many works cite a work each year, from OpenAlex's citing works grouped by year (every year, unlike `counts_by_year`, which starts in 2012 and missed 1,457 of Thompson's 4,672 citations). Fetched when details open and cached, so the work record didn't change. Done.
 - **Entitlements layer** (groundwork): `can(user, feature)` / `limitFor(user, limit)` in `server/src/entitlements/`, checked by the gated routes and controls, with every tier including everything for now. Billing (Stripe) waits for launch.
 
 ---
@@ -34,14 +35,6 @@ These aren't features, but each one gets harder to add later.
 ---
 
 ## Phase 1: Core model
-
-### 5. Citations per year
-
-**Tier:** Free · **Size:** S
-
-A small chart in the details panel showing how often a work has been cited each year (OpenAlex's `counts_by_year`), to show a work's reception over time.
-
-**Why here:** the same schema reason as 4. Do 4, 5 and 6 together as one change to the work record, so cached data and snapshots only have to catch up once.
 
 ### 6. Color by discipline or topic
 

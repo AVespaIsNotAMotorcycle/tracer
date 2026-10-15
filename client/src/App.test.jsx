@@ -56,6 +56,7 @@ vi.mock('./api.js', async (importOriginal) => ({
   getCited: vi.fn(),
   getArchiveItems: vi.fn(),
   getAuthorNames: vi.fn(),
+  getCitationsByYear: vi.fn(),
   getCitationMatch: vi.fn(),
   getAccount: vi.fn(),
   signUp: vi.fn(),
@@ -107,6 +108,7 @@ beforeEach(() => {
   vi.mocked(api.getCited).mockImplementation(async (id) => (id === 'anchor' ? [ref] : []));
   vi.mocked(api.getArchiveItems).mockResolvedValue([]);
   vi.mocked(api.getAuthorNames).mockResolvedValue([]);
+  vi.mocked(api.getCitationsByYear).mockResolvedValue([]);
   vi.mocked(api.getCitationMatch).mockResolvedValue({ match: null });
 });
 
@@ -447,6 +449,36 @@ describe('App', () => {
     );
     expect(within(details).getByText(/names in other scripts from Wikidata/)).toBeInTheDocument();
     expect(api.getAuthorNames).toHaveBeenCalledWith('anchor', expect.anything());
+  });
+
+  it('charts how often the selected work is cited each year, with a table', async () => {
+    vi.mocked(api.getCitationsByYear).mockResolvedValue([
+      { year: 1973, count: 1 },
+      { year: 1975, count: 3 },
+      { year: 1976, count: 7 },
+    ]);
+    await buildFromSearch();
+    fireEvent.click(within(graph()).getByRole('button', { name: 'Title anchor' }));
+    const details = screen.getByRole('complementary', { name: 'Title anchor' });
+
+    const chart = await within(details).findByRole('img', {
+      name: 'Citations per year, 1973 to 1976: most in 1976 (7 citations).',
+    });
+    // Arrow keys move between years, those with none (1974) included.
+    fireEvent.keyDown(chart, { key: 'ArrowRight' });
+    expect(within(details).getByRole('status')).toHaveTextContent('7 citations 1976');
+    fireEvent.keyDown(chart, { key: 'ArrowLeft' });
+    expect(within(details).getByRole('status')).toHaveTextContent('3 citations 1975');
+    fireEvent.keyDown(chart, { key: 'ArrowLeft' });
+    expect(within(details).getByRole('status')).toHaveTextContent('0 citations 1974');
+
+    const rows = within(details).getAllByRole('row');
+    expect(rows.map((row) => row.textContent)).toEqual([
+      'YearCitations',
+      '19731',
+      '19753',
+      '19767',
+    ]);
   });
 
   it('replaces a work not on OpenAlex with the work the server merged it into', async () => {

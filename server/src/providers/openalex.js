@@ -470,6 +470,26 @@ export function createOpenAlexProvider({
     }));
   }
 
+  /**
+   * How many works cite any of `ids` (one work's records), by year of publication, oldest
+   * first, each citing work counted once. Covers every year, unlike a work's own
+   * counts_by_year, which starts in 2012. One grouped list request (1 credit); citing works
+   * without a year are left out.
+   *
+   * @param {string[]} ids  OpenAlex IDs, at most 100.
+   * @returns {Promise<{ year: number, count: number }[]>}
+   */
+  async function getCitationsByYear(ids) {
+    const data = await request('/works', {
+      filter: `cites:${ids.slice(0, MAX_FILTER_VALUES).join('|')}`,
+      group_by: 'publication_year',
+    });
+    return (data?.group_by ?? [])
+      .map((group) => ({ year: Number(group.key), count: group.count }))
+      .filter((entry) => Number.isInteger(entry.year) && entry.count > 0)
+      .sort((a, b) => a.year - b.year);
+  }
+
   return {
     name: NAME,
     getWork,
@@ -482,5 +502,6 @@ export function createOpenAlexProvider({
     suggest,
     getNeighborIds,
     getCitationCounts,
+    getCitationsByYear,
   };
 }

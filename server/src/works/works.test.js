@@ -80,6 +80,13 @@ function fakeProvider() {
     getCitationCounts: vi.fn(
       async (ids) => new Map(ids.map((id) => [id, catalog.get(id)?.citedByCount ?? 0])),
     ),
+    // Citing works by year: every catalog work is from 1971.
+    getCitationsByYear: vi.fn(async (ids) => {
+      const count = [...catalog.values()].filter((w) =>
+        w.referencedIds.some((id) => ids.includes(id)),
+      ).length;
+      return count ? [{ year: 1971, count }] : [];
+    }),
   };
 }
 
@@ -837,6 +844,30 @@ describe('merging duplicate works', () => {
     );
     expect(ids.size).toBe(3);
     expect(await Source.countDocuments({ mergedInto: { $exists: true } })).toBe(0);
+  });
+});
+
+describe('GET /api/works/:id/citations-by-year', () => {
+  it('counts the works citing it each year, cached for a week', async () => {
+    const res = await api.get('/api/works/W1/citations-by-year');
+    expect(res.status).toBe(200);
+    expect(res.body.years).toEqual([{ year: 1971, count: 2 }]);
+    await api.get('/api/works/W1/citations-by-year');
+    expect(provider.getCitationsByYear).toHaveBeenCalledTimes(1);
+    advance(DEFAULT_TTLS.citing + 1);
+    await api.get('/api/works/W1/citations-by-year');
+    expect(provider.getCitationsByYear).toHaveBeenCalledTimes(2);
+  });
+
+  it('gives the cached years when the provider fails, and the error without any', async () => {
+    vi.spyOn(console, 'error').mockImplementation(() => {});
+    provider.getCitationsByYear.mockRejectedValueOnce(new ProviderError('openalex', 'down'));
+    expect((await api.get('/api/works/W1/citations-by-year')).status).toBe(502);
+    await api.get('/api/works/W1/citations-by-year');
+    advance(DEFAULT_TTLS.citing + 1);
+    provider.getCitationsByYear.mockRejectedValueOnce(new ProviderError('openalex', 'down'));
+    const res = await api.get('/api/works/W1/citations-by-year');
+    expect(res.body.years).toEqual([{ year: 1971, count: 2 }]);
   });
 });
 

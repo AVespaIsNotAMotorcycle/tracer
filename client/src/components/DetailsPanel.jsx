@@ -1,6 +1,6 @@
 import { Minus, Pin, PinOff, Plus, TriangleAlert } from 'lucide-react';
 import { Fragment, useEffect, useState } from 'react';
-import { getArchiveItems, getAuthorNames, getCitationMatch } from '../api.js';
+import { getArchiveItems, getAuthorNames, getCitationMatch, getCitationsByYear } from '../api.js';
 import { NOT_IN_PLAN } from '../auth/entitlements.js';
 import { canExpand } from '../graph/graphModel.js';
 import { langFor, languageName, scriptLabel } from '../graph/languages.js';
@@ -11,6 +11,7 @@ import {
   providerLabel,
 } from '../graph/provenance.js';
 import { sourceType } from '../graph/sourceTypes.js';
+import CitationsByYear from './CitationsByYear.jsx';
 import WorkNote from './WorkNote.jsx';
 
 const LINK_LABELS = {
@@ -455,6 +456,13 @@ export default function DetailsPanel({
     NO_ITEMS,
     expandable && work.authors.length > 0,
   );
+  // Its reception over time: how many works cite it each year.
+  const citationYears = useWorkLookup(
+    getCitationsByYear,
+    work.id,
+    NO_ITEMS,
+    expandable && (work.citedByCount ?? 0) > 0,
+  );
   const authorLinks = authorNames.flatMap((entry) =>
     entry.links.map((link) => ({ ...link, name: entry.name })),
   );
@@ -541,6 +549,7 @@ export default function DetailsPanel({
         )}
       </dl>
       {parts.length > 0 && <p className="muted small">On-graph counts include its chapters.</p>}
+      <CitationsByYear years={citationYears} />
 
       {expandable && (
         <button

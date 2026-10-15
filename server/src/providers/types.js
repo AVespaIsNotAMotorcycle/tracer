@@ -125,6 +125,8 @@
  *   For each work, the provider IDs of the works it cites and is cited by, batched. Used to
  *   search for paths between works without fetching their records.
  * @property {(ids: string[]) => Promise<Map<string, number>>} [getCitationCounts]
+ * @property {(ids: string[]) => Promise<{ year: number, count: number }[]>} [getCitationsByYear]
+ *   How many works cite any of `ids` (one work's records), by year, oldest first.
  */
 
 export {};

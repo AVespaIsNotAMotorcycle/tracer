@@ -31,6 +31,9 @@ const sourceSchema = new mongoose.Schema(
     // (a CrossrefWork), or null for none, and when that was looked up.
     // `mergeChecked`: whether the match was looked up on the provider, to merge into it.
     citationMatch: { data: mongoose.Schema.Types.Mixed, fetchedAt: Date, mergeChecked: Boolean },
+    // How many works cite it each year ({ years: [{ year, count }] }), and when that was
+    // looked up (see getCitationsByYear in workService.js).
+    citationsByYear: { data: mongoose.Schema.Types.Mixed, fetchedAt: Date },
     mergedInto: { type: mongoose.Schema.Types.ObjectId, ref: 'Source' },
     mergedAt: Date,
     // Why: 'doi' (same DOI) or 'citation-match' (a reference-only work Crossref matched).

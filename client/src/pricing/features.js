@@ -167,9 +167,10 @@ export const FEATURE_GROUPS = [
       },
       {
         name: 'Citations per year',
+        note: 'A chart of how often a work has been cited each year, since its first citation.',
         free: true,
         scholar: true,
-        available: false,
+        available: true,
       },
       {
         name: 'Color by discipline or topic',

@@ -834,6 +834,41 @@ export function createWorkService({
     },
 
     /**
+     * How many works cite `id` each year, by their year of publication, oldest first: its
+     * reception over time. Counts works citing any record merged into it once each. Cached on
+     * its Source like citing lists (a week). A failed lookup gives the cached years if there
+     * are any; otherwise the error is thrown. Reference-only works have none: nothing indexes
+     * what cites them.
+     *
+     * @returns {Promise<{ year: number, count: number }[]>}
+     */
+    async getCitationsByYear(id) {
+      if (!provider.getCitationsByYear) return [];
+      const source = await loadSource(id);
+      if (isReferenceOnly(source)) return [];
+      const cached = source.citationsByYear;
+      if (cached?.fetchedAt && now() - cached.fetchedAt < ttl.citing) return cached.data.years;
+      const members = (await mergedMembers([source])).get(String(source._id)) ?? [];
+      const ids = [source, ...members].map((s) => s.externalIds?.[providerName]).filter(Boolean);
+      if (ids.length === 0) return [];
+      let years;
+      try {
+        years = await provider.getCitationsByYear(ids);
+      } catch (err) {
+        if (cached) {
+          console.error(err);
+          return cached.data.years;
+        }
+        throw err;
+      }
+      await Source.updateOne(
+        { _id: source._id },
+        { $set: { citationsByYear: { data: { years }, fetchedAt: now() } } },
+      );
+      return years;
+    },
+
+    /**
      * The work's authors as Wikidata knows them, for those it can be sure of (see
      * matchAuthors): each one's index in the work's `authors`, Wikidata item, their name in
      * other scripts (see otherNames) and links to Wikidata and VIAF. People come from the

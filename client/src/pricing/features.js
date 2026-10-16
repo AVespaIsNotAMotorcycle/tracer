@@ -220,7 +220,7 @@ export const FEATURE_GROUPS = [
         name: 'Reading status and a personal library',
         free: false,
         scholar: true,
-        available: false,
+        available: true,
       },
       {
         name: 'Manual works and citation links',

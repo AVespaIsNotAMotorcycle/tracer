@@ -1867,3 +1867,25 @@ button.danger {
 .chart-table td:first-child {
   text-align: left;
 }
+
+/* A work's reading status in the details panel. */
+.reading-status {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  margin: 6px 0;
+}
+
+/* The library page: a section per reading status. */
+.library-section {
+  margin-bottom: 20px;
+}
+
+.library-section h3 {
+  margin-bottom: 6px;
+}
+
+.library-note {
+  margin: 0;
+  white-space: pre-wrap;
+}

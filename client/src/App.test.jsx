@@ -23,6 +23,8 @@ vi.mock('./graph/GraphView.jsx', () => ({
     coCitedIds,
     notes,
     neighborhoods,
+    statuses,
+    fieldColors,
   }) => (
     <ul aria-label="Graph" data-axis-angle={axisAngle}>
       {[...graph.works.values()]
@@ -36,6 +38,8 @@ vi.mock('./graph/GraphView.jsx', () => ({
               data-co-cited={coCitedIds?.has(work.id) || undefined}
               data-note={notes?.get(work.id)}
               data-near={neighborhoods?.get(work.id)?.join(' ')}
+              data-status={statuses?.get(work.id)}
+              data-field={fieldColors ? String(fieldColors.get(work.id)) : undefined}
             >
               {work.title}
             </button>
@@ -69,6 +73,9 @@ vi.mock('./api.js', async (importOriginal) => ({
   saveGraphSnapshot: vi.fn(),
   renameGraph: vi.fn(),
   deleteGraph: vi.fn(),
+  getReadingStatuses: vi.fn(),
+  setReadingStatus: vi.fn(),
+  getLibrary: vi.fn(),
 }));
 
 const work = (id, { references = [], year = 1971, ...rest } = {}) => ({
@@ -109,6 +116,12 @@ beforeEach(() => {
   vi.mocked(api.getArchiveItems).mockResolvedValue([]);
   vi.mocked(api.getAuthorNames).mockResolvedValue([]);
   vi.mocked(api.getCitationsByYear).mockResolvedValue([]);
+  vi.mocked(api.getReadingStatuses).mockResolvedValue({});
+  vi.mocked(api.setReadingStatus).mockImplementation(async (workId, status) => ({
+    workId,
+    status,
+  }));
+  vi.mocked(api.getLibrary).mockResolvedValue([]);
   vi.mocked(api.getCitationMatch).mockResolvedValue({ match: null });
 });
 
@@ -497,12 +510,23 @@ describe('App', () => {
     const legend = screen.getByRole('region', { name: 'Legend' });
     const scheme = within(legend).getByLabelText('Color scheme');
 
-    // One anchor: by relation until the user picks another scheme.
+    // One anchor: by relation until the user picks another scheme, with no field colors.
     expect(scheme).toHaveValue('relation');
     expect(within(legend).getByText('Citing works')).toBeInTheDocument();
+    for (const node of within(graph()).getAllByRole('button')) {
+      expect(node).not.toHaveAttribute('data-field');
+    }
 
     fireEvent.change(scheme, { target: { value: 'field' } });
     expect(within(legend).getByLabelText('Level')).toHaveValue('subfield');
+    expect(within(graph()).getByRole('button', { name: 'Title anchor' })).toHaveAttribute(
+      'data-field',
+      '0',
+    );
+    expect(within(graph()).getByRole('button', { name: 'Title ref' })).toHaveAttribute(
+      'data-field',
+      'null',
+    );
     expect(within(legend).getByText('Subfield 1')).toBeInTheDocument();
     expect(within(legend).getByText(/No topic on OpenAlex/)).toHaveTextContent('1');
 
@@ -2010,6 +2034,112 @@ describe('auto-save', () => {
     await waitFor(() =>
       expect(screen.getByRole('checkbox', { name: 'Auto-save' })).not.toBeChecked(),
     );
+  });
+});
+
+describe('reading statuses', () => {
+  it('marks a work read, on the graph and in the legend, the same in every graph', async () => {
+    vi.mocked(api.getAccount).mockResolvedValue(signedInAs({ id: 'u1', email: 'h@example.org' }));
+    vi.mocked(api.getReadingStatuses).mockResolvedValue({ ref: 'to-read' });
+    await buildFromSearch();
+    await waitFor(() =>
+      expect(within(graph()).getByRole('button', { name: 'Title ref' })).toHaveAttribute(
+        'data-status',
+        'to-read',
+      ),
+    );
+
+    fireEvent.click(within(graph()).getByRole('button', { name: 'Title anchor' }));
+    const details = screen.getByRole('complementary', { name: 'Title anchor' });
+    fireEvent.change(within(details).getByLabelText(/Reading status/), {
+      target: { value: 'read' },
+    });
+    expect(api.setReadingStatus).toHaveBeenCalledWith('anchor', 'read');
+    expect(within(graph()).getByRole('button', { name: 'Title anchor' })).toHaveAttribute(
+      'data-status',
+      'read',
+    );
+    const legend = screen.getByRole('region', { name: 'Legend' });
+    expect(within(legend).getByText('Read')).toBeInTheDocument();
+    expect(within(legend).getByText('To read')).toBeInTheDocument();
+  });
+
+  it('undoes a change the server refuses', async () => {
+    vi.mocked(api.getAccount).mockResolvedValue(signedInAs({ id: 'u1', email: 'h@example.org' }));
+    vi.mocked(api.setReadingStatus).mockRejectedValue(new Error('Database unavailable'));
+    await buildFromSearch();
+    fireEvent.click(within(graph()).getByRole('button', { name: 'Title anchor' }));
+    const details = screen.getByRole('complementary', { name: 'Title anchor' });
+    fireEvent.change(within(details).getByLabelText(/Reading status/), {
+      target: { value: 'cited' },
+    });
+    expect(await within(details).findByRole('alert')).toHaveTextContent('Database unavailable');
+    expect(within(details).getByLabelText(/Reading status/)).toHaveValue('');
+  });
+
+  it('asks visitors to log in to keep a reading list', async () => {
+    await buildFromSearch();
+    fireEvent.click(within(graph()).getByRole('button', { name: 'Title anchor' }));
+    const details = screen.getByRole('complementary', { name: 'Title anchor' });
+    expect(within(details).getByText(/Log in to keep a reading list/)).toBeInTheDocument();
+    expect(api.getReadingStatuses).not.toHaveBeenCalled();
+  });
+});
+
+describe('library page', () => {
+  beforeEach(() => {
+    window.history.replaceState(null, '', '/library');
+    vi.mocked(api.getAccount).mockResolvedValue(signedInAs({ id: 'u1', email: 'h@example.org' }));
+  });
+
+  const summary = (id, title, doi) => ({
+    id,
+    title,
+    authors: ['E. P. Thompson'],
+    year: 1971,
+    type: 'article',
+    venue: 'Past & Present',
+    externalIds: { doi },
+  });
+
+  it('lists works by reading status, then noted ones, each opening a graph', async () => {
+    vi.mocked(api.getLibrary).mockResolvedValue([
+      {
+        workId: 'w1',
+        status: 'read',
+        work: summary('w1', 'The Moral Economy', '10.1/a'),
+        notes: [],
+      },
+      {
+        workId: 'w2',
+        status: null,
+        work: summary('w2', 'Whigs and Hunters', '10.1/b'),
+        notes: [{ graphId: 'g1', graphName: 'Riots', body: 'On the Black Act' }],
+      },
+    ]);
+    render(<App />);
+    const read = await screen.findByRole('list', { name: 'Read' });
+    expect(within(read).getByRole('link', { name: 'The Moral Economy' })).toHaveAttribute(
+      'href',
+      '/?anchor=10.1%2Fa',
+    );
+    const noted = screen.getByRole('list', { name: 'Noted' });
+    expect(within(noted).getByRole('link', { name: 'Riots' })).toHaveAttribute(
+      'href',
+      '/?graph=g1',
+    );
+    expect(noted).toHaveTextContent('On the Black Act');
+
+    fireEvent.change(within(read).getByLabelText('Reading status of The Moral Economy'), {
+      target: { value: 'cited' },
+    });
+    expect(api.setReadingStatus).toHaveBeenCalledWith('w1', 'cited');
+  });
+
+  it('asks visitors to log in', async () => {
+    vi.mocked(api.getAccount).mockResolvedValue({ user: null });
+    render(<App />);
+    expect(await screen.findByText('Log in to see your library.')).toBeInTheDocument();
   });
 });
 

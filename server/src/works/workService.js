@@ -789,6 +789,44 @@ export function createWorkService({
   }
 
   return {
+    /**
+     * Short descriptions of works already in Tracer's database, by Tracer ID, for listing them
+     * (a user's library): no provider requests, so works never fetched (bare stubs) are left
+     * out, and stale records are used as they are. A merged ID gives the work it's part of.
+     *
+     * @param {string[]} ids
+     * @returns {Promise<Map<string, { id: string, title: string | null, authors: string[],
+     *   year: number | null, type: string | null, venue: string | null,
+     *   externalIds: Record<string, string> }>>}
+     */
+    async getSummaries(ids) {
+      const valid = unique(ids.filter((id) => TRACER_ID_PATTERN.test(id)));
+      if (valid.length === 0) return new Map();
+      const sources = await Source.find({ _id: { $in: valid } })
+        .lean()
+        .exec();
+      const usable = sources.filter((s) => recordOf(s) || isReferenceOnly(s) || s.mergedInto);
+      // One conversion for all; a merged Source comes back as the work it's part of
+      // (redirects are one hop, so its mergedInto is that work's ID).
+      const works = new Map((await toWorks(usable)).map((work) => [work.id, work]));
+      const summaries = new Map();
+      for (const source of usable) {
+        const id = String(source._id);
+        const work = works.get(source.mergedInto ? String(source.mergedInto) : id);
+        if (!work) continue;
+        summaries.set(id, {
+          id: work.id,
+          title: work.title,
+          authors: work.authors.map((author) => author.name),
+          year: work.year,
+          type: work.type,
+          venue: work.venue,
+          externalIds: work.externalIds,
+        });
+      }
+      return summaries;
+    },
+
     /** @returns {Promise<Work>} */
     async getWork(id) {
       const [work] = await toWorks([await loadSource(id)]);

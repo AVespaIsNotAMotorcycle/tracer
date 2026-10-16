@@ -7,6 +7,7 @@ import AdvancedSearch from './components/AdvancedSearch.jsx';
 import DetailsPanel from './components/DetailsPanel.jsx';
 import FiltersPanel from './components/FiltersPanel.jsx';
 import Legend from './components/Legend.jsx';
+import LibraryPage from './components/LibraryPage.jsx';
 import Header from './components/Header.jsx';
 import LoadingProgress from './components/LoadingProgress.jsx';
 import PricingPage from './components/PricingPage.jsx';
@@ -43,6 +44,8 @@ import {
 import { graphLinks, referenceWarnings } from './graph/provenance.js';
 import { connectedComponents } from './graph/lanes.js';
 import { useCitationGraph } from './graph/useCitationGraph.js';
+import { statusOf } from './library/readingStatus.js';
+import { useReadingStatuses } from './library/useReadingStatuses.js';
 import { readUrlState, shareableId, withSavedGraph, writeUrlState } from './urlState.js';
 
 const EMPTY_SET = new Set();
@@ -118,6 +121,7 @@ export default function App() {
   const auth = useAuth();
   if (window.location.pathname === '/profile') return <ProfilePage auth={auth} />;
   if (window.location.pathname === '/pricing') return <PricingPage auth={auth} />;
+  if (window.location.pathname === '/library') return <LibraryPage auth={auth} />;
   return <GraphPage auth={auth} />;
 }
 
@@ -190,6 +194,8 @@ function GraphPage({ auth }) {
   // The anchor chosen to look for a path to, from one work: { fromId, target }.
   const [pathTarget, setPathTarget] = useState(null);
   const [selectedId, setSelectedId] = useState(null);
+  // The signed-in user's reading statuses (their library, the same in every graph).
+  const reading = useReadingStatuses(auth);
   // Works the server merged into another (see foldAliases) are replaced on the graph; pins,
   // notes and the selection move to the work they're now part of. Two notes on one are joined.
   // Adjusted while rendering, when the graph's aliases change, rather than in an effect.
@@ -256,6 +262,16 @@ function GraphPage({ auth }) {
   const connections = useMemo(() => inGraphConnectionCounts(view.works), [view.works]);
   const sizes = useMemo(() => totalCitationCounts(view.works, partsOf), [view.works, partsOf]);
   const years = useMemo(() => layoutYears(view), [view]);
+  // Each work's reading status, for its badge.
+  const graphStatuses = useMemo(() => {
+    const result = new Map();
+    if (reading.statuses.size === 0) return result;
+    for (const work of view.works.values()) {
+      const status = statusOf(reading.statuses, work);
+      if (status) result.set(work.id, status);
+    }
+    return result;
+  }, [reading.statuses, view.works]);
   // Works whose reference lists are probably incomplete (see referenceWarning).
   const warnings = useMemo(() => referenceWarnings(view.works), [view.works]);
   const outgoing = useMemo(() => outgoingCounts(view.works), [view.works]);
@@ -584,7 +600,9 @@ function GraphPage({ auth }) {
       colors: assignFieldColors(fieldColorState.colors, fieldTally),
     });
   }
-  const fieldColors = fieldTally === fieldColorState.counts ? fieldColorState.colors : null;
+  // Only while coloring by field: otherwise there are no counts, and no field colors.
+  const fieldColors =
+    fieldTally && fieldTally === fieldColorState.counts ? fieldColorState.colors : null;
   const workFields = useMemo(
     () => (fieldColors ? workFieldColors(view.works.values(), fieldLevel, fieldColors) : null),
     [fieldColors, view.works, fieldLevel],
@@ -845,6 +863,7 @@ function GraphPage({ auth }) {
             noTopic={fieldLegend.noTopic}
             coCited={coCited.size > 0}
             warnings={warnings.size > 0}
+            statuses={new Set(graphStatuses.values())}
           />
         )}
       </aside>
@@ -890,6 +909,7 @@ function GraphPage({ auth }) {
             pinnedIds={pinned}
             notes={notes}
             warnings={warnings}
+            statuses={graphStatuses}
             coCitedIds={coCited}
             neighborhoods={colorScheme === 'neighborhood' ? neighborhoods : null}
             fieldColors={workFields}
@@ -948,6 +968,12 @@ function GraphPage({ auth }) {
           referenceWarning={warnings.get(selected.id) ?? null}
           graphLinks={selectedLinks}
           onSelectWork={setSelectedId}
+          readingStatus={statusOf(reading.statuses, selected)}
+          onReadingStatusChange={
+            reading.enabled ? (status) => reading.setStatus(selected.id, status) : undefined
+          }
+          readingStatusUnavailable={auth.user ? 'locked' : 'signed-out'}
+          readingStatusError={reading.error}
           pinned={pinned.has(selected.id)}
           onTogglePin={() => togglePin(selected.id)}
           note={notes.get(selected.id) ?? ''}

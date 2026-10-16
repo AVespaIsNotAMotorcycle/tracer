@@ -12,6 +12,7 @@ export const ANONYMOUS = {
     coCitations: true,
     pathSearch: true,
     advancedSearch: true,
+    library: false,
   },
   limits: { depth: 3, perNode: 200, maxNodes: 2000, savedGraphs: 0, anchors: 2 },
 };

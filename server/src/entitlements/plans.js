@@ -21,6 +21,8 @@ const EVERYTHING = {
     pathSearch: true,
     // The advanced search page (GET /api/works/search).
     advancedSearch: true,
+    // Reading statuses and the library page (/api/library). Needs an account.
+    library: true,
   },
   limits: {
     // Build options: depth in each direction, works per node (also the `limit` of the works
@@ -38,7 +40,7 @@ const EVERYTHING = {
 /** @type {Record<PlanName, { features: Record<string, boolean>, limits: Record<string, number> }>} */
 export const PLANS = {
   anonymous: {
-    features: { ...EVERYTHING.features, saveGraphs: false, autoSave: false },
+    features: { ...EVERYTHING.features, saveGraphs: false, autoSave: false, library: false },
     limits: { ...EVERYTHING.limits, savedGraphs: 0 },
   },
   free: EVERYTHING,

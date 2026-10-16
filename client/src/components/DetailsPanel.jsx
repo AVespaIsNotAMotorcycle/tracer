@@ -11,6 +11,8 @@ import {
   providerLabel,
 } from '../graph/provenance.js';
 import { sourceType } from '../graph/sourceTypes.js';
+import { READING_STATUSES } from '../library/readingStatus.js';
+import ReadingStatusIcon from '../library/ReadingStatusIcon.jsx';
 import CitationsByYear from './CitationsByYear.jsx';
 import WorkNote from './WorkNote.jsx';
 
@@ -86,6 +88,9 @@ const doiLink = (work) => work.links.find((link) => link.kind === 'doi');
  *
  * When the work Crossref matches a reference-only work to is on OpenAlex, the server merges
  * them, and `onMerged` gets that work to put in its place.
+ *
+ * `readingStatus` is its status in the user's library, set with `onReadingStatusChange` (absent
+ * when signed out, or without the feature: `readingStatusUnavailable` says which).
  *
  * `referenceWarning` (see referenceWarning) says its references are probably missing.
  * `graphLinks` are its citations on the graph with where each came from (see graphLinks),
@@ -174,6 +179,44 @@ function Authors({ authors, names }) {
         );
       })}
     </p>
+  );
+}
+
+/**
+ * The work's reading status in the user's library (to read, reading, read or cited), the same
+ * in every graph. Without `onChange`, a note why it can't be set: `unavailable` is
+ * 'signed-out' or 'locked' (not in the plan).
+ */
+function ReadingStatus({ status, onChange, unavailable, error }) {
+  if (!onChange) {
+    return (
+      <p className="muted small">
+        {unavailable === 'locked'
+          ? `Reading status: ${NOT_IN_PLAN}.`
+          : 'Log in to keep a reading list: mark works to read, read or cited.'}
+      </p>
+    );
+  }
+  return (
+    <label className="reading-status">
+      <span className="with-icon">
+        <ReadingStatusIcon status={status} />
+        Reading status
+      </span>
+      <select value={status ?? ''} onChange={(event) => onChange(event.target.value || null)}>
+        <option value="">Not in my library</option>
+        {READING_STATUSES.map(({ value, label }) => (
+          <option key={value} value={value}>
+            {label}
+          </option>
+        ))}
+      </select>
+      {error && (
+        <span role="alert" className="error small">
+          Couldn&rsquo;t save the status: {error}
+        </span>
+      )}
+    </label>
   );
 }
 
@@ -434,6 +477,10 @@ export default function DetailsPanel({
   referenceWarning = null,
   graphLinks = [],
   onSelectWork,
+  readingStatus = null,
+  onReadingStatusChange,
+  readingStatusUnavailable = 'signed-out',
+  readingStatusError = null,
   onClose,
   inert = false,
 }) {
@@ -680,6 +727,12 @@ export default function DetailsPanel({
           <span>{pinned ? 'Unpin' : 'Pin: always show'}</span>
         </button>
       )}
+      <ReadingStatus
+        status={readingStatus}
+        onChange={onReadingStatusChange}
+        unavailable={readingStatusUnavailable}
+        error={readingStatusError}
+      />
       {onNoteChange && (
         // Keyed by work, so a draft doesn't carry over to the next work selected.
         <WorkNote key={work.id} note={note} onChange={onNoteChange} signedIn={signedIn} />

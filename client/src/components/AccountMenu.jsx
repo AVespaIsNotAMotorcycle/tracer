@@ -4,8 +4,8 @@ import Modal from './Modal.jsx';
 const MIN_PASSWORD_LENGTH = 8;
 
 /**
- * The header's account controls: "Log in" and "Sign up" when signed out; a link to the user's
- * saved graphs, the account's email and "Log out" when signed in. Logging in and signing up happen in a small dialog.
+ * The header's account controls: "Log in" and "Sign up" when signed out; links to the user's
+ * saved graphs and library, the account's email and "Log out" when signed in. Logging in and signing up happen in a small dialog.
  */
 export default function AccountMenu({ user, onSignUp, onLogIn, onLogOut }) {
   const [mode, setMode] = useState(null); // 'login' | 'signup' | null
@@ -18,6 +18,7 @@ export default function AccountMenu({ user, onSignUp, onLogIn, onLogOut }) {
     return (
       <div className="account">
         <a href="/profile">My graphs</a>
+        <a href="/library">My library</a>
         <span className="muted" title="Signed in">
           {user.email}
         </span>

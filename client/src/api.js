@@ -147,6 +147,26 @@ export async function logOut() {
 // is the graph as built (graphSnapshot), which opening the saved graph returns for a week.
 const graphPath = (id) => `/api/graphs/${encodeURIComponent(id)}`;
 
+// The signed-in user's library: reading statuses (per user, across graphs) and noted works.
+
+/** Every reading status the user has set: { [workId]: 'to-read' | 'reading' | 'read' | 'cited' }. */
+export async function getReadingStatuses() {
+  return (await get('/api/library/statuses')).statuses;
+}
+
+/** Sets a work's reading status; null removes it. Resolves to { workId, status }. */
+export async function setReadingStatus(workId, status) {
+  return send('PUT', `/api/library/${encodeURIComponent(workId)}`, { status });
+}
+
+/**
+ * The library: [{ workId, status, updatedAt, work: { id, title, authors, year, type, venue,
+ * externalIds } | null, notes: [{ graphId, graphName, body, updatedAt }] }], most recent first.
+ */
+export async function getLibrary() {
+  return (await get('/api/library')).entries;
+}
+
 /** Summaries of the user's saved graphs, most recently changed first. */
 export async function listGraphs() {
   return (await get('/api/graphs')).graphs;

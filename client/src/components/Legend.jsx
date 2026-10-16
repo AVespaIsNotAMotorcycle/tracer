@@ -1,5 +1,7 @@
 import { NotebookPen, Pin, TriangleAlert } from 'lucide-react';
 import { COLOR_SCHEMES, FIELD_LEVELS } from '../graph/colorSchemes.js';
+import { READING_STATUSES } from '../library/readingStatus.js';
+import ReadingStatusIcon from '../library/ReadingStatusIcon.jsx';
 
 const short = (text, max = 40) => (text.length > max ? `${text.slice(0, max - 1)}…` : text);
 
@@ -21,6 +23,7 @@ const short = (text, max = 40) => (text.length > max ? `${text.slice(0, max - 1)
  * @param {number} props.noTopic  Works OpenAlex gives no topic.
  * @param {boolean} props.coCited  Whether any works are ringed as co-citations.
  * @param {boolean} props.warnings  Whether any works carry a missing-references badge.
+ * @param {Set<string>} props.statuses  Reading statuses works on the graph have.
  */
 export default function Legend({
   scheme,
@@ -33,6 +36,7 @@ export default function Legend({
   noTopic = 0,
   coCited = false,
   warnings = false,
+  statuses = new Set(),
 }) {
   const level = FIELD_LEVELS.find((entry) => entry.value === fieldLevel) ?? FIELD_LEVELS[1];
   const many = anchorWorks.length > 1;
@@ -144,6 +148,14 @@ export default function Legend({
         </i>{' '}
         Has a note
       </span>
+      {READING_STATUSES.filter(({ value }) => statuses.has(value)).map(({ value, label }) => (
+        <span key={value}>
+          <i className="swatch pinned">
+            <ReadingStatusIcon status={value} className="" />
+          </i>{' '}
+          {label}
+        </span>
+      ))}
       {warnings && (
         <span>
           <i className="swatch warned">

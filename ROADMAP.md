@@ -23,6 +23,7 @@ Each entry lists:
 - **Language metadata** (4): each work's language (OpenAlex's detection, or Crossref's deposit where that fits the title's script better) in the details panel and a language filter, and original-script or original titles where Crossref has them. Stored provider records now carry a `version`, so records from before a new field are fetched again. Done.
 - **Citations per year** (5): a column chart in the details panel of how many works cite a work each year, from OpenAlex's citing works grouped by year (every year, unlike `counts_by_year`, which starts in 2012 and missed 1,457 of Thompson's 4,672 citations). Fetched when details open and cached, so the work record didn't change. Done.
 - **Color by discipline or topic** (6): a "Color scheme" menu (relation to anchor, anchor neighborhood, academic field), the last coloring works by OpenAlex's primary topic at the field, subfield (default) or topic level, the three most common in colors of their own. Done.
+- **Reading status and a personal library** (7): to-read, reading, read and cited, per user (`LibraryEntry`), shown on the graph and in the details, and a library page listing those works and every work noted in a saved graph. Included on every account for now (the roadmap's tier was paid, with notes on one graph free; that waits for billing). Done.
 - **Entitlements layer** (groundwork): `can(user, feature)` / `limitFor(user, limit)` in `server/src/entitlements/`, checked by the gated routes and controls, with every tier including everything for now. Billing (Stripe) waits for launch.
 
 ---
@@ -36,14 +37,6 @@ These aren't features, but each one gets harder to add later.
 ---
 
 ## Phase 1: Core model
-
-### 7. Reading status and a personal library
-
-**Tier:** Paid (free: notes on 1 graph) · **Size:** M
-
-Tag works as to-read, reading, read or cited, and show the status on the graph. Keep a library page listing every work the user has tagged or noted, across all their graphs.
-
-**Why here:** notes currently live on each saved graph. Reading status shouldn't: "I've read this" is true in every graph. Deciding now that some user data lives on a per-user library (a `LibraryEntry` keyed by user and Tracer ID) and some on the graph sets the pattern for manual edits (8), sharing (9) and bibliography import (11). Making that decision after notes have spread across hundreds of saved graphs means a data migration.
 
 ### 8. Manual nodes and edges
 

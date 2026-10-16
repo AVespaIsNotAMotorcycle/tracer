@@ -1,5 +1,14 @@
 import { forceCollide } from 'd3-force';
-import { Pin as PinShape, NotebookPen as NoteShape, TriangleAlert as WarningShape } from 'lucide';
+import {
+  BookCheck as ReadShape,
+  Bookmark as ToReadShape,
+  BookOpen as ReadingShape,
+  NotebookPen as NoteShape,
+  Pin as PinShape,
+  Quote as CitedShape,
+  TriangleAlert as WarningShape,
+} from 'lucide';
+import { statusLabel } from '../library/readingStatus.js';
 import { useEffect, useMemo, useRef, useState } from 'react';
 import ForceGraph2D from 'react-force-graph-2d';
 import { axisGeometry, DEFAULT_AXIS_ANGLE } from './axis.js';
@@ -58,6 +67,22 @@ const warningPath2D = () => {
     warningPath = new Path2D(iconPathData(WarningShape));
   }
   return warningPath;
+};
+
+// Works in the user's library get a badge for their reading status, the same size, on the
+// circle's bottom left edge (see ReadingStatusIcon.jsx for the same icons in the DOM).
+const STATUS_SHAPES = {
+  'to-read': ToReadShape,
+  reading: ReadingShape,
+  read: ReadShape,
+  cited: CitedShape,
+};
+const statusPaths = new Map();
+const statusPath2D = (status) => {
+  if (!STATUS_SHAPES[status] || typeof Path2D === 'undefined') return null;
+  if (!statusPaths.has(status))
+    statusPaths.set(status, new Path2D(iconPathData(STATUS_SHAPES[status])));
+  return statusPaths.get(status);
 };
 
 // Source-type icons are drawn inside circles at least this many screen pixels in radius;
@@ -367,6 +392,7 @@ export default function GraphView({
   pinnedIds = new Set(),
   notes = new Map(),
   warnings = new Map(),
+  statuses = new Map(),
   coCitedIds = new Map(),
   neighborhoods = null,
   fieldColors = null,
@@ -796,6 +822,11 @@ export default function GraphView({
     if (notes.has(node.id)) {
       paintBadge(ctx, node, r, -1, notePath2D(), colors.note, colors.iconOnNote, scale);
     }
+    // Works in the user's library get their reading status on their bottom left.
+    const status = statuses.get(node.id);
+    if (status) {
+      paintBadge(ctx, node, r, -1, statusPath2D(status), colors.pin, colors.iconOnPin, scale, -1);
+    }
     // Works whose references are probably missing get a warning badge on their bottom right.
     if (warnings.has(node.id)) {
       paintBadge(ctx, node, r, 1, warningPath2D(), colors.warning, colors.iconOnWarning, scale, -1);
@@ -1027,8 +1058,10 @@ export default function GraphView({
             const warning = warnings.get(node.id);
             const note = notes.get(node.id);
             const other = node.work.otherTitles?.[0];
+            const status = statusLabel(statuses.get(node.id));
             return [
               label,
+              status && escapeHtml(status),
               other && escapeHtml(other.title),
               warning &&
                 (warning.kind === 'none'

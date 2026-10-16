@@ -24,6 +24,7 @@ const short = (text, max = 40) => (text.length > max ? `${text.slice(0, max - 1)
  * @param {boolean} props.coCited  Whether any works are ringed as co-citations.
  * @param {boolean} props.warnings  Whether any works carry a missing-references badge.
  * @param {Set<string>} props.statuses  Reading statuses works on the graph have.
+ * @param {boolean} props.manual  Whether any works on the graph were added by the user.
  */
 export default function Legend({
   scheme,
@@ -37,6 +38,7 @@ export default function Legend({
   coCited = false,
   warnings = false,
   statuses = new Set(),
+  manual = false,
 }) {
   const level = FIELD_LEVELS.find((entry) => entry.value === fieldLevel) ?? FIELD_LEVELS[1];
   const many = anchorWorks.length > 1;
@@ -131,6 +133,11 @@ export default function Legend({
       <span>
         <i className="swatch expanded" /> Expanded
       </span>
+      {manual && (
+        <span>
+          <i className="swatch manual" /> Added by you (only you see it)
+        </span>
+      )}
       {coCited && (
         <span>
           <i className="swatch co-cited" /> Co-cited with {many ? 'an anchor' : 'the anchor'}

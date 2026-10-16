@@ -110,7 +110,8 @@ function LibraryItem({ entry, onStatusChange }) {
     : null;
   return (
     <li>
-      {work ? (
+      {/* A work the user added by hand can't anchor a graph: no database has it. */}
+      {work && !work.manual ? (
         <a className="graph-name" href={`/?anchor=${encodeURIComponent(shareableId(work))}`}>
           {title}
         </a>
@@ -118,6 +119,7 @@ function LibraryItem({ entry, onStatusChange }) {
         <span className="graph-name">{title}</span>
       )}
       {byline && <span className="muted small">{byline}</span>}
+      {work?.manual && <span className="muted small">Added by you</span>}
       {notes.map((note) => (
         <p key={note.graphId} className="library-note">
           <span className="muted small">

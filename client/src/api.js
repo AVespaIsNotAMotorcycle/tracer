@@ -167,6 +167,31 @@ export async function getLibrary() {
   return (await get('/api/library')).entries;
 }
 
+// Works and citations the user added by hand, visible only to them.
+
+/** { works, links: [{ id, citingId, citedId }], linkedWorks }: everything added by hand. */
+export async function getManual() {
+  return get('/api/manual');
+}
+
+/** Adds a work no database has: { title, authors: string[], year, type, venue?, doi? }. */
+export async function createManualWork(fields) {
+  return (await post('/api/manual/works', fields)).work;
+}
+
+export async function deleteManualWork(id) {
+  await send('DELETE', `/api/manual/works/${encodeURIComponent(id)}`);
+}
+
+/** Records that `citingId` cites `citedId`. Resolves to the link { id, citingId, citedId }. */
+export async function addManualLink(citingId, citedId) {
+  return (await post('/api/manual/links', { citingId, citedId })).link;
+}
+
+export async function removeManualLink(id) {
+  await send('DELETE', `/api/manual/links/${encodeURIComponent(id)}`);
+}
+
 /** Summaries of the user's saved graphs, most recently changed first. */
 export async function listGraphs() {
   return (await get('/api/graphs')).graphs;

@@ -24,6 +24,7 @@ Each entry lists:
 - **Citations per year** (5): a column chart in the details panel of how many works cite a work each year, from OpenAlex's citing works grouped by year (every year, unlike `counts_by_year`, which starts in 2012 and missed 1,457 of Thompson's 4,672 citations). Fetched when details open and cached, so the work record didn't change. Done.
 - **Color by discipline or topic** (6): a "Color scheme" menu (relation to anchor, anchor neighborhood, academic field), the last coloring works by OpenAlex's primary topic at the field, subfield (default) or topic level, the three most common in colors of their own. Done.
 - **Reading status and a personal library** (7): to-read, reading, read and cited, per user (`LibraryEntry`), shown on the graph and in the details, and a library page listing those works and every work noted in a saved graph. Included on every account for now (the roadmap's tier was paid, with notes on one graph free; that waits for billing). Done.
+- **Manual nodes and edges** (8): citations the databases missed and works no database has, per user (`ManualWork`, `ManualLink`, `/api/manual`), laid over the graph (`applyManual`) so every count and drawing includes them, marked as the user's (provider `manual`, dashed outline). Path search still uses OpenAlex's links only. Done.
 - **Entitlements layer** (groundwork): `can(user, feature)` / `limitFor(user, limit)` in `server/src/entitlements/`, checked by the gated routes and controls, with every tier including everything for now. Billing (Stripe) waits for launch.
 
 ---
@@ -37,14 +38,6 @@ These aren't features, but each one gets harder to add later.
 ---
 
 ## Phase 1: Core model
-
-### 8. Manual nodes and edges
-
-**Tier:** Paid · **Size:** L
-
-Let users add a citation link the databases missed ("I read this footnote"), or a work no database has, marked as manual and visible only to them (and later to their collaborators).
-
-**Why here:** this is user-owned data mixed into provider data, so it depends on the ownership pattern from 7 and the provenance model from 3 (a manual link is just another source, `manual`). Every graph computation (edges, counts, co-citation, path search, lanes) has to include the overlay. The more of those computations exist, the more places need changing.
 
 ### 9. Sharing and permissions
 

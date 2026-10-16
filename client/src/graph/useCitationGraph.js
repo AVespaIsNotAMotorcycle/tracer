@@ -303,14 +303,22 @@ export function useCitationGraph(api = defaultApi) {
    * Looks for works co-cited with an anchor (see findCoCitations), then shows those at least
    * `minCiters` citing works cite (see applyCoCitations). `targets` are the anchor and its
    * chapters. Resolves to the search's results (every count of 2 or more), for changing the
-   * minimum later, or null if it failed or the anchors changed meanwhile.
+   * minimum later, or null if it failed or the anchors changed meanwhile. `from` is the graph
+   * to find the citers on, if not the one held here: with the user's manual citations laid
+   * over it (see manualOverlay.js), so a work they recorded as citing the anchor counts.
    */
   const findCoCitations = useCallback(
-    async (targets, { limit, maxNodes, minCiters, keep }) => {
+    async (targets, { limit, maxNodes, minCiters, keep, from }) => {
       const anchorIds = graphRef.current.anchorIds;
       const progress = track('cocite', 'Finding co-citations', undefined, 3);
       try {
-        const result = await findCoCitationsIn(graphRef.current, targets, { limit }, api, progress);
+        const result = await findCoCitationsIn(
+          from ?? graphRef.current,
+          targets,
+          { limit },
+          api,
+          progress,
+        );
         if (!sameAnchors(graphRef.current.anchorIds, anchorIds)) return null;
         setGraph((latest) =>
           sameAnchors(latest.anchorIds, anchorIds)

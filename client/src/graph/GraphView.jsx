@@ -774,7 +774,13 @@ export default function GraphView({
     }
     ctx.lineWidth = 1 / scale;
     ctx.strokeStyle = colors.outline;
+    // Works the user added by hand get a dashed outline (see manualOverlay.js).
+    if (node.work.manual) {
+      ctx.lineWidth = 2 / scale;
+      ctx.setLineDash([3 / scale, 2 / scale]);
+    }
     ctx.stroke();
+    ctx.setLineDash([]);
     if (isSelected) {
       ctx.lineWidth = 3 / scale;
       ctx.strokeStyle = colors.selected;
@@ -1061,6 +1067,7 @@ export default function GraphView({
             const status = statusLabel(statuses.get(node.id));
             return [
               label,
+              node.work.manual && 'Added by you',
               status && escapeHtml(status),
               other && escapeHtml(other.title),
               warning &&

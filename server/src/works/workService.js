@@ -766,6 +766,26 @@ export function createWorkService({
     return work;
   }
 
+  /**
+   * Works already in Tracer's database, by Tracer ID, in order (see getStoredWorks).
+   *
+   * @param {string[]} ids
+   * @returns {Promise<Work[]>}
+   */
+  async function storedWorks(ids) {
+    const valid = unique(ids.filter((id) => TRACER_ID_PATTERN.test(id)));
+    if (valid.length === 0) return [];
+    const sources = await Source.find({ _id: { $in: valid } })
+      .lean()
+      .exec();
+    const byId = new Map(sources.map((s) => [String(s._id), s]));
+    return toWorks(
+      valid
+        .map((id) => byId.get(id))
+        .filter((s) => s && (recordOf(s) || isReferenceOnly(s) || s.mergedInto)),
+    );
+  }
+
   /** Returns cached provider IDs for `key`, or runs `fetchWorks`, saves, and caches them. */
   async function cachedList(key, ttlMs, fetchWorks) {
     const entry = await CacheEntry.findOne({ key, expiresAt: { $gt: now() } })
@@ -790,9 +810,18 @@ export function createWorkService({
 
   return {
     /**
-     * Short descriptions of works already in Tracer's database, by Tracer ID, for listing them
-     * (a user's library): no provider requests, so works never fetched (bare stubs) are left
-     * out, and stale records are used as they are. A merged ID gives the work it's part of.
+     * Works already in Tracer's database, by Tracer ID, in order: no provider requests, so
+     * works never fetched (bare stubs) are left out, and stale records are used as they are.
+     * A merged ID gives the work it's part of (once).
+     *
+     * @param {string[]} ids
+     * @returns {Promise<Work[]>}
+     */
+    getStoredWorks: storedWorks,
+
+    /**
+     * Short descriptions of works already in Tracer's database (see getStoredWorks), by the ID
+     * asked for, for listing them (a user's library).
      *
      * @param {string[]} ids
      * @returns {Promise<Map<string, { id: string, title: string | null, authors: string[],
@@ -802,17 +831,16 @@ export function createWorkService({
     async getSummaries(ids) {
       const valid = unique(ids.filter((id) => TRACER_ID_PATTERN.test(id)));
       if (valid.length === 0) return new Map();
-      const sources = await Source.find({ _id: { $in: valid } })
+      const sources = await Source.find({ _id: { $in: valid } }, { mergedInto: 1 })
         .lean()
         .exec();
-      const usable = sources.filter((s) => recordOf(s) || isReferenceOnly(s) || s.mergedInto);
-      // One conversion for all; a merged Source comes back as the work it's part of
-      // (redirects are one hop, so its mergedInto is that work's ID).
-      const works = new Map((await toWorks(usable)).map((work) => [work.id, work]));
+      const canonical = new Map(
+        sources.map((s) => [String(s._id), s.mergedInto ? String(s.mergedInto) : String(s._id)]),
+      );
+      const works = new Map((await storedWorks(valid)).map((work) => [work.id, work]));
       const summaries = new Map();
-      for (const source of usable) {
-        const id = String(source._id);
-        const work = works.get(source.mergedInto ? String(source.mergedInto) : id);
+      for (const id of valid) {
+        const work = works.get(canonical.get(id));
         if (!work) continue;
         summaries.set(id, {
           id: work.id,

@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
-import { getSavedGraph, saveGraph, saveGraphSnapshot, updateGraph } from './api.js';
+import { getSavedGraph, getWork, saveGraph, saveGraphSnapshot, updateGraph } from './api.js';
 import './App.css';
 import { clampOptions } from './auth/entitlements.js';
 import { useAuth } from './auth/useAuth.js';
@@ -45,6 +45,8 @@ import { graphLinks, referenceWarnings } from './graph/provenance.js';
 import { connectedComponents } from './graph/lanes.js';
 import { useCitationGraph } from './graph/useCitationGraph.js';
 import { statusOf } from './library/readingStatus.js';
+import { applyManual, manualLinksOf } from './graph/manualOverlay.js';
+import { useManualEdits } from './manual/useManualEdits.js';
 import { useReadingStatuses } from './library/useReadingStatuses.js';
 import { readUrlState, shareableId, withSavedGraph, writeUrlState } from './urlState.js';
 
@@ -196,6 +198,8 @@ function GraphPage({ auth }) {
   const [selectedId, setSelectedId] = useState(null);
   // The signed-in user's reading statuses (their library, the same in every graph).
   const reading = useReadingStatuses(auth);
+  // Works and citations the user added by hand, laid over the graph (see manualOverlay.js).
+  const manualEdits = useManualEdits(auth);
   // Works the server merged into another (see foldAliases) are replaced on the graph; pins,
   // notes and the selection move to the work they're now part of. Two notes on one are joined.
   // Adjusted while rendering, when the graph's aliases change, rather than in an effect.
@@ -255,7 +259,10 @@ function GraphPage({ auth }) {
 
   // What the graph shows: each book's chapters folded into the book (see foldBookParts).
   // Everything drawn or filtered works from this view; `graph` keeps every work.
-  const { graph: view, partsOf, bookOf } = useMemo(() => foldBookParts(graph), [graph]);
+  // The graph with what the user added by hand laid over it: what's shown and counted, while
+  // `graph` stays the providers' own, for builds and expansions.
+  const shown = useMemo(() => applyManual(graph, manualEdits.manual), [graph, manualEdits.manual]);
+  const { graph: view, partsOf, bookOf } = useMemo(() => foldBookParts(shown), [shown]);
   // A selected chapter whose book has since arrived is shown as the book.
   const shownId = selectedId ? (bookOf.get(selectedId) ?? selectedId) : null;
   const counts = useMemo(() => inGraphCitationCounts(view.works), [view.works]);
@@ -281,12 +288,12 @@ function GraphPage({ auth }) {
   );
   // Per-chapter counts for a book's details, from the unfolded graph.
   const partCounts = useMemo(
-    () => (partsOf.size ? inGraphCitationCounts(graph.works) : null),
-    [graph.works, partsOf],
+    () => (partsOf.size ? inGraphCitationCounts(shown.works) : null),
+    [shown.works, partsOf],
   );
   const partOutgoing = useMemo(
-    () => (partsOf.size ? outgoingCounts(graph.works) : null),
-    [graph.works, partsOf],
+    () => (partsOf.size ? outgoingCounts(shown.works) : null),
+    [shown.works, partsOf],
   );
   // The links slider's upper end: the most links of any work but the anchor, which is always
   // shown and linked to nearly everything, so counting it would leave most of the range empty.
@@ -507,7 +514,7 @@ function GraphPage({ auth }) {
     () => [coAnchorId, ...(partsOf.get(coAnchorId) ?? []).map((part) => part.id)],
     [coAnchorId, partsOf],
   );
-  const citerCount = useMemo(() => coCiters(graph, anchorTargets).length, [graph, anchorTargets]);
+  const citerCount = useMemo(() => coCiters(shown, anchorTargets).length, [shown, anchorTargets]);
   const maxCoCiters = Math.max(2, citerCount);
   const minCoCiters = Math.min(
     maxCoCiters,
@@ -542,6 +549,7 @@ function GraphPage({ auth }) {
       maxNodes: (graphOptions ?? options).maxNodes,
       minCiters,
       keep: pinned,
+      from: shown,
     });
     setFindingCoCitations(false);
     if (!result) return;
@@ -623,6 +631,33 @@ function GraphPage({ auth }) {
       noTopic: values.filter((value) => value == null).length,
     };
   }, [workFields, fieldColors, fieldTally]);
+
+  // Records a citation the databases missed, from the details of `fromId` (see AddCitation):
+  // to a work on the graph, one looked up by DOI or OpenAlex ID, or a new work the user
+  // describes. Resolves to whether it was saved.
+  const handleAddCitation = async (fromId, { direction, target }) => {
+    let other;
+    if (target.kind === 'graph') {
+      other = shown.works.get(target.id);
+    } else if (target.kind === 'id') {
+      try {
+        other = await getWork(target.value);
+      } catch {
+        other = null;
+      }
+      if (!other) {
+        manualEdits.reportError(`No work found for ${target.value}`);
+        return false;
+      }
+    } else {
+      other = await manualEdits.createWork(target.fields);
+    }
+    if (!other) return false;
+    if (other.id === fromId) return false;
+    const [citingId, citedId] = direction === 'cites' ? [fromId, other.id] : [other.id, fromId];
+    const link = await manualEdits.addLink(citingId, citedId, [shown.works.get(fromId), other]);
+    return Boolean(link);
+  };
 
   // Looks for the shortest path from `fromId` to the nearest of `targetIds` (anchors).
   const handleFindPath = async (fromId, targetIds) => {
@@ -864,6 +899,7 @@ function GraphPage({ auth }) {
             coCited={coCited.size > 0}
             warnings={warnings.size > 0}
             statuses={new Set(graphStatuses.values())}
+            manual={[...view.works.values()].some((work) => work.manual)}
           />
         )}
       </aside>
@@ -933,7 +969,7 @@ function GraphPage({ auth }) {
       {selected && (
         <DetailsPanel
           work={selected}
-          relation={graph.relations.get(selected.id)}
+          relation={view.relations.get(selected.id)}
           citedByOnGraph={counts.get(selected.id) ?? 0}
           yearInfo={years.get(selected.id)}
           citesOnGraph={outgoing.get(selected.id) ?? 0}
@@ -968,6 +1004,27 @@ function GraphPage({ auth }) {
           referenceWarning={warnings.get(selected.id) ?? null}
           graphLinks={selectedLinks}
           onSelectWork={setSelectedId}
+          onAddCitation={
+            manualEdits.enabled ? (request) => handleAddCitation(selected.id, request) : undefined
+          }
+          addCitationError={manualEdits.error}
+          graphWorks={[...view.works.values()].filter((work) => work.id !== selected.id)}
+          manualLinks={manualLinksOf(manualEdits.manual, selected.id).map(
+            ({ link, otherId, direction }) => ({
+              link,
+              direction,
+              other: view.works.get(otherId) ?? null,
+            }),
+          )}
+          onRemoveManualLink={manualEdits.enabled ? manualEdits.removeLink : undefined}
+          onDeleteManualWork={
+            selected.manual && manualEdits.enabled
+              ? () => {
+                  setSelectedId(null);
+                  manualEdits.deleteWork(selected.id);
+                }
+              : undefined
+          }
           readingStatus={statusOf(reading.statuses, selected)}
           onReadingStatusChange={
             reading.enabled ? (status) => reading.setStatus(selected.id, status) : undefined

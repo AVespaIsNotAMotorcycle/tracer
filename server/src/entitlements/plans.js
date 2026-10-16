@@ -23,6 +23,8 @@ const EVERYTHING = {
     advancedSearch: true,
     // Reading statuses and the library page (/api/library). Needs an account.
     library: true,
+    // Works and citations added by hand (/api/manual). Needs an account.
+    manualEdits: true,
   },
   limits: {
     // Build options: depth in each direction, works per node (also the `limit` of the works
@@ -40,7 +42,13 @@ const EVERYTHING = {
 /** @type {Record<PlanName, { features: Record<string, boolean>, limits: Record<string, number> }>} */
 export const PLANS = {
   anonymous: {
-    features: { ...EVERYTHING.features, saveGraphs: false, autoSave: false, library: false },
+    features: {
+      ...EVERYTHING.features,
+      saveGraphs: false,
+      autoSave: false,
+      library: false,
+      manualEdits: false,
+    },
     limits: { ...EVERYTHING.limits, savedGraphs: 0 },
   },
   free: EVERYTHING,

@@ -76,6 +76,11 @@ vi.mock('./api.js', async (importOriginal) => ({
   getReadingStatuses: vi.fn(),
   setReadingStatus: vi.fn(),
   getLibrary: vi.fn(),
+  getManual: vi.fn(),
+  createManualWork: vi.fn(),
+  deleteManualWork: vi.fn(),
+  addManualLink: vi.fn(),
+  removeManualLink: vi.fn(),
 }));
 
 const work = (id, { references = [], year = 1971, ...rest } = {}) => ({
@@ -122,6 +127,22 @@ beforeEach(() => {
     status,
   }));
   vi.mocked(api.getLibrary).mockResolvedValue([]);
+  vi.mocked(api.getManual).mockResolvedValue({ works: [], links: [], linkedWorks: [] });
+  vi.mocked(api.addManualLink).mockImplementation(async (citingId, citedId) => ({
+    id: `link-${citingId}-${citedId}`,
+    citingId,
+    citedId,
+  }));
+  vi.mocked(api.removeManualLink).mockResolvedValue();
+  vi.mocked(api.createManualWork).mockImplementation(async (fields) => ({
+    ...work('pamphlet', {
+      ...fields,
+      authors: fields.authors.map((name) => ({ name, orcid: null })),
+    }),
+    providers: ['manual'],
+    manual: true,
+    links: [],
+  }));
   vi.mocked(api.getCitationMatch).mockResolvedValue({ match: null });
 });
 
@@ -2083,6 +2104,77 @@ describe('reading statuses', () => {
     const details = screen.getByRole('complementary', { name: 'Title anchor' });
     expect(within(details).getByText(/Log in to keep a reading list/)).toBeInTheDocument();
     expect(api.getReadingStatuses).not.toHaveBeenCalled();
+  });
+});
+
+describe('citations added by hand', () => {
+  const signIn = () =>
+    vi.mocked(api.getAccount).mockResolvedValue(signedInAs({ id: 'u1', email: 'h@example.org' }));
+
+  it('records a citation between works on the graph, shown as the user’s', async () => {
+    signIn();
+    await buildFromSearch();
+    fireEvent.click(within(graph()).getByRole('button', { name: 'Title ref' }));
+    let details = screen.getByRole('complementary', { name: 'Title ref' });
+    fireEvent.click(
+      within(details).getByRole('button', { name: 'Add a citation the databases missed' }),
+    );
+    fireEvent.change(within(details).getByLabelText('Title'), { target: { value: 'citer' } });
+    fireEvent.click(within(details).getByRole('button', { name: /Title citer/ }));
+
+    expect(await within(details).findByRole('status')).toHaveTextContent(
+      'Added: Title ref cites “Title citer”',
+    );
+    expect(api.addManualLink).toHaveBeenCalledWith('ref', 'citer');
+    details = screen.getByRole('complementary', { name: 'Title ref' });
+    const added = within(details).getByRole('list', { name: 'Citations you added' });
+    expect(added).toHaveTextContent('Cites Title citer');
+
+    fireEvent.click(within(added).getByRole('button', { name: 'Remove: cites Title citer' }));
+    await waitFor(() => expect(api.removeManualLink).toHaveBeenCalledWith('link-ref-citer'));
+  });
+
+  it('adds a work no database has, which joins the graph marked as the user’s', async () => {
+    signIn();
+    await buildFromSearch();
+    fireEvent.click(within(graph()).getByRole('button', { name: 'Title anchor' }));
+    const details = screen.getByRole('complementary', { name: 'Title anchor' });
+    fireEvent.click(
+      within(details).getByRole('button', { name: 'Add a citation the databases missed' }),
+    );
+    fireEvent.click(within(details).getByRole('radio', { name: 'A work no database has' }));
+    fireEvent.change(within(details).getByLabelText('Title'), {
+      target: { value: 'An Address to the Journeymen Weavers' },
+    });
+    fireEvent.change(within(details).getByLabelText(/Authors/), {
+      target: { value: 'Anonymous; A. Weaver' },
+    });
+    fireEvent.change(within(details).getByLabelText('Year'), { target: { value: '1793' } });
+    fireEvent.click(within(details).getByRole('button', { name: 'Add' }));
+
+    expect(
+      await within(graph()).findByRole('button', { name: 'An Address to the Journeymen Weavers' }),
+    ).toBeInTheDocument();
+    expect(api.createManualWork).toHaveBeenCalledWith({
+      title: 'An Address to the Journeymen Weavers',
+      authors: ['Anonymous', 'A. Weaver'],
+      year: 1793,
+      type: 'other',
+    });
+    expect(api.addManualLink).toHaveBeenCalledWith('anchor', 'pamphlet');
+    expect(
+      within(screen.getByRole('region', { name: 'Legend' })).getByText(/Added by you/),
+    ).toBeInTheDocument();
+  });
+
+  it('isn’t offered to visitors who aren’t signed in', async () => {
+    await buildFromSearch();
+    fireEvent.click(within(graph()).getByRole('button', { name: 'Title anchor' }));
+    const details = screen.getByRole('complementary', { name: 'Title anchor' });
+    expect(
+      within(details).queryByRole('button', { name: 'Add a citation the databases missed' }),
+    ).toBeNull();
+    expect(api.getManual).not.toHaveBeenCalled();
   });
 });
 

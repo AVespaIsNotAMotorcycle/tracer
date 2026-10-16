@@ -7,6 +7,8 @@ import { createGraphService } from './graphs/graphService.js';
 import { createGraphsRouter } from './graphs/routes.js';
 import { createLibraryService } from './library/libraryService.js';
 import { createLibraryRouter } from './library/routes.js';
+import { createManualService } from './manual/manualService.js';
+import { createManualRouter } from './manual/routes.js';
 import { createWorksRouter } from './works/routes.js';
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
@@ -22,6 +24,7 @@ const clientDist = path.resolve(__dirname, '../../client/dist');
  * @param {object} [deps.authOptions]  Passed to createAuthRouter (e.g. secureCookies).
  * @param {ReturnType<typeof import('./graphs/graphService.js').createGraphService>} [deps.graphService]
  * @param {ReturnType<typeof import('./library/libraryService.js').createLibraryService>} [deps.libraryService]
+ * @param {ReturnType<typeof import('./manual/manualService.js').createManualService>} [deps.manualService]
  */
 export function createApp({
   workService,
@@ -29,6 +32,7 @@ export function createApp({
   authOptions,
   graphService,
   libraryService,
+  manualService,
 } = {}) {
   const app = express();
   // Heroku's router sits in front: trust its X-Forwarded-* headers for req.ip and HTTPS.
@@ -49,6 +53,12 @@ export function createApp({
 
   if (workService) app.use('/api/works', createWorksRouter(workService, authService));
   if (authService) app.use('/api/auth', createAuthRouter(authService, authOptions));
+  if (authService && (manualService || workService)) {
+    app.use(
+      '/api/manual',
+      createManualRouter(manualService ?? createManualService({ workService }), authService),
+    );
+  }
   if (authService && (libraryService || workService)) {
     app.use(
       '/api/library',

@@ -682,6 +682,10 @@ button.with-icon {
   border: 1px solid var(--node-outline);
 }
 
+.swatch.manual {
+  border: 2px dashed var(--node-outline);
+}
+
 .swatch.reference-only {
   background: var(--node-reference-only);
   border: 1px solid var(--node-outline);
@@ -1888,4 +1892,67 @@ button.danger {
 .library-note {
   margin: 0;
   white-space: pre-wrap;
+}
+
+/* Adding a citation the databases missed (AddCitation), in the details panel. */
+.add-citation {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  margin: 8px 0;
+  padding: 10px 12px;
+  border: 1px solid var(--border);
+  border-radius: 8px;
+}
+
+.add-citation legend {
+  padding: 0 4px;
+  font-weight: 600;
+}
+
+.add-citation label {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+}
+
+.add-citation-modes {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+}
+
+.add-citation-modes label {
+  flex-direction: row;
+  align-items: center;
+  gap: 6px;
+}
+
+.add-citation-new {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+
+.add-citation-row {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: flex-end;
+  gap: 8px;
+}
+
+.add-citation-matches {
+  margin: 0;
+  padding-left: 1.1rem;
+}
+
+.add-citation-matches .link-button {
+  text-align: left;
+}
+
+.manual-work {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  margin: 6px 0;
 }

@@ -13,6 +13,7 @@ import {
 import { sourceType } from '../graph/sourceTypes.js';
 import { READING_STATUSES } from '../library/readingStatus.js';
 import ReadingStatusIcon from '../library/ReadingStatusIcon.jsx';
+import AddCitation from './AddCitation.jsx';
 import CitationsByYear from './CitationsByYear.jsx';
 import WorkNote from './WorkNote.jsx';
 
@@ -88,6 +89,11 @@ const doiLink = (work) => work.links.find((link) => link.kind === 'doi');
  *
  * When the work Crossref matches a reference-only work to is on OpenAlex, the server merges
  * them, and `onMerged` gets that work to put in its place.
+ *
+ * Signed in, `onAddCitation` records a citation the databases missed (see AddCitation), to one
+ * of `graphWorks` or another work; `manualLinks` ({ link, other, direction }) are those the
+ * user added, each removable with `onRemoveManualLink`, and a work the user added (`manual`)
+ * can be deleted with `onDeleteManualWork`.
  *
  * `readingStatus` is its status in the user's library, set with `onReadingStatusChange` (absent
  * when signed out, or without the feature: `readingStatusUnavailable` says which).
@@ -220,11 +226,22 @@ function ReadingStatus({ status, onChange, unavailable, error }) {
   );
 }
 
-function DataSources({ work, links, onSelect, namesFromWikidata = false }) {
+function DataSources({
+  work,
+  links,
+  onSelect,
+  namesFromWikidata = false,
+  manualLinks = [],
+  onRemoveManualLink,
+}) {
   const cites = links.filter((link) => link.direction === 'cites');
   const citedBy = links.filter((link) => link.direction === 'cited-by');
+  // Links only the user added are listed on their own, with a way to remove each.
   const elsewhere = links.filter(
-    (link) => link.providers.length > 0 && !link.providers.includes('openalex'),
+    (link) =>
+      link.providers.length > 0 &&
+      !link.providers.includes('openalex') &&
+      link.providers.some((name) => name !== 'manual'),
   );
   const onOpenAlex = work.providers.includes('openalex');
   const others = work.providers.filter((name) => name !== 'openalex');
@@ -232,9 +249,11 @@ function DataSources({ work, links, onSelect, namesFromWikidata = false }) {
     <section className="data-sources" aria-labelledby="data-sources-title">
       <h3 id="data-sources-title">Where the data comes from</h3>
       <p className="muted small">
-        {onOpenAlex
-          ? `Record from OpenAlex${others.length ? `; citations also from ${listProviders(others)}` : ''}.`
-          : `Known from a reference list deposited with ${listProviders(work.providers)}.`}
+        {work.manual
+          ? 'Added by you; no database has it. Only you can see it.'
+          : onOpenAlex
+            ? `Record from OpenAlex${others.length ? `; citations also from ${listProviders(others)}` : ''}.`
+            : `Known from a reference list deposited with ${listProviders(work.providers)}.`}
         {work.language &&
           ` Language ${
             work.languageProvider === 'crossref'
@@ -277,6 +296,39 @@ function DataSources({ work, links, onSelect, namesFromWikidata = false }) {
             ))}
           </ul>
         </details>
+      )}
+      {manualLinks.length > 0 && (
+        <>
+          <h4 className="small">Citations you added</h4>
+          <ul className="elsewhere-links" aria-label="Citations you added">
+            {manualLinks.map(({ link, other, direction }) => (
+              <li key={link.id}>
+                <span className="muted small">{direction === 'cites' ? 'Cites' : 'Cited by'}</span>{' '}
+                {other ? (
+                  <button
+                    type="button"
+                    className="link-button"
+                    onClick={() => onSelect?.(other.id)}
+                  >
+                    {other.title ?? 'Untitled'}
+                  </button>
+                ) : (
+                  <span className="muted">a work not on this graph</span>
+                )}{' '}
+                {onRemoveManualLink && (
+                  <button
+                    type="button"
+                    className="link-button"
+                    onClick={() => onRemoveManualLink(link.id)}
+                    aria-label={`Remove: ${direction === 'cites' ? 'cites' : 'cited by'} ${other?.title ?? 'a work'}`}
+                  >
+                    Remove
+                  </button>
+                )}
+              </li>
+            ))}
+          </ul>
+        </>
       )}
     </section>
   );
@@ -481,6 +533,12 @@ export default function DetailsPanel({
   onReadingStatusChange,
   readingStatusUnavailable = 'signed-out',
   readingStatusError = null,
+  onAddCitation,
+  addCitationError = null,
+  graphWorks = [],
+  manualLinks = [],
+  onRemoveManualLink,
+  onDeleteManualWork,
   onClose,
   inert = false,
 }) {
@@ -495,7 +553,8 @@ export default function DetailsPanel({
   const expandable = canExpand(work);
   // Copies on the Internet Archive; for a work not on OpenAlex, also the work Crossref
   // matched its citation to.
-  const archiveItems = useWorkLookup(getArchiveItems, work.id, NO_ITEMS);
+  // Works the user added by hand are theirs alone: the server has nothing to look up.
+  const archiveItems = useWorkLookup(getArchiveItems, work.id, NO_ITEMS, !work.manual);
   // Authors' names in other scripts, and links to them, from Wikidata.
   const authorNames = useWorkLookup(
     getAuthorNames,
@@ -513,7 +572,12 @@ export default function DetailsPanel({
   const authorLinks = authorNames.flatMap((entry) =>
     entry.links.map((link) => ({ ...link, name: entry.name })),
   );
-  const matched = useWorkLookup(getCitationMatch, work.id, null, !expandable && !work.links.length);
+  const matched = useWorkLookup(
+    getCitationMatch,
+    work.id,
+    null,
+    !expandable && !work.manual && !work.links.length,
+  );
   const match = matched?.match ?? null;
   const mergedWork = matched?.work ?? null;
   useEffect(() => {
@@ -564,7 +628,25 @@ export default function DetailsPanel({
           {yearInfo.citedFrom} on, so that&rsquo;s probably the year of a reprint or digitized copy.
         </p>
       )}
-      {!expandable && (
+      {work.manual && onDeleteManualWork && (
+        <div className="manual-work">
+          <p className="muted small">
+            You added this work; no database has it, so there are no citing or cited works to fetch.
+            Add the citations you know of below.
+          </p>
+          <button
+            type="button"
+            onClick={() => {
+              if (window.confirm(`Delete “${work.title}” and the citations you added to it?`)) {
+                onDeleteManualWork();
+              }
+            }}
+          >
+            Delete this work
+          </button>
+        </div>
+      )}
+      {!expandable && !work.manual && (
         <>
           <p className="muted small">
             Known only from a reference list deposited with Crossref, so there are no citing or
@@ -733,9 +815,19 @@ export default function DetailsPanel({
         unavailable={readingStatusUnavailable}
         error={readingStatusError}
       />
+      {onAddCitation && (
+        // Keyed by work, so a half-filled form doesn't carry over to the next work selected.
+        <AddCitation
+          key={`add-citation:${work.id}`}
+          work={work}
+          onGraph={graphWorks}
+          onAdd={onAddCitation}
+          error={addCitationError}
+        />
+      )}
       {onNoteChange && (
         // Keyed by work, so a draft doesn't carry over to the next work selected.
-        <WorkNote key={work.id} note={note} onChange={onNoteChange} signedIn={signedIn} />
+        <WorkNote key={`note:${work.id}`} note={note} onChange={onNoteChange} signedIn={signedIn} />
       )}
 
       {(links.length > 0 || archiveItems.length > 0 || authorLinks.length > 0) && (
@@ -785,6 +877,8 @@ export default function DetailsPanel({
         links={graphLinks}
         onSelect={onSelectWork}
         namesFromWikidata={authorNames.some((entry) => entry.otherNames.length > 0)}
+        manualLinks={manualLinks}
+        onRemoveManualLink={onRemoveManualLink}
       />
 
       {parts.length > 0 && (

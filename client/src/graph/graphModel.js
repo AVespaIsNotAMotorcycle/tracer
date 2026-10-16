@@ -173,8 +173,11 @@ export function addFoundWorks(graph, id, found, direction, added = found) {
   return { ...next, works: nextWorks };
 }
 
-/** Whether `work` has neighbors to fetch: reference-only works have none. */
-export const canExpand = (work) => work?.type !== REFERENCE_ONLY;
+/**
+ * Whether `work` has neighbors to fetch: reference-only works and works the user added by
+ * hand (`manual`) have none.
+ */
+export const canExpand = (work) => work?.type !== REFERENCE_ONLY && !work?.manual;
 
 /**
  * @param {Graph} graph

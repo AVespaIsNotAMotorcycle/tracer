@@ -227,7 +227,7 @@ export const FEATURE_GROUPS = [
         note: 'Add what the databases missed, visible only to you.',
         free: false,
         scholar: true,
-        available: false,
+        available: true,
       },
       {
         name: 'Library links',

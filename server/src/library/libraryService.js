@@ -1,4 +1,6 @@
+import { manualWorkToWork } from '../manual/manualService.js';
 import { LibraryEntry, READING_STATUSES } from '../models/LibraryEntry.js';
+import { ManualWork } from '../models/ManualWork.js';
 import { SavedGraph } from '../models/SavedGraph.js';
 import { Source } from '../models/Source.js';
 import { HttpError } from '../works/errors.js';
@@ -72,7 +74,9 @@ export function createLibraryService({ workService, resolveIds = canonicalIdMap 
         await LibraryEntry.deleteOne({ userId, workId: id });
         return { workId: id, status: null };
       }
-      if (!(await Source.exists({ _id: id }))) throw new HttpError(404, 'Work not found');
+      const known =
+        (await Source.exists({ _id: id })) || (await ManualWork.exists({ _id: id, userId }));
+      if (!known) throw new HttpError(404, 'Work not found');
       const existing = await LibraryEntry.exists({ userId, workId: id });
       if (!existing && (await LibraryEntry.countDocuments({ userId })) >= MAX_ENTRIES) {
         throw new HttpError(409, 'Your library is full');
@@ -122,7 +126,25 @@ export function createLibraryService({ workService, resolveIds = canonicalIdMap 
           item.updatedAt = note.updatedAt;
         }
       }
-      const summaries = await workService.getSummaries([...byWork.keys()]);
+      const ids = [...byWork.keys()];
+      const summaries = await workService.getSummaries(ids);
+      // Works the user added by hand aren't Sources.
+      const manual = await ManualWork.find({ _id: { $in: ids }, userId })
+        .lean()
+        .exec();
+      for (const doc of manual) {
+        const work = manualWorkToWork(doc);
+        summaries.set(work.id, {
+          id: work.id,
+          title: work.title,
+          authors: work.authors.map((author) => author.name),
+          year: work.year,
+          type: work.type,
+          venue: work.venue,
+          externalIds: work.externalIds,
+          manual: true,
+        });
+      }
       for (const item of byWork.values()) item.work = summaries.get(item.workId) ?? null;
       return [...byWork.values()].sort(
         (a, b) => (b.updatedAt?.getTime?.() ?? 0) - (a.updatedAt?.getTime?.() ?? 0),

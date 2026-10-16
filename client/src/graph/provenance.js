@@ -13,6 +13,8 @@ export const PROVIDER_LABELS = {
   openalex: 'OpenAlex',
   crossref: 'Crossref',
   opencitations: 'OpenCitations',
+  // Citations the user added by hand (see manualOverlay.js).
+  manual: 'you',
 };
 
 export const providerLabel = (name) => PROVIDER_LABELS[name] ?? name;
